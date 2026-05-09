@@ -1,0 +1,15 @@
+ccxt>=4.1.0
+pandas>=2.0.0
+numpy>=1.24.0
+ta>=0.11.0
+tradingview-screener
+prophet
+yfinance
+matplotlib
+python-dotenv
+hyperliquid-python-sdk
+eth-account
+toonify
+psycopg2-binary
+openai
+plotly
