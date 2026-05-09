@@ -244,4 +244,153 @@ Da risolvere in Fase 4 (PRD V2):
 
 ---
 
-*Fine PRE_PRD. Prossimo documento: `ANALYSIS_REFERENCE_REPO.md` (Fase 2).*
+## 11. Decisioni emerse dall'analisi della reference repo (Fase 2)
+
+> Sezione aggiunta dopo l'analisi di `ANALYSIS_REFERENCE_REPO.md` (commit `df2d87b`).
+> Le decisioni qui consolidate **estendono e raffinano** le 6 strategiche di §1, senza modificarle. Hanno priorità nel PRD V2.
+
+### 11.1 Stack LLM — `langchain-core` minimo
+
+**Decisione**: adottare `langchain-core` + `langchain-openai` + `langchain-anthropic` come strato di astrazione provider, **senza** LangGraph, **senza** LangChain alto livello, **senza** agent toolkits.
+
+Funzione esposta principale: `with_structured_output(schema)` per output Pydantic. Pattern replicato da `tradingagents/agents/utils/structured.py` (`bind_structured` + fallback freetext).
+
+**Razionale**:
+1. Riproducibilità — pattern stabile, validato in produzione su 6 provider in TradingAgents
+2. Coverage — i 4 modelli scelti (OpenAI, Anthropic, DeepSeek, Qwen) sono tutti supportati nativamente; DeepSeek/Qwen via `langchain-openai` con `base_url` custom
+3. Stabilità — community ampia, documentazione estesa per troubleshooting durante i 4 settimane di run
+4. Footprint minimo — usiamo il 5% del framework, non paghiamo il 95% restante
+
+**Trade-off accettato**: si porta come dipendenza un ecosistema più pesante di alternative come `instructor` o `pydantic-ai`, in cambio di stabilità e coverage immediati.
+
+### 11.2 Structured output Pydantic con fallback freetext (REQUISITO SCIENTIFICO)
+
+**Decisione**: ogni decisione del modello deve essere validata contro uno schema Pydantic via `with_structured_output`. Se la chiamata strutturata fallisce (es. DeepSeek-R1 senza tool_choice, Qwen/GLM erratici, context window superato), il sistema ritenta **una volta** in modalità freetext con regex-parsing minimale.
+
+**Razionale**: è un requisito di **integrità del dataset**, non un'ottimizzazione. Senza fallback, una decisione mancata = un buco sistematico nel dataset di tesi → osservazioni mancanti correlate al modello (specialmente cinesi) → bias non controllato nelle analisi cross-model. **Inaccettabile per la tesi.**
+
+### 11.3 Context window strategy — zero decision history nel prompt
+
+**Decisione**: il prompt del modello include sempre **Memoria 1** (portfolio state corrente: balance, posizioni aperte, PnL non realizzato, leverage, SL/TP attivi) e **NON** include **Memoria 2** (storico delle proprie decisioni passate).
+
+L'infrastruttura `MemoryRepo` viene comunque costruita su Postgres con interfacce `insert_pending(decision)` e `resolve_outcomes(model_id, before_ts)`, ma il `ContextBuilder` ha flag `inject_decision_history: bool = False` di default, che resta False per tutto l'esperimento di tesi.
+
+**Razionale scientifico**: la tesi misura il comportamento del modello a parità di stato di mercato e portafoglio, **non** l'effetto cumulativo di self-learning intra-esperimento. Iniettare decisioni passate confonde la variabile "modello" con la variabile "memoria della propria storia". L'opzione A (zero history) è più pulita scientificamente:
+- isola la variabile modello
+- rende le 4 settimane di osservazioni i.i.d. condizionatamente al mercato
+- è difendibile in tesi: *"abbiamo isolato la variabile modello escludendo l'in-context learning sulla propria storia, perché lo studio mira a misurare il comportamento del modello a parità di stato — non l'effetto cumulativo di self-learning."*
+
+**Future work**: una tesi magistrale o un paper può attivare il flag `inject_decision_history=True` e fare un confronto sistematico A/B.
+
+### 11.4 Composizione del prompt — 4 sezioni tematiche
+
+**Decisione**: il prompt del modello si articola in 4 sezioni tematiche fisse, popolate da *collector deterministici* (no LLM, dati fetched a monte e formattati come testo):
+
+1. `## Technical` — indicatori tecnici (EMA, MACD, RSI, Bollinger, ATR, VWMA, pivot daily) calcolati su candele Hyperliquid 15m + longer-term context
+2. `## Sentiment` — Fear & Greed Index + (eventuale) LunarCrush/Santiment se accessibili
+3. `## News & Macro` — RSS CryptoPanic / CoinDesk / coinjournal
+4. `## On-chain & Funding` — funding rate Hyperliquid, open interest, liquidations recenti, basis perp-spot, orderbook depth
+
+**Razionale**: replica la struttura "4 analyst views" di TradingAgents, ma collassata in 4 sezioni del **singolo prompt** (non 4 sotto-agenti). La sezione "Fundamentals" del modello originale (10-K, balance sheet) è rimpiazzata da "On-chain & Funding" perché inapplicabile a crypto perpetuals.
+
+I collector deterministici evitano LLM-call multipli in fase di costruzione contesto: una sola LLM-call per decisione, basso costo e bassa latency.
+
+### 11.5 Outcome benchmark — quadrupletta PnL + buy-and-hold spot
+
+**Decisione**: ogni decisione/esito viene misurato lungo 4 metriche cumulative, tutte persistite in tabella `outcomes`:
+
+1. **PnL lordo** — variazione di equity senza considerare costi
+2. **PnL netto-fee** — sottratti taker/maker fee Hyperliquid
+3. **PnL netto-fee-funding** — sottratto anche funding rate pagato/ricevuto su posizioni aperte
+4. **PnL netto-fee-funding-tax** — sottratta anche simulazione tasse italiane (26% capital gain)
+
+Benchmark di riferimento: **buy-and-hold spot** dello stesso symbol nello stesso periodo, calcolato a posteriori sul DB.
+
+**Razionale**: la dimensione "fattibilità" della tesi è ambigua senza la quadrupletta — un PnL +5% lordo può diventare -2% post-tax. Il benchmark buy-and-hold sostituisce l'`alpha-vs-SPY` di TradingAgents (irrilevante per crypto retail) con un riferimento naturale: *"il modello batte il semplice hold del sottostante?"*.
+
+### 11.6 Prompt versioning — SHA256 hash committed
+
+**Decisione**: il prompt template è memorizzato in file (`prompts/v2_decision.md` o equivalente). Ad ogni run il sistema calcola SHA256 del prompt finalizzato (template + variabili interpolate, escluso il portfolio state che cambia per definizione) e lo salva in `runs.prompt_version`.
+
+**Razionale**:
+- Riproducibilità rigorosa: a esperimento concluso, ogni decisione è ricostruibile dal commit del codice + hash del prompt
+- Permette eventuale evoluzione del prompt durante l'esperimento (es. *"settimane 1-2 con prompt v1, settimane 3-4 con prompt v2 dopo aver osservato pattern X"*) con tracciabilità completa
+- Tesi: si può scrivere *"l'esperimento ha usato N versioni del prompt, identificate da hash, dettagliate in §X"*
+
+### 11.7 Cost ledger — `model_pricing.yaml`
+
+**Decisione**: file YAML con pricing per modello (input + output + reasoning $/1M token), aggiornato manualmente, usato dal cost-tracker per scrivere `decisions.cost_usd` ad ogni invocazione.
+
+Esempio struttura:
+```yaml
+openai-gpt-5.1:
+  input_per_1m: 5.0
+  output_per_1m: 15.0
+  reasoning_per_1m: 60.0
+deepseek-r1:
+  input_per_1m: 0.55
+  output_per_1m: 2.19
+  reasoning_per_1m: 0
+# ...
+```
+
+**Razionale**: la dimensione "fattibilità costi" della tesi richiede `cost_usd` per decisione persistito **al momento della decisione**, non calcolato ex-post da log esterni (che soffrono di provenance drift, modifiche dei pricing, downtime di dashboard provider).
+
+### 11.8 Test di non-contaminazione cross-model
+
+**Decisione**: la suite di test include `tests/test_isolation.py` che verifica:
+- Un servizio Railway con `model_id=A` non legge mai decisioni di altri `model_id` durante la propria run
+- Le query del `MemoryRepo` (anche con `inject_decision_history=False` di default) sono filtrate sempre per `WHERE model_id = $1`
+- Non c'è cross-contamination accidentale via cache, file system condiviso, log condivisi
+
+**Razionale**: l'isolamento sperimentale è il **prerequisito** per affermare scientificamente che differenze osservate tra modelli sono attribuibili al modello stesso, non a contaminazioni dell'orchestrazione. Va testato esplicitamente, non assunto.
+
+### 11.9 Schema TradeDecision (output del modello) — proposta consolidata
+
+**Decisione**: lo schema Pydantic dell'output strutturato del modello include, oltre a quanto già previsto in V1:
+
+```python
+class Side(str, Enum):
+    LONG = "long"
+    SHORT = "short"
+    FLAT = "flat"  # chiudi posizioni esistenti e resta out
+    HOLD = "hold"  # mantieni stato attuale, nessuna azione
+
+class TradeDecision(BaseModel):
+    side: Side
+    confidence: float = Field(ge=0.0, le=1.0)
+    leverage: float = Field(ge=1.0, le=10.0, default=1.0)
+    size_pct_equity: float = Field(ge=0.0, le=1.0)
+    entry_type: Literal["market", "limit"] = "market"
+    limit_price: Optional[float] = None
+    stop_loss_pct: Optional[float] = Field(None, ge=0.001, le=0.20)
+    take_profit_pct: Optional[float] = Field(None, ge=0.001, le=0.50)
+    time_horizon_min: int = Field(ge=15, le=10080)
+    reasoning: str
+    key_signals: list[str]
+    risk_assessment: str
+```
+
+**Razionale**:
+- `confidence` necessaria per la dimensione "spiegabilità" — emessa per ogni decisione, non solo aperture
+- `key_signals: list[str]` permette analisi "quali segnali ciascun modello cita più spesso?" cross-model
+- `risk_assessment` è il sostituto compatto del Risk Manager separato di TradingAgents
+- `Side.HOLD` distinto da `Side.FLAT` perché semanticamente diversi: HOLD = nulla cambia, FLAT = chiudi tutto e stai out
+
+Schema definitivo (con eventuali ulteriori campi) sarà fissato nel PRD V2.
+
+---
+
+## 12. Sintesi consolidata delle decisioni totali
+
+A questo punto il PRE_PRD ha cristallizzato **15 decisioni** complessive:
+- §1 — 8 decisioni strategiche originali (modelli, architettura, wallet, esperimento, baseline competente, ContextBuilder modulare, network, timeline)
+- §11 — 9 decisioni emerse dall'analisi reference repo + memoria (stack LLM, structured output, context window strategy, prompt sezioni, outcome benchmark, prompt versioning, cost ledger, isolation test, TradeDecision schema)
+
+Le decisioni di §1 vincolano il *cosa* della tesi. Le decisioni di §11 vincolano il *come* implementativo difendibile scientificamente.
+
+Roadmap aggiornata: PRE_PRD ✅ DONE. Prossimo passo: revisione Figma (Fase 3), poi PRD V2 (Fase 4) che ingloba tutto.
+
+---
+
+*Fine PRE_PRD aggiornato. Prossimo documento: `ANALYSIS_FIGMA.md` (Fase 3) e `RESEARCH_DESIGN.md` + `PRD_V2.md` (Fase 4).*
