@@ -393,4 +393,77 @@ Roadmap aggiornata: PRE_PRD ✅ DONE. Prossimo passo: revisione Figma (Fase 3), 
 
 ---
 
-*Fine PRE_PRD aggiornato. Prossimo documento: `ANALYSIS_FIGMA.md` (Fase 3) e `RESEARCH_DESIGN.md` + `PRD_V2.md` (Fase 4).*
+## 13. Decisioni emerse dall'analisi del Figma (Fase 3)
+
+> Sezione aggiunta dopo l'analisi di `ANALYSIS_FIGMA.md` (commit `42dbb3d`).
+> Il Figma originale era una mind map architetturale, non un mockup UI. Da esso sono emersi 3 requisiti operativi che, formalizzati, compongono la **strategia di risk management integrata** del sistema.
+
+### 13.1 Stop Loss e Take Profit obbligatori (F1)
+
+**Decisione**: lo schema `TradeDecision` (vedi §11.9) viene reso conditionally required:
+- Se `side ∈ {LONG, SHORT}`: `stop_loss_pct` e `take_profit_pct` sono obbligatori
+- Se `side ∈ {FLAT, HOLD}`: i due campi sono `null`
+
+Implementabile con `model_validator` Pydantic post-validation, oppure con due schemi distinti (`OpenDecision` vs `CloseOrHoldDecision`) e `Union` discriminato su `side`. Decisione finale tra le due opzioni rimandata al PRD V2.
+
+**Razionale**: senza SL il rischio liquidation è reale anche su testnet 1000$. Per la tesi un modello che brucia il capitale in pochi giorni non genera dati di "fattibilità" ma di "fallimento operativo". SL obbligatorio garantisce continuità sperimentale a 4 settimane per tutti i 4 modelli.
+
+### 13.2 Confidence obbligatoria sempre (F2)
+
+**Decisione**: `decisions.confidence` è `NOT NULL` per ogni decisione, inclusi `HOLD` e `FLAT`. Non solo aperture e chiusure.
+
+**Razionale**: la confidence con cui un modello *decide di non operare* è dato scientifico utile per la dimensione "spiegabilità". Un HOLD a confidence 0.95 è epistemicamente diverso da un HOLD a confidence 0.30. Senza questo dato, l'analisi della distribuzione di confidence cross-model è troncata sui soli trade attivi.
+
+### 13.3 Strategia C+ — 4 guardrail di risk management (F3)
+
+**Decisione**: il sistema impone 4 vincoli operativi che limitano *l'esecuzione*, non la *decisione* del modello. Il modello è libero di proporre qualunque combinazione di parametri; l'execution layer applica i seguenti clamp e ne logga l'attivazione:
+
+| # | Guardrail | Regola | Env-var (default) |
+|---|-----------|--------|-------------------|
+| 1 | SL mandatory | Vedi §13.1 | — |
+| 2 | Exposure cap per trade | `size_pct_equity ≤ MAX_SIZE_PCT` | `AIAT_MAX_SIZE_PCT=0.20` |
+| 3 | Leverage cap dinamico | `leverage ≤ 1 + confidence × 9`, hard cap | `AIAT_HARD_MAX_LEVERAGE=10` |
+| 4 | Confidence threshold per aperture | Se `confidence < MIN_OPEN_CONFIDENCE` e `side ∈ {LONG,SHORT}` → forza `HOLD` | `AIAT_MIN_OPEN_CONFIDENCE=0.4` |
+
+**Razionale per ciascun guardrail**:
+- **#2** Limita l'esposizione singola a 20% equity → max 5 posizioni concorrenti per modello → preserva diversificazione e sopravvivenza statistica del capitale
+- **#3** Lega rischio richiesto a fiducia dichiarata: il modello *può* avere alta leva solo se è anche molto sicuro. Crea correlazione **forzata** tra leverage e confidence che diventa essa stessa oggetto di analisi (i 4 modelli rispettano spontaneamente questa correlazione, o vengono spesso clampati?)
+- **#4** Sotto-soglia il modello non opera. Guardrail post-decisione, non vincolo nel prompt — il modello rimane libero di richiedere apertura con bassa confidence; il sistema non esegue. La frequenza di `forced_hold` per ciascun modello è una metrica di tesi.
+
+**Riepilogo formale (per la tesi)**:
+
+> *"Al modello sono stati imposti quattro guardrail di prudenza operativa: (1) stop loss obbligatorio per ogni apertura, (2) esposizione massima per trade del 20% dell'equity, (3) leva massima funzione lineare della confidence dichiarata (formula 1 + c·9, hard cap 10x), (4) soglia minima di confidence 0.4 per aperture. Tutti gli altri parametri decisionali (direzione, size esatto entro il cap, durata, prezzo limit, eventuali campi opzionali) sono lasciati alla discrezione del modello. Le attivazioni dei guardrail sono persistite per analisi cross-model a posteriori."*
+
+### 13.4 Estensione schema DB per analisi guardrail
+
+Le tabelle del PRD V2 dovranno includere campi aggiuntivi per tracciamento:
+
+| Campo | Tipo | Significato |
+|-------|------|-------------|
+| `decisions.leverage_requested` | NUMERIC | Quanto chiedeva il modello |
+| `decisions.leverage_executed` | NUMERIC | Cosa è stato effettivamente eseguito post-clamping |
+| `decisions.leverage_clamped` | BOOL | Guardrail #3 attivato? |
+| `decisions.size_pct_requested` | NUMERIC | Quanto chiedeva il modello |
+| `decisions.size_pct_executed` | NUMERIC | Eseguito post-clamping |
+| `decisions.size_pct_clamped` | BOOL | Guardrail #2 attivato? |
+| `decisions.forced_hold` | BOOL | Guardrail #4 attivato? |
+| `decisions.original_side` | TEXT | Side richiesto dal modello, se sostituito |
+
+Servono per analisi cross-model: *"quanto spesso ciascun modello chiede leva oltre il consentito? Lo fa sistematicamente o sporadicamente? Le richieste oltre cap correlano con confidence alta o bassa?"* — domande direttamente collegate alla dimensione "spiegabilità" e "proprietà emergenti".
+
+---
+
+## 14. Sintesi consolidata delle decisioni totali (aggiornata Fase 3)
+
+Il PRE_PRD ha cristallizzato **18 decisioni** complessive:
+- §1 — 8 decisioni strategiche originali
+- §11 — 9 decisioni emerse dall'analisi reference repo + memoria
+- §13 — 3 requisiti formalizzati dal Figma + 1 strategia integrata di risk management (4 guardrail) + 1 estensione schema DB
+
+Il PRE_PRD è ora completo. Da qui si passa alla Fase 4 con 2 documenti:
+- `RESEARCH_DESIGN.md` — la cornice scientifica della tesi (3 ipotesi, variabili, metriche, design statistico, ipotesi sulle conclusioni attese)
+- `PRD_V2.md` — il documento tecnico-implementativo (architettura, schema DB completo, API tra moduli, contratti LLM, timeline e milestone)
+
+---
+
+*Fine PRE_PRD aggiornato a Fase 3. Prossimi documenti: `RESEARCH_DESIGN.md` + `PRD_V2.md` (Fase 4).*
