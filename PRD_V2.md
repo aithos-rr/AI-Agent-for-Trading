@@ -2,9 +2,9 @@
 
 > Documento tecnico-implementativo per l'agente V2. Traduce le 18 decisioni del `PRE_PRD.md` (commit `73e3d02`) e la cornice scientifica del `RESEARCH_DESIGN.md` (commit `2e1df14`) in specifiche eseguibili: architettura moduli, schema DB completo (DDL), contratti API, flussi dati, strategia di deploy, test plan, milestones, risk register.
 >
-> **Stato**: ROUND 2 v3/3 — questa versione integra Round 1 v3 (commit `669ced9`, post 2 cicli peer-review) con il **Round 2 v3** (§6-§10), post **3 cicli di peer-review esterna sul Round 2**: ciclo 1 (v1→v2) integrava 16 fix; ciclo 2 (v2→v3) integra 5 micro-fix (1 HIGH + 3 MEDIUM + 1 LOW + 1 fix B.14 portato da parziale a completo). Round 3 aggiungerà deploy strategy + milestones + risk register + propagation map.
+> **Stato**: ROUND 3 v2/3 — completo, post peer-review esterna (verdetto 9.3/10 APPROVATO). Integra Round 1 v3 (commit `669ced9`) + Round 2 v3 (commit `e80c16e`) + Round 3 v2 (§11-§15). Patch post-review: §15.4 trasformata da *deferred decisions indefinite* a *bounded deferrals* con milestone vincolante di chiusura.
 >
-> Branch: `prd/v2-design`.
+> Branch: `prd/v2-design`. Documento pronto come blueprint completo per implementazione Phase 5.
 
 ---
 
@@ -2936,4 +2936,691 @@ def load_settings() -> AgentSettings | ContextOrchestratorSettings:
 
 ---
 
-*Fine PRD V2 Round 2 v3 (post 3 cicli di peer-review esterna, 21 fix totali integrati su Round 2: 16 nel ciclo v1→v2 + 5 nel ciclo v2→v3). Blueprint tecnico Round 2 pronto per commit definitivo. Prossimo round: Round 3 (deploy strategy + milestones + risk register + propagation map).*
+---
+
+## 11. Deploy strategy
+
+### 11.1 Topologia operativa
+
+Il progetto deploya **5 servizi Railway** + **1 database Postgres condiviso** da **un'unica repo git**:
+
+| Servizio Railway | Ruolo | env: `AIAT_SERVICE_ROLE` | env: `AIAT_MODEL_ID` | Wallet HL |
+|------------------|-------|-------------------------|---------------------|-----------|
+| `context-orchestrator` | Materializza context_snapshot per tick | `context_orchestrator` | — | — |
+| `agent-openai` | Decision loop per OpenAI | `agent` | `openai-<model>` | wallet_1 |
+| `agent-anthropic` | Decision loop per Anthropic | `agent` | `anthropic-<model>` | wallet_2 |
+| `agent-deepseek` | Decision loop per DeepSeek | `agent` | `deepseek-<model>` | wallet_3 |
+| `agent-qwen` | Decision loop per Qwen | `agent` | `qwen-<model>` | wallet_4 |
+
+**Postgres**: 1 database condiviso, schema unico (vedi §3). Scrittura distinta per `model_id` (invariante #1). Read-only su `context_snapshots` da parte degli agent; write-only su `context_snapshots` + `context_build_runs` da parte del context-orchestrator.
+
+### 11.2 Strategia monorepo + dispatcher
+
+**Decisione**: monorepo singolo. Tutti e 5 i servizi puntano alla stessa repo GitHub (`aithos-rr/AI-Agent-for-Trading`); il ruolo è discriminato da `AIAT_SERVICE_ROLE` env var.
+
+Razionale (vedi conversazione di design):
+- ~80% del codice è condiviso (domain, db, llm clients, observability, collectors)
+- 2 repo significherebbe duplicare Pydantic schemas, DB models, collectors → drift inevitabile
+- Railway supporta multi-service deploy da una stessa repo
+- La separazione least-privilege è a livello `Settings` runtime (vedi §10.3), NON a livello repo
+- Pattern moderno: monorepo con multiple deploy targets
+
+#### Entrypoint dispatcher
+
+```python
+# src/aiat/__main__.py
+import asyncio
+import structlog
+from aiat.config.settings import load_settings, AgentSettings, ContextOrchestratorSettings
+from aiat.orchestration.lifecycle import startup_checks
+from aiat.orchestration.scheduler import build_scheduler_for_agent, build_scheduler_for_orchestrator
+from aiat.observability.logging_config import configure_logging
+
+async def main() -> None:
+    settings = load_settings()  # dispatch su AIAT_SERVICE_ROLE
+    configure_logging(settings.log_level)
+    logger = structlog.get_logger()
+
+    logger.info("startup", service_role=settings.service_role)
+
+    # Startup checks role-specific (§10.1)
+    await startup_checks(settings)
+
+    # Build scheduler per ruolo
+    if isinstance(settings, AgentSettings):
+        scheduler = await build_scheduler_for_agent(settings)
+    elif isinstance(settings, ContextOrchestratorSettings):
+        scheduler = await build_scheduler_for_orchestrator(settings)
+    else:
+        raise RuntimeError(f"Unknown service_role: {settings.service_role}")
+
+    scheduler.start()
+    logger.info("scheduler started, awaiting cron")
+    # Mantieni l'evento loop attivo
+    await asyncio.Event().wait()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+Comando di avvio (lo stesso per tutti e 5 i servizi):
+```bash
+python -m aiat
+```
+
+### 11.3 Dockerfile multi-stage (non-root)
+
+Pattern adottato da TradingAgents (vedi ANALYSIS §6), `Dockerfile` unico per tutti i servizi:
+
+```dockerfile
+# docker/Dockerfile
+# Stage 1: build deps con uv
+FROM python:3.12-slim AS builder
+WORKDIR /build
+COPY --from=ghcr.io/astral-sh/uv:0.5 /uv /usr/local/bin/uv
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project --no-dev
+
+# Stage 2: runtime minimal
+FROM python:3.12-slim AS runtime
+RUN useradd -u 10001 -m -s /bin/bash aiat
+WORKDIR /app
+COPY --from=builder /build/.venv /app/.venv
+COPY --chown=aiat:aiat src /app/src
+COPY --chown=aiat:aiat alembic /app/alembic
+COPY --chown=aiat:aiat alembic.ini /app/alembic.ini
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app/src" \
+    PYTHONUNBUFFERED=1
+USER aiat
+CMD ["python", "-m", "aiat"]
+```
+
+**Note**:
+- Multi-stage: builder image scartata, runtime contiene solo deps installate, no toolchain
+- Non-root: utente `aiat` (uid 10001) per security
+- `PYTHONUNBUFFERED=1`: log strutturati JSON via structlog scrivono direttamente su stdout senza buffering (Railway raccoglie e mostra in dashboard)
+- Stesso immagine per tutti i 5 servizi; cambia solo env var
+
+### 11.4 Variabili ambiente per servizio
+
+Configurazione su Railway dashboard per ogni servizio. Tutte le variabili usano prefix `AIAT_` (vedi `BaseAIATSettings`).
+
+#### Comuni a tutti i 5 servizi
+
+```
+AIAT_EXPERIMENT_ID=<UUID>
+AIAT_GIT_COMMIT_SHA=<sha7-injected-at-build>
+AIAT_DATABASE_URL=postgresql+asyncpg://...railway.app:5432/...
+AIAT_NETWORK=testnet
+AIAT_LOG_LEVEL=INFO
+```
+
+#### Solo `context-orchestrator`
+
+```
+AIAT_SERVICE_ROLE=context_orchestrator
+AIAT_HARD_TIMEOUT_SECONDS=30
+# Opzionale: API key per news premium (free tier altrimenti)
+AIAT_NEWSFEED_API_KEY=<secret-or-empty>
+```
+
+**Verifica least-privilege** (gli startup checks O1 falliscono se queste env sono presenti):
+- ❌ `AIAT_MODEL_ID` (deve essere assente)
+- ❌ `AIAT_LLM_PROVIDER` (assente)
+- ❌ `AIAT_OPENAI_API_KEY` / `AIAT_ANTHROPIC_API_KEY` / `AIAT_DEEPSEEK_API_KEY` / `AIAT_QWEN_API_KEY` (assenti)
+- ❌ `AIAT_HL_WALLET_PRIVATE_KEY` (assente)
+
+#### Solo `agent-<provider>` (esempio agent-openai)
+
+```
+AIAT_SERVICE_ROLE=agent
+AIAT_MODEL_ID=openai-<model-name>
+AIAT_PROMPT_TEMPLATE_HASH=<sha256-from-prompt_templates-table>
+AIAT_SCHEMA_VERSION=v1
+
+AIAT_LLM_PROVIDER=openai
+AIAT_MODEL_NAME_API=<exact-api-string>
+AIAT_TEMPERATURE=0
+AIAT_SEED=42
+AIAT_MAX_TOKENS=4096
+
+AIAT_OPENAI_API_KEY=<secret>
+
+AIAT_HL_WALLET_PRIVATE_KEY=<secret>
+AIAT_HL_WALLET_ADDRESS=0x...
+
+AIAT_MAX_SIZE_PCT=0.20
+AIAT_HARD_MAX_LEVERAGE=10
+AIAT_MIN_OPEN_CONFIDENCE=0.4
+AIAT_INJECT_DECISION_HISTORY=false
+AIAT_AGENT_START_DELAY_SECONDS=30
+AIAT_HARD_TIMEOUT_SECONDS=180
+```
+
+Per `agent-anthropic`, `agent-deepseek`, `agent-qwen`: identico ma con `AIAT_LLM_PROVIDER` e relativa API key + wallet diverso.
+
+#### Secret management Railway
+
+- Tutte le variabili che terminano in `_KEY` o contengono `PRIVATE_KEY` sono configurate come **Sealed Variables** su Railway (criptate at-rest, non visibili nel dashboard dopo l'inserimento)
+- API keys MAI committed in git (vedi `.gitignore`)
+- `.env.example` nel repo contiene i nomi delle env vars con valori placeholder, mai i valori reali
+
+### 11.5 Health checks
+
+Ogni servizio espone un health endpoint via `httpx` server minimale separato dall'event loop principale (porta `$PORT` su Railway, di default 8080):
+
+```python
+# src/aiat/observability/health.py
+# Servito da uvicorn in lifecycle.py durante run()
+# GET /health → 200 OK se:
+#   - DB raggiungibile (SELECT 1 entro 2s)
+#   - APScheduler running (.state == STATE_RUNNING)
+#   - Per AGENT: ultima run nelle ultime 20 min ha status ∈ {success, partial}
+#                (più di 2 run consecutive in failed/timeout → unhealthy)
+#   - Per ORCHESTRATOR: ultima context_build_runs nelle ultime 20 min ha status ∈ {success, partial}
+```
+
+Railway esegue automaticamente health check su `$PORT/health` ogni 30s. Su 3 failure consecutive il servizio viene riavviato.
+
+### 11.6 Observability shipping
+
+- **Logs**: structlog JSON → stdout → Railway dashboard (built-in). Per drill-down: Railway permette export logs.
+- **Metriche**: nessuna soluzione esterna (Datadog, Grafana) per scope tesi. Le metriche operative sono ricavate ex-post via query SQL su DB (es. `runs.status` aggregato, `cost_events.cost_usd` cumulato per modello, `outcomes` per analisi).
+- **Alerting**: nessuno automatico. Monitoraggio manuale durante l'esperimento via dashboard Railway + query SQL pianificate.
+
+### 11.7 Procedura di bootstrap esperimento
+
+Sequenza operativa per avviare l'esperimento dopo che il codice è pronto e i 5 servizi Railway sono configurati ma non avviati.
+
+```
+[step 1] Postgres ready
+  └─ Crea Postgres su Railway, copia DATABASE_URL
+  └─ Imposta AIAT_DATABASE_URL in tutti i 5 servizi
+
+[step 2] Migrations schema
+  $ AIAT_DATABASE_URL=... uv run alembic upgrade head
+  └─ Verifica: SELECT version_num FROM alembic_version = EXPECTED_ALEMBIC_VERSION
+
+[step 3] Hyperliquid testnet wallets
+  └─ Crea 4 wallet HL testnet distinti
+  └─ Funda ciascuno con 1000$ testnet via faucet
+  └─ Salva (private_key, address) per ognuno
+  └─ Imposta env AIAT_HL_WALLET_* sui 4 servizi agent
+
+[step 4] Seed experiment
+  $ uv run python scripts/seed_experiment.py \
+      --name "thesis-v2-comparative-2026Q2" \
+      --git-sha $(git rev-parse HEAD) \
+      --config configs/experiment_baseline.yaml
+  └─ Inserisce: experiment row + 4 model rows (con wallet_address!) + 3 baseline_configs
+
+[step 5] Register prompt template
+  $ uv run python scripts/register_prompt_template.py \
+      --template src/aiat/prompts/templates/v1_baseline.md \
+      --label v1_baseline
+  └─ Calcola sha256 + insert prompt_templates row
+  └─ Copia il SHA su env AIAT_PROMPT_TEMPLATE_HASH dei 4 servizi agent
+
+[step 6] Verifica wallets
+  $ uv run python scripts/verify_wallets.py
+  └─ Per ogni wallet: connect HL testnet, verifica equity > 0, verifica account_state
+
+[step 7] Smoke deploy context-orchestrator
+  └─ Deploy il solo context-orchestrator su Railway
+  └─ Verifica startup_checks OK (logs)
+  └─ Aspetta 1 tick (15 min), verifica 1 row in context_snapshots
+  └─ Stop il servizio
+
+[step 8] Smoke deploy agent (uno solo, es. agent-openai)
+  └─ Riavvia context-orchestrator
+  └─ Deploy agent-openai
+  └─ Verifica startup_checks OK
+  └─ Aspetta 1 tick (15 min)
+  └─ Verifica: 1 run row, 1 decision, 3 decision_actions, eventualmente order/positions
+  └─ Stop entrambi i servizi
+
+[step 9] Full deploy (5 servizi simultaneamente)
+  └─ Deploy tutti i 5 servizi
+  └─ Verifica tutti gli startup_checks OK
+  └─ Aspetta 4 tick (1 ora)
+  └─ Verifica: per ogni tick, 1 context_snapshot + 4 runs + 4 decisions + 12 decision_actions
+
+[step 10] Mark esperimento attivo
+  └─ Aggiorna experiments.started_at = now() (manuale via SQL o script)
+  └─ L'esperimento è ufficialmente in corso. Da qui +4 settimane = ended_at.
+```
+
+---
+
+## 12. Milestones (sequenza implementativa)
+
+Sequenza ordinata di milestone con criteri di completamento espliciti (`Definition of Done`). **Non vengono assegnate date**: ogni milestone è considerata completa solo quando soddisfa il DoD; lo studente avanza secondo la propria disponibilità.
+
+### M0 — Setup repo + CI baseline
+
+**Definition of Done**:
+- `pyproject.toml` configurato con `uv` (Python 3.12+, dipendenze §1.2)
+- `uv.lock` committed
+- Dockerfile multi-stage funzionante (`docker build .` → image successful)
+- `ruff` + `mypy strict` + `pytest` configurati e passanti su scheletro vuoto
+- `import-linter` config con almeno 1 rule (no cicli tra `domain/` e altri moduli)
+- `.github/workflows/ci.yml` esegue lint + type-check + pytest in CI
+- `.env.example` con tutti i nomi env var di §11.4
+
+**Verifica**: pushare un PR su main triggera CI green senza skip.
+
+---
+
+### M1 — Domain + DB schema + migrations
+
+**Definition of Done**:
+- `src/aiat/domain/enums.py` + `schemas.py` completi (§6.1, §6.2, §6.3, §6.4)
+- `src/aiat/domain/exceptions.py` con gerarchia base
+- `src/aiat/db/models/` con tutti i 17 SQLAlchemy models (§3.2)
+- Alembic migration `001_initial_schema.py` generata + applicata su Postgres test
+- Test unit `tests/unit/domain/test_schemas_*.py` (Pydantic validator coverage 95%)
+- Test integration `tests/integration/test_db_migrations.py` (upgrade head + verifica CHECK constraints)
+- Test unit `tests/unit/domain/test_pydantic_serialization.py` (roundtrip JSON)
+
+**Verifica**: tutti i test passano; `alembic upgrade head` su Postgres pulito crea 17 tabelle con tutti i constraint dichiarati in §3.2.
+
+---
+
+### M2 — LLM abstraction + StatsHandler
+
+**Definition of Done**:
+- `src/aiat/llm/base.py` ABC completo (§7.3)
+- `src/aiat/llm/exceptions.py` con 5 classi (§8.2)
+- `src/aiat/llm/structured.py` con `invoke_structured` + `_extract_json_balanced` (§8.2)
+- `src/aiat/llm/stats_handler.py` con `StatsCallbackHandler` (§8.3) inclusa aggregazione `n_attempts`
+- `openai_client.py`, `anthropic_client.py`, `openai_compatible_client.py` (Deepseek + Qwen)
+- `factory.py` con `load_llm(settings: AgentSettings)`
+- `model_pricing.yaml` con i 4 modelli scelti
+- Test unit: `test_structured_parser.py`, `test_stats_handler.py` (>95% coverage)
+- Test integration con cassette VCR: 4 provider × scenario {structured success, fallback, unrecoverable, timeout, rate-limit, auth, reasoning-trace}
+
+**Verifica**: una chiamata smoke a ciascuno dei 4 provider produce `LLMInvocationResult` valido con `CostEventData` corretto; CI esegue cassette VCR senza chiamate API reali.
+
+---
+
+### M3 — ContextOrchestrator + collectors
+
+**Definition of Done**:
+- `src/aiat/context/collectors/` completo: `technical.py`, `sentiment.py`, `news.py`, `onchain.py`
+- Ogni collector implementa `BaseCollector` con timeout esplicito e (dove applicabile) cache TTL
+- `src/aiat/context/controlled_signals.py` con lista controllata (§3.3 v2)
+- `src/aiat/orchestration/context_orchestrator.py` entrypoint del 5° servizio
+- `ContextBuildRepository` in `src/aiat/db/repositories/context_build.py`
+- Test unit per ogni collector (con httpx mock)
+- Test integration su Postgres ephemeral: orchestrator scrive `context_snapshots` + `context_build_runs` correttamente, anche su fallimenti
+
+**Verifica**: `python -m aiat` con `AIAT_SERVICE_ROLE=context_orchestrator` su DB pulito + Postgres ephemeral genera 4 `context_snapshots` in 1 ora (1 per tick).
+
+---
+
+### M4 — ExecutionLayer + guardrails
+
+**Definition of Done**:
+- `src/aiat/execution/hyperliquid_client.py` con interfaccia §7.5 (include `current_position` param)
+- `src/aiat/execution/guardrails.py` con i 4 guardrail Strategia C+ (§7.4)
+- `src/aiat/execution/sizing.py` (Decimal precision)
+- `src/aiat/execution/outcome_resolver.py`
+- `PositionsRepository` in `src/aiat/db/repositories/positions.py` (con `orders` + `fee_events`)
+- Test unit guardrails (4 scenari × edge cases)
+- Test integration con Postgres ephemeral: `open_position` → `close_position` → `outcomes` row corretto
+- Test e2e con HL testnet reale (1 wallet smoke): submit market order, verify fill, verify SL/TP triggers
+
+**Verifica**: smoke su wallet testnet di sviluppo apre LONG BTC con SL/TP, lo chiude manualmente, verifica `outcomes.pnl_net_fee_funding_usd` corretto.
+
+---
+
+### M5 — Decision loop end-to-end + test isolation/parity
+
+**Definition of Done**:
+- `src/aiat/orchestration/decision_loop.py` completo (§4.1 timeline)
+- `src/aiat/orchestration/scheduler.py` con APScheduler config (§4.1)
+- `src/aiat/orchestration/lifecycle.py` con `startup_checks` role-specific (§10.1)
+- `DecisionsRepository` completo con transazione atomica (§7.6 invariante #4)
+- Tutti i 4 repository transactional pattern verificati
+- `tests/e2e/test_decision_loop_smoke.py` passa (LLM mockato + HL mockato + Postgres ephemeral)
+- `tests/e2e/test_isolation.py` passa (invariante #1) con RepositorySpy + DB trap
+- `tests/e2e/test_context_parity.py` passa (invariante #13)
+- `tests/e2e/test_guardrail_e2e.py` passa
+- Invariant coverage matrix (§9.7) verde: tutti i 15 invarianti hanno un test gating
+
+**Verifica**: CI green su tutti gli e2e. Smoke test locale: 1 context-orchestrator + 4 agent fittizi (LLM mockato) su Postgres locale girano per 4 tick consecutivi, generano dataset coerente.
+
+---
+
+### M6 — Smoke test multi-day testnet
+
+**Definition of Done**:
+- I 5 servizi Railway deployati (vedi §11.7)
+- Tutti gli startup checks OK
+- 48 ore di run continuativo su testnet senza intervento manuale
+- Almeno 192 tick completati (4 settimane × 4 tick/h × 2 giorni = 192)
+- Per ogni tick: 1 context_snapshot + 4 runs (status='success' o 'partial' tollerato)
+- Almeno 4 trade chiusi (entry + exit) verificati con outcomes row corrette
+- Nessuna `errors` row di severity HIGH (timeout/auth/unrecoverable)
+- Dashboard manuale: query SQL aggregate funzionanti per ogni metrica §3.3
+
+**Verifica**: dopo 48h, eseguire `scripts/export_dataset.py` produce CSV/Parquet completi senza errori; query `SELECT count(*) FROM runs WHERE status='success'` ≥ 90% degli scheduled tick.
+
+---
+
+### M7 — Esperimento di 4 settimane
+
+**Definition of Done**:
+- M6 completata con KPI verdi
+- `experiments.started_at` aggiornato a now() ufficiale
+- 4 settimane di run continuativo (28 giorni × 4 tick/h × 24h = 2688 scheduled tick per modello)
+- Tick coverage finale ≥ 95% (invariante #15)
+- `scripts/compute_baselines.py` eseguito a fine esperimento: 3 baseline (B&H, Cash, Naive Momentum) producono `baseline_equity_snapshots` per ogni tick
+- `scripts/compute_tax_sim.py` eseguito: `tax_sim_periods` per ogni `(model_id, quarter)`
+- `scripts/export_dataset.py` produce CSV/Parquet finale per analisi tesi
+- `experiments.ended_at` aggiornato
+
+**Verifica**: dataset finale validato (count outcomes per modello, distribution confidence, k-fold isolation check via repository spy applicato retroattivamente sui dati raccolti).
+
+---
+
+### Note sulla sequenza
+
+- **M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7**: dipendenze stretta. Non si può iniziare Mn senza completare Mn-1.
+- **Parallelismo possibile**: M2 (LLM) e M3 (Context) possono essere sviluppate in parallelo dopo M1 — sono moduli indipendenti.
+- **M6 è obbligatoria**: nessuno avvia M7 senza 48h di smoke test verde. Tentazione di "saltare" il smoke per fretta è il rischio più alto della Phase 5.
+- **Nessuna data nominale**: lo studente avanza secondo università + lavoro paralleli. Il vincolo scientifico è "M7 deve durare ≥ 4 settimane consecutive con tick coverage ≥ 95%".
+
+---
+
+## 13. Risk register
+
+Tabella sistematica dei rischi che possono compromettere il progetto. Severity: **Probabilità × Impatto**.
+
+### 13.1 Rischi tecnici
+
+| ID | Rischio | Probabilità | Impatto | Mitigazione |
+|----|---------|-------------|---------|-------------|
+| T1 | Hyperliquid testnet downtime durante esperimento | Media | Alto | Tick `missed` non interpolato (regola unica §2.1). KPI coverage ≥ 95%. Se downtime > 24h cumulativo, estendere esperimento. |
+| T2 | LLM provider rate limit / pricing change | Bassa-Media | Medio | Cost ledger pre-experiment (smoke 48h) stima costo reale. Budget API allocato con margine ×2. Se rate limit colpisce, run in `timeout`/`failed`, no fallback freetext (vedi §8.2). |
+| T3 | Postgres Railway full / restart durante esperimento | Bassa | Alto | Backup giornaliero automatico Railway. Snapshot manuale settimanale. `runs` con composite UNIQUE su `(experiment_id, model_id, scheduled_for)` previene duplicati post-restart. |
+| T4 | Drift di pricing API tra `model_pricing.yaml` e fatturazione reale | Media | Basso | `cost_event.pricing_snapshot` JSONB conserva pricing usato al momento. Riconciliazione manuale a fine esperimento se discrepanza. |
+| T5 | Bug in `invoke_structured` che genera loop di fallback | Bassa | Alto | Hard timeout 90s/LLM + max 2 attempts (struttura by-design). Test unit copre LLMUnrecoverableError. Monitoring `cost_events.n_attempts > 2` come alert ex-post. |
+| T6 | Slippage HL testnet vs mainnet sistematicamente diverso | Alta | Basso | Dichiarato come limitazione esplicita in `RESEARCH §7` (#1). Risultato comunque valido per studio comparativo. |
+| T7 | Hyperliquid SDK breaking change durante esperimento | Bassa | Alto | `pyproject.toml` con version pinning stretto. `uv.lock` committed. No `uv sync` durante run sperimentale. |
+| T8 | LLM hallucina `key_signals` non in vocabolario controllato | Alta | Basso | Pydantic `Literal[...]` type rigetta in validation, fallback freetext attivato. Se anche fallback fallisce, `LLMUnrecoverableError` → run in `failed`. Misurabile via `runs.status` aggregato. |
+
+### 13.2 Rischi scientifici
+
+| ID | Rischio | Probabilità | Impatto | Mitigazione |
+|----|---------|-------------|---------|-------------|
+| S1 | Periodo 4 settimane è bull/bear estremo, distorce risultati | Alta | Medio | Dichiarato come limitazione esplicita in RESEARCH §7 #9. Riportare regime di mercato del periodo nella discussione. |
+| S2 | Tutti i 4 modelli HOLD spesso, dataset sbilanciato | Media | Alto | Aspettativa: 30-50% HOLD (RESEARCH §6.1). Se > 70%, ridurre `AIAT_MIN_OPEN_CONFIDENCE` per i tick rimanenti (ma documentare cambio). |
+| S3 | 4 modelli funzionalmente intercambiabili (kappa > 0.7) | Bassa | Basso | È un risultato scientifico legittimo (RESEARCH §2.2 nota): conferma H0_RQ3. Non è un fallimento. |
+| S4 | Hyperliquid liquidazione precoce di una posizione | Media | Basso | Guardrail Strategia C+ limita leva e size. Liquidations loggati come `close_reason='liquidated'`. Misurati come metrica comportamentale (RESEARCH §3.3). |
+| S5 | DeepSeek/Qwen rifiutano richieste finanziarie per filtro safety | Media | Medio | Cassette VCR pre-experiment validano comportamento. Se rifiuto sistematico, escalare a `LLMUnrecoverableError` documentato come comportamento del modello (è un dato scientifico, non un bug). |
+| S6 | Confidence sempre alta (over-confidence) → Brier score saturo | Alta | Basso | Aspettativa nota (RESEARCH §6.1). Brier score è il *risultato* della misurazione, non l'obiettivo. |
+| S7 | Cosmetic prompt drift (template modificato durante esperimento) | Bassa | Catastrofico | `prompt_template_hash` immutabile in `runs`. Startup check rigetta hash non registrato. `git_commit_sha` loggato in ogni run. Restart richiede stesso template hash. |
+| S8 | Dataset insufficiente per analisi statistica per cella simbolo×regime | Media | Medio | Limitazione dichiarata in RESEARCH §6.1. Analisi a livello (timestamp, model_id) resta sempre fattibile (10.752 osservazioni). |
+
+### 13.3 Rischi operativi
+
+| ID | Rischio | Probabilità | Impatto | Mitigazione |
+|----|---------|-------------|---------|-------------|
+| O1 | Costi API LLM superano budget studente | Media | Alto | Smoke 48h proietta costo 4 settimane × 4 modelli. Modelli `cheap_alt` (DeepSeek/Qwen) costano ~10× meno di premium. Budget allocato ex-ante. Hard cap automatico: `AIAT_HARD_TIMEOUT_SECONDS=180` limita anche cost (ridotto LLM input). |
+| O2 | Railway plan limits raggiunti (CPU/RAM/network) | Bassa | Medio | 5 servizi su Hobby plan dovrebbero rientrare. Upgrade a Pro plan se necessario (~$20/mese). Monitoring manuale via Railway dashboard. |
+| O3 | Wallet HL testnet drenato (4 wallet × 1000$ → liquidazione cascata) | Bassa | Alto | Guardrail size cap 20%/trade. Refund testnet faucet se necessario. Worst case: pause esperimento, refund, restart con tick `skipped` documentati. |
+| O4 | Studente non disponibile per monitoring durante 4 settimane | Alta | Medio | Health check Railway auto-restart. Email alert su downtime via Railway integration (opzionale). Check manuale ogni 24h sufficiente. |
+| O5 | Tesi scadenza vs implementazione che slitta | Alta | Catastrofico | Sequenza milestones senza date forza disciplina M-per-M (no "skip M6 per fretta"). Smoke test 48h come gating obbligatorio. Se M5 in ritardo > 2 settimane, valutare riduzione scope (es. 3 modelli invece di 4). |
+| O6 | API key leak in git per errore | Bassa | Catastrofico | `.gitignore` include `.env`. Pre-commit hook `git-secrets` o `gitleaks`. `pre-commit` framework configurato in M0. |
+| O7 | Database condiviso permette cross-model contamination accidentale | Bassa | Catastrofico | Invariante #1 + RepositorySpy test (§9.5). Tutti gli agent filtrano `WHERE model_id`. Inserts marcano `experiment_id`+`model_id` denormalizzati. |
+
+### 13.4 Rischi metodologici (peer-review tesi)
+
+| ID | Rischio | Probabilità | Impatto | Mitigazione |
+|----|---------|-------------|---------|-------------|
+| M1 | Relatore contesta validità statistica (test t su PnL non-i.i.d.) | Alta | Medio | Documentato in RESEARCH §6.2: bootstrap a blocchi temporali come metodo primario. Test t solo descrittivo secondario. |
+| M2 | Relatore contesta "model-attribuibilità" | Media | Alto | Sostituito ovunque con "model-associated under controlled prompt and context conditions" (RESEARCH §0 + §1 RQ3). Linguaggio prudente preregistrato. |
+| M3 | Relatore contesta confidence calibration (Brier score senza definizione esplicita) | Bassa | Medio | Definizione operativa vincolante nel prompt (RESEARCH §2.1). Documentata. |
+| M4 | Esperimento "non riproducibile" senza dataset/codice | Bassa | Alto | Repo pubblica + dataset CSV/Parquet condivisibili (RESEARCH §8.2). Pre-registrazione via git commit (questo PRD + RESEARCH committed PRE-experiment). |
+| M5 | Discussione "ipotesi causali speculative" troppo forte | Bassa | Medio | RQ3.5 esplicitamente etichettata "speculative interpretative" (RESEARCH §1 RQ3). Va in capitolo discussione, non risultati. |
+
+---
+
+## 14. Propagation map (tracciabilità PRE_PRD ↔ PRD ↔ implementazione)
+
+Mappa esplicita che garantisce che **nessuna decisione strategica del PRE_PRD sia "persa"** nell'implementazione. Per ogni decisione del PRE_PRD: dove vive nel PRD, quale modulo Python la implementa, quale tabella DB la persiste, quale test la verifica.
+
+### 14.1 Mapping decisioni strategiche
+
+| PRE_PRD § | Decisione | PRD § | Modulo Python | Tabella DB | Test gating |
+|-----------|-----------|-------|---------------|------------|-------------|
+| §1.1 | 4 modelli design 2×2 USA/CN × premium/cheap_alt | §11.1 (deploy 4 agent) + §3.2.1 (models) | `config/settings.py::AgentSettings.llm_provider` | `models` | `tests/integration/test_seed_experiment.py` |
+| §1.2 | 4 servizi Railway separati + 1 context-orchestrator | §11.1, §11.2 | `__main__.py` dispatcher + `orchestration/` | — | `tests/e2e/test_isolation.py` |
+| §1.4 | Esperimento comparativo singola condizione | §6.2 (TradeDecision unico schema) | `domain/schemas.py` | `decisions`, `decision_actions` | `tests/unit/domain/test_schemas_trade_decision.py` |
+| §1.5 | Setup ottimizzato baseline (no ablation) | §6.3 (ContextBundle unico) | `context/builder.py` | `context_snapshots` | `tests/integration/test_context_orchestrator.py` |
+| §1.6 | ContextBuilder modulare | §2.2 (struttura collectors/) + §7.2 (BaseCollector) | `context/collectors/*.py` | `context_snapshots.context_json` | `tests/unit/context/test_collectors.py` |
+| §11.1 | LLM stack: langchain-core minimal | §1.2 stack table | `pyproject.toml` deps + `llm/structured.py` | — | `test_llm_dependencies_pinned` |
+| §11.2 | Pydantic + with_structured_output + freetext fallback | §8.2 (invoke_structured) | `llm/structured.py` | — | `tests/unit/llm/test_structured_parser.py` |
+| §11.3 | Memoria 1 sì, Memoria 2 off default | §10.3 (`inject_decision_history: bool = False`) + invariante #5 | `config/settings.py::AgentSettings` | (env-driven, no DB) | `test_startup_memory_off_locked` |
+| §11.4 | 4 sezioni del prompt (Technical/Sentiment/News/On-chain) | §6.3 (ContextBundle structure) | `prompts/templates/v1_baseline.md` | `prompt_templates.template_text` | `test_prompt_renders_all_sections` |
+| §11.5 | Quadrupletta PnL + benchmark spot + 3 baseline | §3.3 RESEARCH note + §3.2.8 DDL | `db/repositories/baselines.py` + `scripts/compute_baselines.py` | `baseline_configs`, `baseline_equity_snapshots` | `tests/integration/test_baselines_pre_registered` |
+| §11.6 | Prompt versioning SHA256 | §3.2.3 + §10.1 startup check A5 | `prompts/renderer.py` | `prompt_templates.sha256_hash`, `runs.prompt_template_hash`, `runs.rendered_prompt_hash` | `test_prompt_hash_immutable_after_seed` |
+| §11.7 | Cost ledger per chiamata LLM | §8.3 + §3.2.6 | `llm/stats_handler.py` + `db/repositories/decisions.py` | `cost_events` | `tests/integration/test_cost_ledger_persisted_atomically` |
+| §11.8 | Test isolamento cross-model | §9.5 | `tests/e2e/test_isolation.py` | — | (test stesso) |
+| §11.9 | TradeDecision schema canonico | §6.2 | `domain/schemas.py::TradeDecision` + `ActionDecision` | `decisions`, `decision_actions` | `tests/unit/domain/test_schemas_*.py` |
+| §13.3 | 4 guardrail Strategia C+ | §7.4 + §10.3 default + §8 LLM | `execution/guardrails.py` | `decision_actions.{leverage_clamped, size_pct_clamped, forced_hold}` | `tests/unit/execution/test_guardrails.py` + `tests/e2e/test_guardrail_e2e.py` |
+
+### 14.2 Mapping requisiti Figma (F1/F2/F3)
+
+| Figma Req | Descrizione | PRD § | Implementazione | Test gating |
+|-----------|-------------|-------|-----------------|-------------|
+| F1 | SL/TP mandatory per LONG/SHORT | §6.2 (model_validator) + §7.4 guardrail #1 | `domain/schemas.py::ActionDecision.validate_side_consistency` + `execution/guardrails.py` step 1 | `test_schemas_long_requires_sl_tp` + `test_guardrails_force_hold_if_no_sl_tp` |
+| F2 | Confidence sempre presente (anche HOLD/FLAT) | §6.2 + invariante #7 | `domain/schemas.py::ActionDecision.confidence` (NOT NULL) | `test_confidence_required_even_for_hold` |
+| F3 | Leverage con risk cap dinamico | §7.4 guardrail #3 (1 + confidence×9, hard cap 10) | `execution/guardrails.py` step 3 | `test_leverage_clamp_by_confidence` |
+
+### 14.3 Mapping invarianti §5 ai test (riassuntivo)
+
+Vedi §9.7 (Invariant coverage matrix) per la tabella completa. Tutti i 15 invarianti hanno un test gating in CI. Nessun invariante è "documentato ma non testato".
+
+---
+
+## 15. Handoff a Phase 5 (implementazione)
+
+### 15.1 Pre-requisiti per iniziare Phase 5
+
+Prima di aprire VSCode + Claude Code per scrivere la prima riga di codice, verificare:
+
+- [x] `PRE_PRD.md` v3 committato (`73e3d02`)
+- [x] `RESEARCH_DESIGN.md` v3 committato (`2e1df14`)
+- [x] `PRD_V2.md` Round 1 v3 committato (`669ced9`)
+- [x] `PRD_V2.md` Round 2 v3 committato (`e80c16e`)
+- [ ] `PRD_V2.md` Round 3 v1 committato (questo Round, prossimo step)
+- [ ] Branch `prd/v2-design` merge in `main` (via PR formale)
+- [ ] Tag `prd-v2-frozen` su `main` per marcare il "blueprint freeze"
+- [ ] Claude Code installato + configurato (`claude` CLI in PATH)
+- [ ] `CLAUDE.md` project-level creato (vedi §15.2 bozza)
+
+### 15.2 Bozza `CLAUDE.md` project-level
+
+File da creare in root del repo come prima azione di Phase 5. Indirizza Claude Code (Sonnet/Opus) durante l'implementazione.
+
+```markdown
+# CLAUDE.md — AI Trading Agent V2 (Thesis Edition)
+
+## Ground truth documenti
+
+Tutti i documenti tecnici-scientifici sono in `docs/`:
+- `PRE_PRD.md` — 18 decisioni strategiche
+- `RESEARCH_DESIGN.md` — cornice scientifica (3 RQ, ipotesi, baseline)
+- `PRD_V2.md` — blueprint tecnico completo (architettura + DDL + API + test + deploy)
+
+**Regola d'oro**: se hai dubbi su una decisione di design, **NON inventare**.
+Leggi prima il PRD V2. Se la risposta non c'è, fermati e chiedi all'utente.
+
+## Architettura in 1 minuto
+
+5 servizi Python su Railway condividono UN database Postgres:
+- 1× `context-orchestrator` (5° servizio): materializza UN context_snapshot per
+  tick di 15 minuti. Letto dai 4 agent.
+- 4× `agent-<provider>` (OpenAI, Anthropic, DeepSeek, Qwen): ciascuno con
+  proprio wallet HL testnet, legge context_snapshot del tick, invoca LLM,
+  applica guardrail, esegue ordini.
+
+Dispatch via `AIAT_SERVICE_ROLE`: stesso codice, ruoli diversi (vedi PRD §11.2).
+
+## Stack vincolante
+
+- Python 3.12+, `uv` package manager (NO pip, NO poetry)
+- Pydantic v2 strict everywhere (NO `dict[str, Any]` nei contratti)
+- SQLAlchemy 2.x async (`Mapped`/`DeclarativeBase`), `asyncpg` driver
+- Alembic per migrations (NO modifiche manuali al DB)
+- APScheduler per cron 15m (NO Railway cron native)
+- `langchain-core` + `langchain-openai` + `langchain-anthropic` MINIMAL
+  (NO LangGraph, NO LangChain high-level)
+- structlog JSON logs (NO print() runtime — ruff T201 enforced)
+- pytest + pytest-asyncio + pytest-postgresql + VCR.py per test
+- ruff + mypy strict + import-linter in CI
+
+## Invarianti non negoziabili (PRD §5)
+
+15 invarianti. Particolarmente critici per il workflow di sviluppo:
+
+1. **Isolation cross-model**: ogni query agent filtra `WHERE model_id = $AIAT_MODEL_ID`.
+   Test gating: `tests/e2e/test_isolation.py` con RepositorySpy.
+
+4. **Cost ledger atomico**: `LLMClient.invoke()` ritorna `CostEventData` DTO,
+   persistito DOPO `decisions` nella stessa transazione. MAI scrivere
+   `cost_events` direttamente in `invoke()`.
+
+9. **No mainnet**: `AIAT_NETWORK=testnet` validato all'avvio. RuntimeError fatal
+   se diverso.
+
+12. **Decimal per soldi**: `decimal.Decimal` ovunque, MAI `float` per
+    size/price/fee/PnL. SQLAlchemy `Numeric` columns.
+
+13. **Parità market context**: il `context_snapshot` è scritto SOLO dal
+    `context-orchestrator`. Gli agent NON fetchano sorgenti esterne durante
+    la run.
+
+14. **No dipendenze cicliche tra moduli runtime**: enforce by `import-linter`.
+
+## Workflow di sviluppo
+
+### Regola TDD obbligatoria per moduli core
+
+I moduli in `domain/`, `llm/`, `execution/` richiedono **TDD**:
+1. Scrivi il test PRIMA dell'implementazione
+2. Verifica che il test fallisca
+3. Implementa il minimo per far passare il test
+4. Refactor
+
+Coverage target: **95%** su questi moduli (CI gating).
+
+### No commit senza test
+
+Per ogni PR:
+- [ ] Tutti i test passano (`uv run pytest`)
+- [ ] Coverage globale ≥ 80%, core ≥ 95%
+- [ ] `uv run ruff check src tests` clean
+- [ ] `uv run mypy src` clean
+- [ ] `uv run import-linter` clean
+- [ ] Se è una migration: `alembic upgrade head` + `alembic downgrade base`
+  testati su Postgres pulito
+
+### Conventional commits
+
+```
+<type>(<scope>): <subject>
+
+<body>
+
+<footer>
+```
+
+Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `ci`.
+
+Esempio:
+```
+feat(llm): implement OpenAICompatibleClient for DeepSeek + Qwen
+
+Unified client via base_url override. Reuses with_structured_output
+path from langchain-openai. Reasoning tokens extracted from
+completion_tokens_details.
+
+Refs PRD §8.1 (factory dispatcher).
+```
+
+## Stile codice
+
+- Type hints **ovunque** (mypy strict mode)
+- Docstring **stile Google** per funzioni pubbliche
+- `async def` di default; `def` solo per pure function senza I/O
+- NO `from X import *`
+- Path imports espliciti: `from aiat.domain.schemas import TradeDecision`
+
+## Sequenza milestones (PRD §12)
+
+Sviluppo IN ORDINE: M0 → M1 → M2 → M3 → M4 → M5 → M6 → M7.
+
+Eccezione: M2 e M3 possono procedere in parallelo dopo M1.
+
+**Non avviare Mn senza completare Mn-1.** Non avviare M7 (esperimento ufficiale) senza M6 verde (smoke 48h).
+
+## Quando chiedere all'utente
+
+Chiedi conferma esplicita PRIMA di:
+- Modificare lo schema DDL (sempre via Alembic migration nuova)
+- Aggiungere una dipendenza al `pyproject.toml`
+- Cambiare un guardrail default
+- Toccare i 4 model_id registrati nel seed
+- Skip / soft-skip di un test
+
+Procedi autonomamente per:
+- Implementare un modulo seguendo il PRD
+- Aggiungere test (sempre incoraggiati)
+- Refactoring interno che NON cambia API esposta
+- Fix di bug isolati con test che riproduce il bug
+```
+
+### 15.3 Setup iniziale Claude Code
+
+Comandi raccomandati per primo bootstrap di Phase 5:
+
+```bash
+cd ~/projects/AI-Agent-for-Trading
+
+# 1. Crea CLAUDE.md (vedi bozza §15.2 sopra)
+$EDITOR CLAUDE.md
+
+# 2. Verifica integrazione tools
+claude --version
+claude /init  # se non già fatto, scansiona il repo
+
+# 3. Inizia M0 in sessione Claude Code
+claude
+# > "Leggi PRD V2 §11.2 e §12 (M0). Crea pyproject.toml, Dockerfile, ci.yml,
+#    import-linter config seguendo §1.2 dipendenze e §2.2 struttura cartelle."
+```
+
+### 15.4 Decisioni deferite con milestone vincolante di chiusura
+
+Le seguenti decisioni sono **esplicitamente deferite** alla fase di implementazione, ma **non sono debito indefinito**: ciascuna ha una milestone entro cui DEVE essere chiusa, con un razionale per la deferenza. Patch post peer-review AI_B su Round 3: trattamento rigoroso come *bounded deferrals*, non *open issues*.
+
+| ID | Decisione deferita | Razionale per la deferenza | Milestone di chiusura | Vincolante perché |
+|----|---------------------|-----------------------------|------------------------|--------------------|
+| D1 | Selezione finale dei 4 modelli LLM concreti (es. `gpt-5.1-2026-Q1` esatto vs altre versioni) | Le release dei provider cambiano; voglio i modelli più recenti al momento del seed, non quelli noti oggi | **M7 step 4** (`scripts/seed_experiment.py`) | I 4 model_id finiscono nella tabella `models` al seed; da quel momento sono immutabili per tutto l'esperimento |
+| D2 | HOLD/FLAT outcome labeling rule (definizione operativa controfattuale) | Richiede di osservare in smoke test la distribuzione effettiva di HOLD/FLAT prima di scegliere la regola | **M4** (ExecutionLayer + OutcomeResolver) | Necessaria PRIMA dell'analisi di calibrazione confidence (Brier score richiede outcome binary definito); senza chiusura M4 non può chiudersi |
+| D3 | Lista finale exception class per `_is_rate_limit_error` / `_is_auth_error` (isinstance() primary) | Dipende dalle versioni esatte dei SDK provider al momento dello sviluppo | **M2** (LLM abstraction) | Il modulo `llm/structured.py` non può raggiungere coverage 95% senza isinstance() checks puntuali e test che li validano |
+| D4 | Lista finale `controlled_signals` (vocabolario `key_signals`) | La lista preliminare di 18 valori in §6.2 può richiedere raffinamento dopo aver osservato cosa generano i 4 LLM in smoke test | **M3** (ContextOrchestrator + smoke prompt) | Versione finale committed in `prompt_templates.controlled_signals` al seed; prompt_template_hash dipende da questa lista |
+| D5 | Numero esatto di news items per tick + lista RSS sources definitiva | Trade-off tra rilevanza informativa e token budget del prompt; calibrare in M3 sul contesto reale | **M3** (collectors/news.py) | Il prompt template hash include questi parametri, deve essere stabile dal seed in poi |
+
+**Regola operativa**: lo studente NON può marcare una milestone come "DONE" se la decisione deferita ad essa associata non è chiusa e documentata. Esempio: M4 non può chiudersi se D2 (HOLD/FLAT outcome labeling rule) non è stata fissata, implementata in `OutcomesRepository`, e testata.
+
+**Tracciabilità in git**: ogni chiusura di deferred decision viene committed con messaggio dedicato che cita l'ID (es. `feat(outcomes): close D2 — HOLD/FLAT outcome labeling rule`). Permette di verificare a posteriori che nessuna decisione sia sfuggita.
+
+---
+
+*Fine PRD V2 Round 3 v2 (post peer-review esterna AI_B, verdetto 9.3/10 APPROVATO, 1 patch puntuale integrata su §15.4 — bounded deferrals con milestone vincolante). Documento completo: §0-§15. PRONTO per commit definitivo. Dopo il commit, la Fase 4.2 è completa, branch `prd/v2-design` può essere mergeato in `main` con tag `prd-v2-frozen`, e inizia la Phase 5 (implementazione).*
