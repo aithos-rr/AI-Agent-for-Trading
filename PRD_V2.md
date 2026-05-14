@@ -2,9 +2,9 @@
 
 > Documento tecnico-implementativo per l'agente V2. Traduce le 18 decisioni del `PRE_PRD.md` (commit `73e3d02`) e la cornice scientifica del `RESEARCH_DESIGN.md` (commit `2e1df14`) in specifiche eseguibili: architettura moduli, schema DB completo (DDL), contratti API, flussi dati, strategia di deploy, test plan, milestones, risk register.
 >
-> **Stato**: ROUND 1 v3/3 — questa versione **post DUE cicli di peer-review esterna** copre §1-§5 (introduzione + stack + architettura + schema DB + flussi dati). Cicli di integrazione: v1→v2 integrava 18 fix (8 HIGH + 7 MEDIUM + 3 LOW) sulla prima review; v2→v3 integra ulteriori 8 fix (4 dei 5 parziali della prima review portati a completo + 3 HIGH + 2 MEDIUM emersi nella seconda review). Round 2 aggiungerà contratti API + LLM provider abstraction + test plan. Round 3 aggiungerà deploy strategy + milestones + risk register + propagation map.
+> **Stato**: ROUND 2 v3/3 — questa versione integra Round 1 v3 (commit `669ced9`, post 2 cicli peer-review) con il **Round 2 v3** (§6-§10), post **3 cicli di peer-review esterna sul Round 2**: ciclo 1 (v1→v2) integrava 16 fix; ciclo 2 (v2→v3) integra 5 micro-fix (1 HIGH + 3 MEDIUM + 1 LOW + 1 fix B.14 portato da parziale a completo). Round 3 aggiungerà deploy strategy + milestones + risk register + propagation map.
 >
-> Branch: `prd/v2-design`. Da committare separatamente per ogni round per tracciabilità.
+> Branch: `prd/v2-design`.
 
 ---
 
@@ -135,7 +135,7 @@ In caso di conflitto: PRD V2 specifica concretamente; PRE_PRD e RESEARCH_DESIGN 
   - Materializza **un solo `ContextBundle` per tick** e lo persiste come `context_snapshot` row in DB
   - I 4 agent partono ~30s dopo (HH:00:30, HH:15:30, ...) e leggono il context per il `tick_id` corrente dal DB
 - **Garantisce parità cross-model del market context**: tutti i 4 agent ricevono **byte-identico** lo stesso *market context* al medesimo tick (stesso `context_hash`, stessa `context_snapshot.id`). Il *prompt finale* somministrato a ciascun modello, però, include anche il `portfolio_state` model-specific (che diverge dopo il primo tick di trading, perché i 4 wallet evolvono indipendentemente). Quindi: **market context byte-identico cross-model + portfolio state isolato per modello**. Il `portfolio_state_hash` viene loggato in `account_snapshots` per audit.
-- **Decoupling**: se il context-orchestrator fallisce, i 4 agent leggono il *fallback* del tick precedente o saltano il tick (vedi §4.1 e §5)
+- **Decoupling con regola netta sulla parità sperimentale**: se il context-orchestrator fallisce per un tick, gli agent del medesimo tick chiudono la propria run in `status='missed'`. **Mai usare un `context_snapshot` di tick precedente come fallback**: l'interpolazione di un contesto rotto romperebbe la parità sperimentale e produrrebbe decisioni su input "vecchi" non comparabili con quelle degli altri tick. Regola unica e categorica: *se il `context_snapshot` del tick corrente non esiste, il tick è missed*.
 - 1 Postgres condiviso, schema unico, scrittura distinta per `model_id`
 - Hyperliquid testnet: 4 wallet distinti, 1000$ ciascuno (solo gli agent toccano HL per esecuzione; il context-orchestrator legge prezzi via HL info endpoint, non opera trade)
 
@@ -738,6 +738,7 @@ CREATE TABLE cost_events (
     input_tokens        INT NOT NULL CHECK (input_tokens >= 0),
     output_tokens       INT NOT NULL CHECK (output_tokens >= 0),
     reasoning_tokens    INT NOT NULL DEFAULT 0 CHECK (reasoning_tokens >= 0),
+    n_attempts          INT NOT NULL DEFAULT 1 CHECK (n_attempts >= 1),  -- numero tentativi LLM aggregati (fix B.16 review-r2-v2): 1=solo primary, 2=primary+fallback freetext
     cost_usd            NUMERIC(12,8) NOT NULL CHECK (cost_usd >= 0),
     pricing_snapshot    JSONB NOT NULL,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -870,6 +871,9 @@ CREATE INDEX idx_errors_kind ON errors(error_kind, occurred_at DESC);
 
 **Perché `experiment_id`/`model_id`/`run_id` denormalizzati ovunque?**
 Tradeoff pragmatico (fix punto 9 review-v1, completato in review-v2): l'invariante #3 richiede `experiment_id` + `model_id` + `run_id` end-to-end sulle tabelle operative. In v3 sono stati aggiunti `run_id` mancanti su: `positions` (come `opening_run_id`), `orders` (`run_id`), `fee_events` (`run_id`), `cost_events` (`run_id`), `outcomes` (`opening_run_id` + `closing_run_id`). Unica eccezione motivata: `funding_events` NON ha `run_id` — i funding maturano nei periodi 8h di Hyperliquid, non sono attribuibili a una run specifica; quindi tracciarli per run sarebbe forzato e fuorviante. Restano `experiment_id` + `model_id` per coerenza con #3.
+
+**Perché `cost_events.n_attempts`?**
+Fix B.16 review-r2-v2: il `StatsCallbackHandler` aggrega tokens su primary + eventuale fallback freetext (vedi §8.3). Senza colonna dedicata, l'informazione "questa decisione è costata 2 tentativi LLM" sarebbe persa nello schema. Per l'analisi scientifica (RESEARCH §3.3: robustezza cross-model) sapere quante volte un modello richiede il fallback è una metrica di affidabilità del provider/configurazione. Range tipico: `n_attempts ∈ {1, 2}`; `>2` indicherebbe un bug nell'`invoke_structured` (no retry oltre fallback per design).
 
 **Perché tabelle separate `prompt_templates` vs `runs.rendered_prompt_hash`?**
 Fix punto 10 review-v1: il *template statico* (placeholder + confidence_def) ha hash stabile e vive in `prompt_templates`. Il *prompt finalizzato* (template + contesto + portfolio_state interpolati) cambia ad ogni run e il suo hash si salva in `runs.rendered_prompt_hash`. Sono due oggetti diversi: confondere il template con il prompt rendered è un errore di modellazione.
@@ -1137,4 +1141,1799 @@ Questi vincoli sono **non negoziabili**, derivano da PRE_PRD, RESEARCH_DESIGN e 
 
 ---
 
-*Fine PRD V2 Round 1 v3 (post 2 cicli di peer-review esterna, 26 fix totali integrati: 18 da review v1→v2 + 8 da review v2→v3). Blueprint tecnico pronto per commit. Prossimi round: contratti API + LLM provider abstraction + test plan (Round 2); deploy strategy + milestones + risk register + propagation map (Round 3).*
+---
+
+## 6. Schemi Pydantic (dominio applicativo)
+
+Tutti gli schemi del dominio applicativo vivono in `src/aiat/domain/schemas.py`. Sono **Pydantic v2** (validazione strict, type hints rigorosi, esempi nei `model_config`).
+
+### 6.1 Enums
+
+```python
+# src/aiat/domain/enums.py
+from enum import StrEnum
+
+class Side(StrEnum):
+    LONG = "LONG"
+    SHORT = "SHORT"
+    FLAT = "FLAT"
+    HOLD = "HOLD"
+
+class EntryType(StrEnum):
+    MARKET = "market"
+    LIMIT = "limit"
+    NONE = "none"
+
+class Tier(StrEnum):
+    PREMIUM = "premium"
+    CHEAP_ALT = "cheap_alt"
+
+class Geography(StrEnum):
+    USA = "USA"
+    CN = "CN"
+
+class RunStatus(StrEnum):
+    RUNNING = "running"
+    SUCCESS = "success"
+    PARTIAL = "partial"
+    FAILED = "failed"
+    TIMEOUT = "timeout"
+    MISSED = "missed"
+    SKIPPED = "skipped"
+
+class ExecutionStatus(StrEnum):
+    NOT_APPLICABLE = "not_applicable"
+    PENDING = "pending"
+    FILLED = "filled"
+    PARTIAL = "partial"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+class OrderKind(StrEnum):
+    ENTRY = "entry"
+    STOP_LOSS = "stop_loss"
+    TAKE_PROFIT = "take_profit"
+    CLOSE = "close"
+
+class CloseReason(StrEnum):
+    MANUAL = "manual"
+    STOP_LOSS = "stop_loss"
+    TAKE_PROFIT = "take_profit"
+    LIQUIDATED = "liquidated"
+    MODEL_CLOSE = "model_close"
+```
+
+### 6.2 Schema decisione (output LLM)
+
+Lo schema **vincolante** che l'LLM deve produrre. Usato con `with_structured_output` di langchain. Validazione Pydantic rigetta automaticamente output malformati (→ fallback freetext).
+
+```python
+# src/aiat/domain/schemas.py
+from decimal import Decimal
+from typing import Annotated, Literal
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+from aiat.domain.enums import Side, EntryType
+
+# Vocabolario controllato dei key_signals (RESEARCH §3.3, PRD §3.2.1 controlled_signals)
+ControlledSignal = Literal[
+    "technical.rsi_extreme",
+    "technical.macd_cross",
+    "technical.ema_alignment",
+    "technical.bollinger_squeeze",
+    "technical.atr_spike",
+    "technical.support_resistance",
+    "sentiment.news_polarity",
+    "sentiment.fear_greed",
+    "sentiment.market_panic",
+    "onchain.funding_rate_extreme",
+    "onchain.open_interest_shift",
+    "onchain.liquidation_cascade",
+    "market.volatility_regime",
+    "market.volume_anomaly",
+    "market.basis_perp_spot",
+    "portfolio.exposure_high",
+    "portfolio.unrealized_pnl",
+    "portfolio.position_aging",
+]
+
+
+class ActionDecision(BaseModel):
+    """Output strutturato del modello per UN simbolo (action-level)."""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    symbol: Literal["BTC", "ETH", "SOL"]
+    side: Side
+    leverage: Annotated[Decimal, Field(ge=0, le=50, decimal_places=2)]
+    size_pct: Annotated[Decimal, Field(ge=0, le=1, decimal_places=4)]
+    stop_loss_pct: Annotated[Decimal | None, Field(default=None, gt=0, decimal_places=4)]
+    take_profit_pct: Annotated[Decimal | None, Field(default=None, gt=0, decimal_places=4)]
+    entry_type: EntryType
+    limit_price: Annotated[Decimal | None, Field(default=None, gt=0, decimal_places=8)]
+
+    # Action-level scientific outputs (RESEARCH §1.0 + §2.1)
+    confidence: Annotated[Decimal, Field(ge=0, le=1, decimal_places=4)] = Field(
+        description=(
+            "Estimated probability ∈ [0, 1] that this specific action will produce "
+            "positive net PnL (after fees and funding) within time_horizon_min. "
+            "For HOLD/FLAT, probability that this passive choice is preferable to "
+            "the active alternatives at this moment."
+        )
+    )
+    time_horizon_min: Annotated[int, Field(gt=0, le=1440)] = Field(
+        description="Time horizon in minutes within which the confidence is calibrated."
+    )
+    action_reasoning: Annotated[str, Field(min_length=20, max_length=2000)]
+    action_key_signals: list[ControlledSignal] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def validate_side_consistency(self) -> "ActionDecision":
+        """Vincoli condizionali coerenti con DDL chk_hold_flat_no_sizing
+        e chk_open_close_has_sizing."""
+        if self.side in (Side.HOLD, Side.FLAT):
+            if self.size_pct != 0 or self.leverage != 0:
+                raise ValueError("HOLD/FLAT must have size_pct=0 and leverage=0")
+            if self.entry_type != EntryType.NONE:
+                raise ValueError("HOLD/FLAT must have entry_type='none'")
+            if self.stop_loss_pct is not None or self.take_profit_pct is not None:
+                raise ValueError("HOLD/FLAT must not declare SL/TP")
+            if self.limit_price is not None:
+                raise ValueError("HOLD/FLAT must not specify limit_price")  # fix A.1 review-r2
+        else:  # LONG/SHORT
+            if self.size_pct <= 0 or self.leverage < 1:
+                raise ValueError("LONG/SHORT must have size_pct>0 and leverage>=1")
+            if self.entry_type not in (EntryType.MARKET, EntryType.LIMIT):
+                raise ValueError("LONG/SHORT must have entry_type='market' or 'limit'")
+            if self.stop_loss_pct is None or self.take_profit_pct is None:
+                raise ValueError("LONG/SHORT must declare both SL and TP (Figma F1)")
+            if self.entry_type == EntryType.LIMIT and self.limit_price is None:
+                raise ValueError("entry_type='limit' requires limit_price")
+            if self.entry_type == EntryType.MARKET and self.limit_price is not None:
+                raise ValueError("entry_type='market' must not specify limit_price")
+        return self
+
+
+class TradeDecision(BaseModel):
+    """Output completo del modello per UN tick portfolio-level (RESEARCH §1.0)."""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    portfolio_reasoning: Annotated[str, Field(min_length=50, max_length=4000)]
+    risk_assessment: Annotated[str, Field(min_length=30, max_length=2000)]
+    portfolio_confidence: Annotated[Decimal | None, Field(default=None, ge=0, le=1, decimal_places=4)]
+    actions: Annotated[list[ActionDecision], Field(min_length=3, max_length=3)] = Field(
+        description="Exactly 3 actions, one per symbol (BTC, ETH, SOL), in any order."
+    )
+
+    @model_validator(mode="after")
+    def validate_all_symbols_covered(self) -> "TradeDecision":
+        symbols = {a.symbol for a in self.actions}
+        if symbols != {"BTC", "ETH", "SOL"}:
+            raise ValueError(f"actions must cover exactly BTC/ETH/SOL, got {symbols}")
+        return self
+```
+
+**Note di disegno**:
+- `extra="forbid"`: campi extra rigettati. Impedisce all'LLM di inventare campi non previsti.
+- `Decimal` ovunque per valori monetari/percentuali (invariante #12).
+- `ControlledSignal` come `Literal[...]` di stringhe: il vocabolario è enforcato a livello type-check (rifiuta `"RSI overbought"` se non in lista).
+- `model_validator(mode="after")` per i vincoli condizionali → questi sono il riflesso Pydantic dei CHECK constraint DDL `chk_hold_flat_no_sizing` e `chk_open_close_has_sizing`.
+
+### 6.3 Schemi di contesto (input ContextBuilder/Renderer)
+
+```python
+class TechnicalIndicators(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    symbol: Literal["BTC", "ETH", "SOL"]
+    price_usd: Decimal
+    rsi_14: Decimal
+    macd_signal_diff: Decimal
+    ema_20: Decimal
+    ema_50: Decimal
+    bollinger_upper: Decimal
+    bollinger_lower: Decimal
+    atr_14: Decimal
+    volume_24h_usd: Decimal
+
+
+class SentimentSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    fear_greed_index: Annotated[int, Field(ge=0, le=100)]
+    fear_greed_label: Literal["extreme_fear", "fear", "neutral", "greed", "extreme_greed"]
+    fetched_at: str  # ISO timestamp
+
+
+class NewsItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: Annotated[str, Field(max_length=300)]
+    summary: Annotated[str, Field(max_length=600)]
+    source: str
+    published_at: str
+    sentiment_polarity: Annotated[Decimal, Field(ge=-1, le=1)] | None = None
+
+
+class OnChainSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    symbol: Literal["BTC", "ETH", "SOL"]
+    funding_rate_8h: Decimal
+    open_interest_usd: Decimal
+    long_short_ratio: Decimal
+    liquidations_24h_usd: Decimal
+
+
+class PortfolioState(BaseModel):
+    """Stato model-specific. Diverge cross-model dopo il primo tick (RESEARCH §3.2)."""
+    model_config = ConfigDict(extra="forbid")
+    equity_usd: Decimal
+    available_usd: Decimal
+    margin_used_usd: Decimal
+    n_open_positions: int
+    unrealized_pnl_usd: Decimal
+    open_positions: list["OpenPositionSummary"]
+
+
+class OpenPositionSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    symbol: Literal["BTC", "ETH", "SOL"]
+    side: Literal["LONG", "SHORT"]
+    entry_price: Decimal
+    current_price: Decimal
+    size_units: Decimal
+    leverage: Decimal
+    unrealized_pnl_usd: Decimal
+    age_minutes: int
+
+
+class ContextBundle(BaseModel):
+    """Output del ContextOrchestrator. Market context byte-identico cross-model.
+
+    NOTA: questa struttura rappresenta SOLO il market context (technical, sentiment,
+    news, onchain). Il prompt finale somministrato al LLM combina questo bundle con
+    il `PortfolioState` model-specific (che diverge cross-model dopo il primo tick
+    di trading). Vedi invariante #13 in §5: "market parity vs portfolio independence".
+    """
+    model_config = ConfigDict(extra="forbid")
+    tick_id: str
+    tick_at: str
+    technical: list[TechnicalIndicators]
+    sentiment: SentimentSnapshot
+    news: list[NewsItem]
+    onchain: list[OnChainSnapshot]
+    source_timestamps: dict[str, str]  # {"technical": "2026-...", "sentiment": "...", ...}
+```
+
+### 6.4 DTO interni runtime
+
+```python
+class CostEventData(BaseModel):
+    """DTO restituito da LLMClient.invoke(), persistito DOPO la decisione (invariante #4).
+
+    Aggregato cumulativo se vengono fatti più tentativi LLM (primary + fallback freetext):
+    `input_tokens`, `output_tokens`, `reasoning_tokens` e `cost_usd` riflettono il TOTALE
+    di tutte le chiamate LLM eseguite per produrre questa decisione (fix B.8 review-r2).
+    """
+    model_config = ConfigDict(extra="forbid")
+    input_tokens: Annotated[int, Field(ge=0)]
+    output_tokens: Annotated[int, Field(ge=0)]
+    reasoning_tokens: Annotated[int, Field(ge=0)] = 0
+    cost_usd: Annotated[Decimal, Field(ge=0, decimal_places=8)]
+    pricing_snapshot: dict[str, Decimal]
+    n_attempts: Annotated[int, Field(ge=1)] = 1  # 1 = solo primary; 2 = primary + fallback
+
+
+class LLMInvocationResult(BaseModel):
+    """Output completo di LLMClient.invoke()."""
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
+    decision: TradeDecision
+    cost: CostEventData
+    latency_ms: Annotated[int, Field(ge=0)]
+    raw_response_id: str | None = None
+    raw_payload: dict
+    fallback_used: bool = False
+    provider_snapshot: str
+    model_name_api_snapshot: str
+    temperature: Annotated[Decimal | None, Field(default=None, ge=0)]
+    top_p: Annotated[Decimal | None, Field(default=None, gt=0, le=1)]
+    max_tokens: Annotated[int | None, Field(default=None, gt=0)]
+    seed: int | None = None
+
+
+class GuardrailReport(BaseModel):
+    """Output di Guardrails.apply(). Una row per action."""
+    model_config = ConfigDict(extra="forbid")
+    symbol: Literal["BTC", "ETH", "SOL"]
+    original_side: Side
+    leverage_clamped: bool
+    size_pct_clamped: bool
+    forced_hold: bool
+    final_action: ActionDecision  # post-clamping
+```
+
+---
+
+## 7. Contratti API tra moduli
+
+Tutti i moduli runtime espongono **interfacce esplicite** (ABC o Protocol). Le implementazioni concrete possono cambiare senza rompere i chiamanti. Verificato in CI da `import-linter` (invariante #14).
+
+### 7.1 ContextOrchestrator (5° servizio Railway)
+
+```python
+# src/aiat/orchestration/context_orchestrator.py
+from typing import Protocol
+from aiat.domain.schemas import ContextBundle
+
+class ContextOrchestrator(Protocol):
+    """Materializza UN context_snapshot per tick. Eseguito sul 5° servizio Railway."""
+
+    async def build_tick_context(self, tick_id: str, experiment_id: str) -> ContextBundle:
+        """
+        Atomicità: scrive UN solo context_snapshot per (experiment_id, tick_id).
+        Su fallimento, scrive comunque una context_build_run row con status='failed'.
+
+        Hard timeout: 30s totali (vedi §4.1 timeline).
+        Raises:
+            ContextBuildError: timeout, source unavailable, persist failure.
+        """
+        ...
+```
+
+### 7.2 BaseCollector (collectors interni al ContextOrchestrator)
+
+```python
+# src/aiat/context/collectors/base.py
+from abc import ABC, abstractmethod
+from typing import Generic, TypeVar
+from pydantic import BaseModel
+
+T = TypeVar("T", bound=BaseModel)
+
+
+class BaseCollector(ABC, Generic[T]):
+    """Base per collectors: technical, sentiment, news, onchain."""
+
+    timeout_seconds: int  # per-source timeout (vedi §4.1)
+    cache_ttl_seconds: int  # 0 = no cache
+
+    @abstractmethod
+    async def collect(self) -> T:
+        """
+        Returns:
+            Pydantic model con i dati raccolti.
+        Raises:
+            CollectorTimeoutError: se supera self.timeout_seconds.
+            CollectorSourceError: se la source remota fallisce.
+        """
+        ...
+```
+
+### 7.3 BaseLLMClient (interfaccia uniforme per i 4 provider)
+
+```python
+# src/aiat/llm/base.py
+from abc import ABC, abstractmethod
+from aiat.domain.schemas import LLMInvocationResult, TradeDecision
+
+class BaseLLMClient(ABC):
+    """
+    Interfaccia uniforme per OpenAI, Anthropic, OpenAICompatible (DeepSeek/Qwen).
+
+    Implementa:
+      1. Primary: with_structured_output(TradeDecision) via langchain
+      2. Fallback: freetext + regex JSON extraction
+      3. Cost tracking: ritorna CostEventData (persistito DOPO da chiamante,
+         invariante #4)
+      4. Nuisance snapshot: provider/model/temperature/top_p/seed nei result
+    """
+
+    provider: str
+    model_name_api: str
+
+    @abstractmethod
+    async def invoke(
+        self,
+        prompt: str,
+        *,
+        timeout_seconds: int = 90,  # hard timeout (vedi §4.1)
+    ) -> LLMInvocationResult:
+        """
+        Returns:
+            LLMInvocationResult con decision validata Pydantic + cost + nuisance.
+        Raises:
+            LLMTimeoutError: superato timeout_seconds.
+            LLMUnrecoverableError: anche il fallback freetext ha fallito parsing.
+        """
+        ...
+```
+
+### 7.4 Guardrails (Protocol con 4 strategie componibili)
+
+```python
+# src/aiat/execution/guardrails.py
+from typing import Protocol
+from aiat.domain.schemas import TradeDecision, GuardrailReport
+
+class GuardrailStrategy(Protocol):
+    """4 guardrail Strategia C+ (PRE_PRD §13.3, mai disattivabili — invariante #8)."""
+
+    def apply(
+        self,
+        decision: TradeDecision,
+        *,
+        max_size_pct: Decimal,           # AIAT_MAX_SIZE_PCT (default 0.20)
+        hard_max_leverage: Decimal,      # AIAT_HARD_MAX_LEVERAGE (default 10)
+        min_open_confidence: Decimal,    # AIAT_MIN_OPEN_CONFIDENCE (default 0.4)
+    ) -> tuple[TradeDecision, list[GuardrailReport]]:
+        """
+        Applica i 4 guardrail in ordine:
+          1. SL/TP mandatory check (Figma F1) — rifiuta o downgrade a HOLD se mancanti
+          2. size_pct ≤ max_size_pct (clamp)
+          3. leverage ≤ min(1 + confidence × 9, hard_max_leverage) (clamp)
+          4. if confidence < min_open_confidence → force HOLD
+
+        Returns:
+            (decision_post_clamp, reports) — `reports` ha una row per action con
+            flag leverage_clamped/size_pct_clamped/forced_hold/original_side.
+        """
+        ...
+```
+
+### 7.5 HyperliquidClient (execution layer)
+
+```python
+# src/aiat/execution/hyperliquid_client.py
+from abc import ABC, abstractmethod
+from aiat.domain.schemas import ActionDecision, PortfolioState
+
+class HyperliquidClient(ABC):
+    """Wrapper testnet del Hyperliquid SDK."""
+
+    @abstractmethod
+    async def fetch_portfolio_state(self) -> PortfolioState:
+        """Snapshot dello stato wallet. Letto a inizio di ogni decision_loop."""
+        ...
+
+    @abstractmethod
+    async def execute_action(
+        self,
+        action: ActionDecision,
+        run_id: str,
+        current_position: OpenPositionSummary | None,
+    ) -> list["OrderResult"]:
+        """
+        Esegue una action conoscendo lo stato corrente della posizione.
+
+        Args:
+            action: la action post-guardrail da eseguire.
+            run_id: per audit, FK in `orders.run_id`.
+            current_position: posizione attualmente aperta per `action.symbol`, o None
+                se nessuna posizione aperta. Necessaria perché FLAT è semanticamente
+                una chiusura/riduzione (non un ordine autonomo): senza conoscere lo
+                stato corrente non è possibile decidere se FLAT richiede un close order,
+                nessun order, o reduce-only sizing. Fix A.2/B.4 review-r2.
+
+        Semantica per `action.side`:
+            LONG/SHORT: se current_position è None, apre nuova; se esiste della
+                stessa side, ignora (no reverse implicito, no add-to-position in v2);
+                se esiste della opposite side, prima close, poi open (2 fasi distinte).
+            FLAT: se current_position è None, no-op (returns []); altrimenti
+                close-only con reduce_only order.
+            HOLD: no-op (returns []).
+
+        Returns:
+            Lista di OrderResult, una per ordine elementare submesso (entry + SL + TP,
+            oppure close-only).
+
+        Raises:
+            ExecutionRejectedError: ordine rifiutato da HL (margin, size limits, ...).
+            ExecutionTimeoutError: timeout 60s superato.
+        """
+        ...
+
+    @abstractmethod
+    async def check_position_closure(
+        self,
+        hl_position_id: str,
+    ) -> "PositionClosureInfo | None":
+        """Ritorna None se la posizione è ancora aperta."""
+        ...
+
+
+class OrderResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    hl_order_id: str
+    client_order_id: str
+    order_kind: OrderKind
+    status: Literal["pending", "filled", "partial", "cancelled", "rejected", "triggered"]
+    requested_price: Decimal | None
+    filled_price: Decimal | None
+    requested_size_units: Decimal
+    filled_size_units: Decimal | None
+    slippage_bps: Decimal | None
+    fee_usd: Decimal | None
+    raw_response: dict
+
+
+class PositionClosureInfo(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    closed_at: str
+    exit_price: Decimal
+    close_reason: CloseReason
+    realized_pnl_usd: Decimal
+```
+
+### 7.6 Repository pattern (aggregato per bounded context)
+
+Repository "stretti", uno per **bounded context transazionale**, non uno per tabella. Tutti async, ricevono `AsyncSession` esterna (gestita dall'orchestrator).
+
+```python
+# src/aiat/db/repositories/decisions.py
+from sqlalchemy.ext.asyncio import AsyncSession
+from aiat.domain.schemas import TradeDecision, CostEventData, LLMInvocationResult
+from aiat.db.models import Decision, DecisionAction, CostEvent, LLMInvocation
+
+class DecisionsRepository:
+    """
+    Gestisce TUTTO il bounded context di una decisione in UNA transazione:
+      decisions + decision_actions + cost_events + llm_invocations (invariante #4).
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def persist_decision(
+        self,
+        *,
+        run_id: str,
+        experiment_id: str,
+        model_id: str,
+        invocation: LLMInvocationResult,
+        post_guardrail_actions: list[ActionDecision],
+        guardrail_reports: list[GuardrailReport],
+    ) -> str:
+        """
+        Persiste in UNA SOLA transazione:
+          1. INSERT decisions
+          2. INSERT decision_actions (3 rows: BTC/ETH/SOL)
+          3. INSERT cost_events
+          4. INSERT llm_invocations
+
+        Returns:
+            decision_id appena creato.
+        Raises:
+            IntegrityError se FK o CHECK falliscono → rollback completo.
+        """
+        ...
+
+    async def get_by_run(self, run_id: str) -> Decision | None: ...
+    async def get_action_history(
+        self,
+        model_id: str,
+        symbol: str,
+        since: str,
+    ) -> list[DecisionAction]: ...
+
+
+# src/aiat/db/repositories/positions.py
+class PositionsRepository:
+    """
+    Bounded context: positions + orders + fee_events + funding_events.
+    Tutto ciò che concerne lo stato di una posizione e i suoi costi di esecuzione.
+    """
+
+    async def open_position(
+        self,
+        action_id: str,
+        order_results: list[OrderResult],
+        run_id: str,
+    ) -> str: ...
+
+    async def close_position(
+        self,
+        position_id: str,
+        closure: PositionClosureInfo,
+        closing_run_id: str,
+    ) -> None: ...
+
+    async def list_open_for_model(self, model_id: str) -> list[Position]: ...
+
+
+# src/aiat/db/repositories/snapshots.py
+class SnapshotsRepository:
+    """account_snapshots (con portfolio_state_hash) + context_snapshots."""
+
+    async def persist_account_snapshot(
+        self,
+        run_id: str,
+        portfolio_state: PortfolioState,
+    ) -> str: ...
+
+    async def get_context_snapshot(
+        self,
+        experiment_id: str,
+        tick_id: str,
+    ) -> ContextSnapshot | None: ...
+
+
+# src/aiat/db/repositories/runs.py
+class RunsRepository:
+    """runs + errors. Lifecycle della run."""
+
+    async def create_run(self, ...) -> str: ...
+    async def update_status(self, run_id: str, status: RunStatus, failure_stage: str | None = None) -> None: ...
+    async def log_error(self, ...) -> None: ...
+
+
+# src/aiat/db/repositories/outcomes.py
+class OutcomesRepository:
+    """outcomes (per analisi scientifica)."""
+
+    async def persist_outcome(self, ...) -> str: ...
+    async def list_for_model_in_window(self, model_id: str, start: str, end: str) -> list[Outcome]: ...
+
+
+# src/aiat/db/repositories/context_build.py
+# Fix B.5 review-r2: repository per context_snapshots + context_build_runs.
+# Vive nel servizio context-orchestrator (5° Railway service), NON negli agent.
+class ContextBuildRepository:
+    """
+    Bounded context: context_snapshots + context_build_runs.
+    Usato esclusivamente dal context-orchestrator.
+    """
+
+    async def start_build(
+        self,
+        experiment_id: str,
+        tick_id: str,
+        tick_at: str,
+    ) -> str:
+        """Crea context_build_runs row con status='running'. Returns build_run_id."""
+        ...
+
+    async def complete_build(
+        self,
+        build_run_id: str,
+        status: Literal["success", "partial"],
+        context_bundle: ContextBundle,
+        build_duration_ms: int,
+    ) -> str:
+        """
+        Persiste context_snapshots + aggiorna context_build_runs.context_snapshot_id
+        in singola transazione. Returns context_snapshot_id.
+        """
+        ...
+
+    async def fail_build(
+        self,
+        build_run_id: str,
+        failure_stage: str,
+        error_context: dict,
+        status: Literal["failed", "timeout"] = "failed",
+    ) -> None:
+        """Aggiorna context_build_runs senza creare context_snapshot."""
+        ...
+
+    async def get_snapshot_for_tick(
+        self,
+        experiment_id: str,
+        tick_id: str,
+    ) -> ContextSnapshot | None:
+        """Usata dagli agent per leggere il context del tick corrente (read-only)."""
+        ...
+
+
+# src/aiat/db/repositories/baselines.py
+# Fix B.5 review-r2: repository per baseline_configs + baseline_equity_snapshots.
+# Usato da scripts/seed_experiment.py (write baseline_configs) e
+# scripts/compute_baselines.py (write baseline_equity_snapshots a fine esperimento).
+class BaselineRepository:
+    """
+    Bounded context: baseline_configs + baseline_equity_snapshots.
+    Le configs sono pre-registrate al seed; le equity snapshots a posteriori.
+    """
+
+    async def register_baseline_config(
+        self,
+        experiment_id: str,
+        baseline_name: str,
+        config_json: dict,
+    ) -> str:
+        """Calcola config_hash da canonical_json(config_json). Returns baseline_config_id."""
+        ...
+
+    async def get_baseline_config(
+        self,
+        experiment_id: str,
+        baseline_name: str,
+    ) -> BaselineConfig | None: ...
+
+    async def persist_equity_snapshot(
+        self,
+        baseline_config_id: str,
+        tick_id: str,
+        tick_at: str,
+        equity_usd: Decimal,
+        pnl_usd_cumulative: Decimal,
+        raw_state: dict,
+    ) -> str: ...
+
+    async def list_equity_history(
+        self,
+        experiment_id: str,
+        baseline_name: str,
+    ) -> list[BaselineEquitySnapshot]: ...
+
+
+# src/aiat/db/repositories/tax_simulation.py
+# Fix B.5 review-r2: repository per tax_sim_periods (aggregato trimestrale).
+# Usato da scripts/compute_tax_sim.py a fine esperimento (o trimestralmente).
+class TaxSimulationRepository:
+    """Bounded context: tax_sim_periods (aggregato per model_id × quarter)."""
+
+    async def compute_and_persist_period(
+        self,
+        experiment_id: str,
+        model_id: str,
+        quarter_label: str,
+        period_start: str,
+        period_end: str,
+        outcomes_in_period: list[Outcome],
+        tax_rate_pct: Decimal = Decimal("0.26"),
+    ) -> str:
+        """
+        Aggrega gli outcomes del periodo, calcola taxable_base con compensazione
+        algebrica, persiste tax_sim_periods row. Returns tax_sim_period_id.
+        """
+        ...
+
+    async def list_for_model(
+        self,
+        model_id: str,
+    ) -> list[TaxSimPeriod]: ...
+```
+
+**Regole di repository**:
+- **Transaction policy (fix B.6 review-r2)**: i metodi repository possono fare `flush()` se serve un ID generato, ma **NON fanno mai `commit()` o `rollback()` autonomi**. Il `commit()`/`rollback()` finale appartiene esclusivamente al layer di orchestrazione (`orchestration/decision_loop.py` o `orchestration/context_orchestrator.py`), che gestisce la UnitOfWork. Questo garantisce che operazioni multi-repository in uno stesso "use case" siano atomicamente all-or-nothing. Violare questa regola spezza l'invariante #4 (cost ledger atomico con decision).
+- Nessun `commit()` interno: la transazione è gestita dall'orchestrator (UnitOfWork pattern leggero).
+- Tutti i metodi sono `async` (SQLAlchemy 2.x async).
+- Nessuna query SQL raw (invariante #11), eccetto su query analitiche complesse incapsulate qui.
+- Type hints rigorosi su return: nessun `dict[str, Any]`.
+
+---
+
+## 8. LLM Provider Abstraction
+
+### 8.1 Factory pattern + dispatcher
+
+```python
+# src/aiat/llm/factory.py
+from aiat.config.settings import AgentSettings
+from aiat.llm.base import BaseLLMClient
+from aiat.llm.openai_client import OpenAIClient
+from aiat.llm.anthropic_client import AnthropicClient
+from aiat.llm.openai_compatible_client import OpenAICompatibleClient
+
+def load_llm(settings: AgentSettings) -> BaseLLMClient:
+    """
+    Dispatcher basato su settings.llm_provider. Letto all'avvio del servizio agent.
+
+    Type contract (fix B.17 review-r2-v2): la firma accetta SOLO AgentSettings,
+    NON BaseAIATSettings né ContextOrchestratorSettings. Il context-orchestrator
+    NON deve mai chiamare load_llm() — non possiede credenziali LLM (least
+    privilege, vedi §10.3). Il type checker (mypy strict) rifiuta a compile-time
+    qualsiasi tentativo di chiamare load_llm() da ContextOrchestratorSettings.
+
+    Mapping provider → client:
+      provider="openai"     → OpenAIClient
+      provider="anthropic"  → AnthropicClient
+      provider="deepseek"   → OpenAICompatibleClient(base_url=DEEPSEEK_URL)
+      provider="qwen"       → OpenAICompatibleClient(base_url=QWEN_URL)
+    """
+    match settings.llm_provider:
+        case "openai":
+            return OpenAIClient(
+                api_key=settings.openai_api_key,
+                model_name=settings.model_name_api,
+                temperature=settings.temperature,
+                top_p=settings.top_p,
+                max_tokens=settings.max_tokens,
+                seed=settings.seed,
+            )
+        case "anthropic":
+            return AnthropicClient(
+                api_key=settings.anthropic_api_key,
+                model_name=settings.model_name_api,
+                temperature=settings.temperature,
+                max_tokens=settings.max_tokens,
+            )
+        case "deepseek":
+            return OpenAICompatibleClient(
+                api_key=settings.deepseek_api_key,
+                model_name=settings.model_name_api,
+                base_url="https://api.deepseek.com/v1",
+                # ...
+            )
+        case "qwen":
+            return OpenAICompatibleClient(
+                api_key=settings.qwen_api_key,
+                model_name=settings.model_name_api,
+                base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                # ...
+            )
+        case _:
+            raise ValueError(f"Unknown LLM provider: {settings.llm_provider}")
+```
+
+### 8.2 Strategia structured output (with_structured_output + fallback)
+
+#### Exception hierarchy (fix B.7 review-r2)
+
+```python
+# src/aiat/llm/exceptions.py
+class LLMError(Exception):
+    """Base exception per tutti gli errori LLM."""
+    pass
+
+class LLMTimeoutError(LLMError):
+    """Timeout superato. NON triggera fallback freetext.
+
+    Razionale: timeout indica problema infrastrutturale (provider lento, network
+    issue, prompt troppo lungo). Un secondo tentativo freetext probabilmente
+    fallirebbe ancora e brucerebbe quota API. Propagato come errore infrastrutturale,
+    la run si chiude con runs.status='timeout'.
+    """
+    pass
+
+class LLMRateLimitError(LLMError):
+    """Rate limit del provider. NON triggera fallback freetext.
+
+    Razionale: secondo tentativo aggraverebbe il rate limit. Propagato.
+    """
+    pass
+
+class LLMAuthError(LLMError):
+    """Auth fallita (chiave invalida, scaduta, permessi insufficienti).
+    NON triggera fallback freetext. Fatale: la run finisce in 'failed' con
+    failure_stage='llm_auth'.
+    """
+    pass
+
+class LLMParsingError(LLMError):
+    """Output LLM non parsabile come TradeDecision valida.
+
+    QUESTO è l'unico caso che triggera fallback freetext: il modello ha risposto
+    ma con struttura JSON malformata o valori che falliscono Pydantic validation.
+    """
+    pass
+
+class LLMUnrecoverableError(LLMError):
+    """Anche il fallback freetext ha fallito parsing. La run termina in 'failed'
+    con failure_stage='llm_parse'.
+    """
+    def __init__(self, primary_error: Exception, fallback_error: Exception):
+        self.primary_error = primary_error
+        self.fallback_error = fallback_error
+        super().__init__(f"primary={primary_error!r}; fallback={fallback_error!r}")
+```
+
+#### invoke_structured con fallback selettivo
+
+```python
+# src/aiat/llm/structured.py
+import asyncio
+import json
+from langchain_core.language_models import BaseChatModel
+from pydantic import ValidationError
+from aiat.domain.schemas import TradeDecision, CostEventData
+from aiat.llm.exceptions import (
+    LLMTimeoutError, LLMRateLimitError, LLMAuthError,
+    LLMParsingError, LLMUnrecoverableError,
+)
+from aiat.llm.stats_handler import StatsCallbackHandler
+
+async def invoke_structured(
+    llm: BaseChatModel,
+    prompt: str,
+    *,
+    timeout_seconds: int,
+    stats_handler: StatsCallbackHandler,
+) -> tuple[TradeDecision, bool]:
+    """
+    Returns:
+        (TradeDecision validato, fallback_used: bool).
+
+    Fix B.7 review-r2: fallback freetext SOLO per parsing failure (ValidationError,
+    JSONDecodeError, output malformato). Timeout, rate limit, auth error vanno
+    propagati come errori dedicati.
+
+    Fix B.8 review-r2: stats_handler accumula tokens di TUTTI i tentativi (primary
+    + eventuale fallback), così il CostEventData finale rappresenta il costo totale
+    sostenuto per produrre questa decisione.
+
+    Cost ledger:
+        stats_handler è passato come callback a langchain. Accumula tokens su:
+          - tentativo primary (with_structured_output)
+          - tentativo fallback (freetext) se eseguito
+        Il chiamante invoca poi stats_handler.build_cost_event() per ottenere il
+        CostEventData aggregato (con n_attempts ∈ {1, 2}).
+
+    Path 1 (primary): llm.with_structured_output(TradeDecision)
+        Eccezioni catturate per fallback:
+          - ValidationError (Pydantic)
+          - json.JSONDecodeError
+          - langchain.OutputParserException
+        Eccezioni propagate (NON fallback):
+          - asyncio.TimeoutError → LLMTimeoutError
+          - provider-specific rate limit → LLMRateLimitError
+          - 401/403 → LLMAuthError
+
+    Path 2 (fallback): re-invoke con FALLBACK_SUFFIX, regex JSON balanced
+        Se anche questo fallisce con ValidationError/JSONDecodeError →
+        LLMUnrecoverableError.
+    """
+    # PATH 1: primary attempt
+    try:
+        structured_llm = llm.with_structured_output(TradeDecision).with_config(
+            {"callbacks": [stats_handler]}
+        )
+        result = await asyncio.wait_for(
+            structured_llm.ainvoke(prompt),
+            timeout=timeout_seconds,
+        )
+        return (result, False)
+    except asyncio.TimeoutError as e:
+        raise LLMTimeoutError(f"primary attempt timed out after {timeout_seconds}s") from e
+    except Exception as e:
+        # Classificazione errori provider-specific
+        if _is_rate_limit_error(e):
+            raise LLMRateLimitError(str(e)) from e
+        if _is_auth_error(e):
+            raise LLMAuthError(str(e)) from e
+        # Solo parsing-like errors triggerano fallback (fix B.7)
+        if not _is_parsing_error(e):
+            raise LLMError(f"unexpected primary error: {e!r}") from e
+        primary_error = e
+        # cade nel PATH 2
+
+    # PATH 2: fallback freetext (solo per parsing failure)
+    try:
+        raw_llm = llm.with_config({"callbacks": [stats_handler]})
+        raw_response = await asyncio.wait_for(
+            raw_llm.ainvoke(prompt + FALLBACK_SUFFIX),
+            timeout=timeout_seconds,
+        )
+        extracted_json = _extract_json_balanced(raw_response.content)
+        decision = TradeDecision.model_validate(json.loads(extracted_json))
+        return (decision, True)
+    except asyncio.TimeoutError as e:
+        raise LLMTimeoutError(f"fallback attempt timed out after {timeout_seconds}s") from e
+    except (ValidationError, json.JSONDecodeError, ValueError) as fallback_error:
+        raise LLMUnrecoverableError(
+            primary_error=primary_error,
+            fallback_error=fallback_error,
+        )
+
+
+FALLBACK_SUFFIX = """
+
+IMPORTANT: Your previous response could not be parsed. Respond NOW with ONLY a
+valid JSON object matching the TradeDecision schema. No markdown fences, no
+explanation, just the JSON.
+"""
+
+
+def _is_parsing_error(e: Exception) -> bool:
+    """True se l'eccezione è dovuta a output malformato (NON timeout/rate/auth)."""
+    from pydantic import ValidationError
+    from langchain_core.exceptions import OutputParserException
+    return isinstance(e, (ValidationError, json.JSONDecodeError, OutputParserException))
+
+
+def _is_rate_limit_error(e: Exception) -> bool:
+    """
+    Strategia attesa in implementazione (fix B.18 review-r2-v2):
+
+    PRIMARY: isinstance() check su exception class ufficiali dei 4 SDK.
+      - openai.RateLimitError (per OpenAI nativo)
+      - anthropic.RateLimitError (per Anthropic)
+      - Per DeepSeek/Qwen via OpenAI-compatible: spesso le exception class del
+        SDK OpenAI vengono propagate; testare specificamente per ogni provider
+        durante l'implementazione (può variare nel tempo).
+
+    FALLBACK: string matching su messaggio per coprire provider OpenAI-compatible
+    che NON sempre rispettano le exception class del SDK OpenAI ufficiale.
+
+    Lista finale delle exception class da implementare in PRD Round 3 →
+    implementazione concreta dopo verifica versioni SDK al momento dello sviluppo.
+    """
+    # Implementazione concreta (placeholder fragile, da rafforzare con isinstance
+    # in produzione):
+    err_str = str(e).lower()
+    return any(token in err_str for token in [
+        "rate limit", "429", "too many requests", "quota exceeded"
+    ])
+
+
+def _is_auth_error(e: Exception) -> bool:
+    """Stessa strategia di _is_rate_limit_error: isinstance() primary, string fallback.
+
+    Exception class attese:
+      - openai.AuthenticationError, openai.PermissionDeniedError
+      - anthropic.AuthenticationError, anthropic.PermissionDeniedError
+      - HTTP 401/403 wrapped exception per provider compatibili
+    """
+    err_str = str(e).lower()
+    return any(token in err_str for token in [
+        "401", "403", "unauthorized", "invalid api key", "authentication"
+    ])
+```
+
+#### Estrazione JSON robusta (fix B.9 review-r2)
+
+```python
+def _extract_json_balanced(text: str) -> str:
+    """
+    Estrae il primo blocco JSON bilanciato {...} dal testo, gestendo correttamente
+    graffe DENTRO stringhe JSON (es. nel campo `portfolio_reasoning` che può
+    contenere "{...}" testualmente).
+
+    Fix B.9 review-r2: tracciamento state machine in_string / escape per evitare
+    di contare graffe letterali dentro string literals come delimitatori strutturali.
+
+    Stati: NORMAL, IN_STRING, IN_STRING_ESCAPE.
+    """
+    NORMAL, IN_STRING, IN_STRING_ESCAPE = 0, 1, 2
+    state = NORMAL
+    depth = 0
+    start = None
+    for i, ch in enumerate(text):
+        if state == NORMAL:
+            if ch == '"':
+                state = IN_STRING
+            elif ch == '{':
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0 and start is not None:
+                    return text[start:i+1]
+                if depth < 0:
+                    raise ValueError(f"Unbalanced '}}' at position {i}")
+        elif state == IN_STRING:
+            if ch == '\\':
+                state = IN_STRING_ESCAPE
+            elif ch == '"':
+                state = NORMAL
+        elif state == IN_STRING_ESCAPE:
+            state = IN_STRING  # ignora il char escapato
+    raise ValueError("No balanced JSON object found in text")
+```
+
+### 8.3 Cost tracking (StatsCallbackHandler)
+
+Adottato il pattern di TradingAgents (vedi ANALYSIS §3.4):
+
+```python
+# src/aiat/llm/stats_handler.py
+from decimal import Decimal
+from langchain_core.callbacks import AsyncCallbackHandler
+from langchain_core.messages import BaseMessage
+from aiat.domain.schemas import CostEventData
+
+class StatsCallbackHandler(AsyncCallbackHandler):
+    """
+    Callback langchain che cattura usage tokens da OGNI provider in modo uniforme.
+    Restituisce CostEventData che il chiamante persiste DOPO la decisione
+    (invariante #4 — NO writes diretti al DB qui).
+
+    Fix B.8 review-r2: aggrega tokens su MULTIPLI tentativi (primary + fallback
+    freetext eventuale). `n_attempts` traccia quante chiamate LLM sono state
+    eseguite; `cost_usd` finale = somma di tutte. Questo assicura che il cost
+    ledger rifletta il COSTO REALE sostenuto per produrre una decisione, non
+    solo il costo dell'ultimo tentativo.
+    """
+
+    def __init__(self, pricing: dict[str, Decimal]) -> None:
+        self.input_tokens: int = 0
+        self.output_tokens: int = 0
+        self.reasoning_tokens: int = 0
+        self.n_attempts: int = 0
+        self._pricing = pricing
+
+    async def on_llm_end(self, response, **kwargs) -> None:
+        usage = self._extract_usage(response)
+        self.input_tokens += usage.get("input_tokens", 0)
+        self.output_tokens += usage.get("output_tokens", 0)
+        self.reasoning_tokens += usage.get("reasoning_tokens", 0)
+        self.n_attempts += 1
+
+    def build_cost_event(self) -> CostEventData:
+        cost_usd = (
+            Decimal(self.input_tokens) * self._pricing["input"] / Decimal("1000000")
+            + Decimal(self.output_tokens) * self._pricing["output"] / Decimal("1000000")
+            + Decimal(self.reasoning_tokens) * self._pricing["reasoning"] / Decimal("1000000")
+        )
+        return CostEventData(
+            input_tokens=self.input_tokens,
+            output_tokens=self.output_tokens,
+            reasoning_tokens=self.reasoning_tokens,
+            cost_usd=cost_usd,
+            pricing_snapshot=self._pricing,
+            n_attempts=max(1, self.n_attempts),  # almeno 1 per coerenza Pydantic
+        )
+
+    def _extract_usage(self, response) -> dict[str, int]:
+        """
+        OpenAI: response_metadata['token_usage']['prompt_tokens'/'completion_tokens']
+                + response_metadata['token_usage']['completion_tokens_details']['reasoning_tokens']
+        Anthropic: response.usage.input_tokens/output_tokens
+                   (thinking mode esponi reasoning trace ma billing è incluso in output;
+                    se in futuro Anthropic esponesse reasoning_tokens separati, qui)
+        OpenAI-compatible (DeepSeek R1): response.usage include reasoning_tokens per R1
+                                         e completion_tokens_details per il chain-of-thought
+        Qwen: response.usage standard OpenAI-compatible, reasoning_tokens=0 di default
+        """
+        ...
+```
+
+### 8.4 Pricing config (cost ledger source of truth)
+
+```yaml
+# src/aiat/config/model_pricing.yaml
+# USD per 1M tokens. Aggiornato al committed_at; pricing_snapshot in DB conserva
+# il valore usato per ogni invocazione (PRE_PRD §11.7).
+models:
+  openai-gpt-5.1:
+    input: 1.25
+    output: 10.00
+    reasoning: 10.00
+  anthropic-sonnet-4.7:
+    input: 3.00
+    output: 15.00
+    reasoning: 0.00
+  deepseek-r1-2026:
+    input: 0.55
+    output: 2.19
+    reasoning: 2.19
+  qwen-3-flagship:
+    input: 0.80
+    output: 3.20
+    reasoning: 0.00
+```
+
+I 4 modelli concreti del 2×2 vengono confermati nel `seed_experiment.py` script all'avvio dell'esperimento. Pricing letto da YAML e copiato su `models.pricing_*` rows al seed.
+
+---
+
+## 9. Test plan
+
+### 9.1 Strategia generale
+
+| Layer | Framework | DB | Esecuzione |
+|-------|-----------|----|-----------:|
+| Unit | pytest, pytest-asyncio | none (puro domain) | locale + CI |
+| Integration | pytest, pytest-postgresql | Postgres ephemeral (container) | locale + CI |
+| LLM | pytest-vcr (cassette HTTP) | none o Postgres ephemeral | CI (no $) |
+| E2E | pytest, pytest-postgresql | Postgres ephemeral | locale + CI |
+
+**Coverage target**: **80% globale** + **95% sui moduli core** (`domain/`, `llm/`, `execution/`). Configurato in `pyproject.toml` con `pytest --cov-fail-under=80`. Per i moduli core, soglia per-modulo in `.coveragerc`.
+
+### 9.2 Unit tests (puro domain logic)
+
+```
+tests/unit/domain/
+  test_schemas_trade_decision.py
+    - validates 3 actions covering BTC/ETH/SOL
+    - rejects extra=4 actions
+    - rejects HOLD with size_pct > 0
+    - rejects LONG without SL/TP (Figma F1)
+    - rejects entry_type='limit' without limit_price
+    - rejects key_signals not in controlled vocabulary
+    - accepts confidence at boundary [0, 1]
+    - rejects confidence > 1 or < 0
+  test_enums.py
+  test_pydantic_serialization.py
+    - roundtrip JSON: TradeDecision → dict → TradeDecision
+
+tests/unit/execution/
+  test_guardrails.py
+    - guardrail 1: HOLD forced if SL missing on LONG
+    - guardrail 2: size_pct=0.50 clamped to AIAT_MAX_SIZE_PCT=0.20
+    - guardrail 3: leverage=20 clamped to 1 + confidence*9
+    - guardrail 4: confidence=0.3 → forced HOLD (AIAT_MIN_OPEN_CONFIDENCE=0.4)
+    - 4 guardrail in ordine: SL → size → leverage → confidence
+    - reports logs original_side when forced_hold=true
+  test_sizing.py
+    - Decimal precision: no float arithmetic anywhere
+    - notional_value_usd = price * size_units * leverage
+
+tests/unit/llm/
+  test_structured_parser.py
+    - extract_json_balanced: well-formed, nested, with prose surrounding
+    - fallback_suffix invocato solo dopo primary failure
+    - LLMUnrecoverableError quando entrambi i path falliscono
+  test_stats_handler.py
+    - OpenAI usage extraction
+    - Anthropic usage extraction (reasoning=0)
+    - DeepSeek/Qwen via OpenAI-compatible
+    - cost_usd calculation con Decimal precision
+```
+
+### 9.3 Integration tests (DB layer + repository)
+
+```
+tests/integration/
+  test_db_repositories_decisions.py
+    - persist_decision: transazione atomica decision + actions + cost + llm_invocation
+    - rollback se action[1] fails validation
+    - get_action_history filtra correttamente per model_id e symbol
+    - test CHECK constraints (HOLD con size_pct>0 → IntegrityError)
+    - test composite FK (runs.context_snapshot_id mismatch tick_id → IntegrityError)
+
+  test_db_repositories_positions.py
+    - open_position crea positions + orders + fee_events in transazione
+    - close_position aggiorna position + crea outcomes con FK opening_run_id/closing_run_id
+    - opening_action_id UNIQUE: 2 positions stessa action → IntegrityError
+
+  test_db_repositories_snapshots.py
+    - persist_account_snapshot con portfolio_state_hash
+    - get_context_snapshot ritorna None se non esiste
+
+  test_db_migrations.py
+    - alembic upgrade head from empty
+    - tutti i CHECK constraint applicati
+    - tutti gli indici creati
+    - downgrade base + upgrade head è idempotente
+```
+
+Fixture `pytest_postgresql`:
+
+```python
+# tests/conftest.py
+import pytest
+from pytest_postgresql import factories
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from alembic.config import Config
+from alembic import command
+
+postgresql_proc = factories.postgresql_proc(port=None)
+postgresql = factories.postgresql("postgresql_proc")
+
+@pytest.fixture(scope="session")
+async def db_url(postgresql):
+    """Avvia Postgres ephemeral, applica migrations Alembic, yield URL."""
+    url = f"postgresql+asyncpg://{postgresql.info.user}@{postgresql.info.host}:{postgresql.info.port}/{postgresql.info.dbname}"
+    cfg = Config("alembic.ini")
+    cfg.set_main_option("sqlalchemy.url", url)
+    command.upgrade(cfg, "head")
+    yield url
+
+@pytest.fixture
+async def db_session(db_url):
+    engine = create_async_engine(db_url)
+    async with AsyncSession(engine) as session:
+        yield session
+        await session.rollback()  # cleanup
+```
+
+### 9.4 LLM provider tests (VCR cassette)
+
+```
+tests/integration/test_llm_providers.py
+  - test_openai_invoke_structured (cassette: openai_structured_btc_long.yaml)
+  - test_anthropic_invoke_structured (cassette: anthropic_structured_hold.yaml)
+  - test_deepseek_invoke_structured_via_compatible (cassette: deepseek_structured.yaml)
+  - test_qwen_invoke_structured_via_compatible (cassette: qwen_structured.yaml)
+  - test_openai_fallback_freetext (cassette con response malformata + retry)
+  - test_llm_unrecoverable_error (cassette con due response invalide)
+  - test_cost_tracking_openai (verifica cost_usd da usage)
+  - test_cost_tracking_anthropic
+  - test_timeout_handling (cassette con delay simulato > 90s → LLMTimeoutError)
+  - test_rate_limit_propagation (cassette 429 → LLMRateLimitError, NO fallback)
+  - test_auth_error_propagation (cassette 401 → LLMAuthError, NO fallback)
+  - test_cost_aggregation_primary_plus_fallback
+      (cassette primary malformato + fallback valido → CostEventData.n_attempts=2)
+
+  # Reasoning trace coverage (fix B.10 review-r2):
+  # Cassette dedicate per modelli con reasoning/thinking esposto, indispensabili
+  # per validare cost_event.reasoning_tokens > 0 e relativo pricing.
+  - test_openai_reasoning_tokens
+      (cassette: openai_reasoning_tokens.yaml; valida completion_tokens_details.
+       reasoning_tokens > 0 per modelli o1-style/gpt-5.x con thinking)
+  - test_anthropic_thinking_usage
+      (cassette: anthropic_thinking_usage.yaml; valida thinking_tokens contati
+       correttamente per modelli sonnet thinking mode)
+  - test_deepseek_r1_reasoning_usage
+      (cassette: deepseek_r1_reasoning_usage.yaml; valida R1 reasoning_tokens
+       da completion_tokens_details)
+```
+
+Configurazione VCR (gitignore le API key):
+
+```python
+# tests/conftest.py
+import vcr
+
+aiat_vcr = vcr.VCR(
+    cassette_library_dir="tests/cassettes",
+    record_mode="none",  # CI: solo replay. Locale per record: "once".
+    filter_headers=["authorization", "x-api-key"],
+    filter_post_data_parameters=["api_key"],
+    match_on=["method", "scheme", "host", "path", "query", "body"],
+)
+```
+
+### 9.5 E2E tests (full decision loop + isolation + parity)
+
+```
+tests/e2e/
+  test_decision_loop_smoke.py
+    - lancia decision_loop.run_once() con: LLM mockato (cassette), HL mockato,
+      DB Postgres ephemeral
+    - verifica: runs.status='success', 1 decision, 3 decision_actions,
+      1 cost_event, 1 llm_invocation, account_snapshot con portfolio_state_hash
+    - se action[BTC].side='LONG': verifica 3 orders (entry + SL + TP) creati
+
+  test_isolation.py (invariante #1)
+    - seed 2 model_id in DB con decisioni/posizioni dummy
+    - lancia agent con AIAT_MODEL_ID=model_1
+    - verifica che nessuna query effettuata legga rows con model_id='model_2'
+    - **Doppia strategia di verifica (fix B.11 review-r2)**:
+      1. *Spy applicativo (primario, robusto)*: subclass dei repository con
+         RepositorySpy che intercetta ogni metodo. Ogni row ritornata viene
+         verificata: se `row.model_id != settings.model_id`, il test fallisce
+         con `LeakDetected`. Non dipende da formato log o livello logging.
+      2. *DB-level trap (secondario, additional safety)*: trigger Postgres su
+         tabelle critiche che alza eccezione se vede `SELECT ... WHERE model_id`
+         con valore diverso da quello configurato per la sessione (via
+         `SET LOCAL aiat.expected_model_id`). Robusto a query parametrizzate.
+      3. *Log parsing*: mantenuto come check terziario solo per debug, NON
+         come gating del test.
+
+  test_context_parity.py (invariante #13)
+    - lancia context-orchestrator → 1 context_snapshot
+    - lancia 4 agent in parallelo con stesso tick_id
+    - verifica che tutti e 4 runs.context_snapshot_id sia identico
+    - verifica context_hash byte-identico sui 4 prompt rendered (solo parte
+      market context; il portfolio_state_hash diverge correttamente)
+
+  test_guardrail_e2e.py
+    - LLM mockato che propone size_pct=0.99, leverage=30, confidence=0.95
+    - verifica decision_actions.size_pct_executed=0.20 (clamped)
+    - verifica decision_actions.leverage_executed≤10 (hard cap)
+    - flag size_pct_clamped=true, leverage_clamped=true
+```
+
+### 9.6 CI matrix (.github/workflows/ci.yml)
+
+```yaml
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - run: uv sync --frozen
+      - run: uv run ruff check src tests
+      - run: uv run ruff format --check src tests
+      - run: uv run mypy src
+      # Coverage globale 80%
+      - run: uv run pytest tests/unit -v --cov=src/aiat --cov-fail-under=80
+      # Coverage core 95% (fix B.19 review-r2-v2): step esplicito per moduli critici.
+      # Soglia separata gating: il blueprint dichiara 95% sui moduli che, se buggy,
+      # invaliderebbero l'esperimento (domain schemas, LLM, execution).
+      - run: |
+          uv run pytest tests/unit/domain tests/unit/llm tests/unit/execution \
+            --cov=src/aiat/domain --cov=src/aiat/llm --cov=src/aiat/execution \
+            --cov-fail-under=95
+      - run: uv run pytest tests/integration -v
+      - run: uv run pytest tests/e2e -v
+      - run: uv run import-linter
+```
+
+Configurazione `.coveragerc` complementare:
+
+```ini
+# .coveragerc
+[run]
+source = src/aiat
+branch = True
+omit =
+    src/aiat/__main__.py
+    src/aiat/observability/logging_config.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    raise NotImplementedError
+    if TYPE_CHECKING:
+    @abstractmethod
+
+# Soglie per-modulo non sono native in coverage.py; il gating è applicato
+# da step CI separati (vedi ci.yml sopra). Per report locale leggibile:
+show_missing = True
+precision = 2
+```
+
+### 9.7 Invariant coverage matrix (fix B.12 review-r2)
+
+Mappa esplicita dei 15 invarianti §5 ai test che li verificano. Ogni invariante DEVE avere almeno un test gating in CI; il PR check fallisce se questa matrice ha celle vuote.
+
+| Invariante § 5 | Test gating | Layer |
+|----------------|-------------|-------|
+| #1 isolation cross-model | `test_isolation.py` (repository spy + DB trap) | E2E |
+| #2 determinismo configurazione | `test_run_logs_git_sha_and_hashes` | Integration |
+| #3 schema scientifico end-to-end | `test_db_migrations.py` (verifica colonne `experiment_id`/`model_id`/`run_id` presenti su tabelle operative) | Integration |
+| #4 cost ledger post-decision atomico | `test_db_repositories_decisions.py::test_persist_decision_atomic_rollback` | Integration |
+| #5 memoria 2 off default | `test_startup_memory_off_locked` (Settings field default = False, override RuntimeError se config tenta True per esperimento) | Unit |
+| #6 vocabolario controllato | `test_schemas_trade_decision.py::test_rejects_unknown_signal` | Unit |
+| #7 confidence sempre presente action-level | `test_schemas_trade_decision.py::test_confidence_required_even_for_hold` | Unit |
+| #8 4 guardrail sempre attivi | `test_guardrails_cannot_disable` (verifica startup checks rifiutano config che disattiva) | Integration |
+| #9 no mainnet | `test_startup_rejects_mainnet` | Integration |
+| #10 no print() runtime | ruff rule T201 enabled in CI | Lint |
+| #11 no raw SQL ad-hoc runtime | grep AST check in CI per `.execute(text(...))` fuori da `repositories/` e `scripts/` | Lint |
+| #12 Decimal per soldi | `test_no_float_in_money_fields` (AST check su `domain/schemas.py`) | Unit |
+| #13 parità market context cross-model | `test_context_parity.py` | E2E |
+| #14 no cicli moduli | `import-linter` config in CI | Lint |
+| #15 tick coverage tracking | `test_tick_coverage_kpi` (query SQL su runs per verificare ogni scheduled tick ha 4 rows) | E2E |
+
+Il file `tests/invariant_coverage.py` aggrega questi test come marker `@pytest.mark.invariant("N")` per generare report:
+
+```
+$ uv run pytest -m "invariant" --invariant-report=report.md
+```
+
+---
+
+## 10. Validation runtime
+
+Validazioni eseguite all'avvio del servizio (PRIMA che APScheduler parta), per fallire fast in caso di config invalide.
+
+### 10.1 Startup checks (in `orchestration/lifecycle.py`)
+
+Esegue controlli di sanità all'avvio. Lancia `RuntimeError` fatale su qualsiasi failure → il servizio non parte. Lo stesso modulo gestisce **due profili di check** discriminati su `service_role` (fix B.14 review-r2).
+
+```python
+async def startup_checks(settings: AgentSettings | ContextOrchestratorSettings) -> None:
+    """Dispatcher: applica check comuni + check specifici per ruolo."""
+    # Check comuni a entrambi i ruoli
+    await _check_network_testnet(settings)
+    await _check_db_connectivity_and_schema(settings)
+    await _check_active_experiment(settings)
+
+    # Check role-specific
+    if isinstance(settings, AgentSettings):
+        await _agent_startup_checks(settings)
+    elif isinstance(settings, ContextOrchestratorSettings):
+        await _orchestrator_startup_checks(settings)
+    else:
+        raise RuntimeError(f"Unknown service_role: {settings.service_role}")
+
+
+async def _check_network_testnet(settings: BaseAIATSettings) -> None:
+    """Invariante #9."""
+    if settings.network != "testnet":
+        raise RuntimeError(f"AIAT_NETWORK must be 'testnet', got '{settings.network}'")
+
+
+async def _check_db_connectivity_and_schema(settings: BaseAIATSettings) -> None:
+    """Verifica DB raggiungibile e versione schema attesa."""
+    async with get_db_session(settings) as session:
+        version = await session.scalar(text("SELECT version_num FROM alembic_version"))
+        if version != EXPECTED_ALEMBIC_VERSION:
+            raise RuntimeError(
+                f"DB schema version mismatch: expected {EXPECTED_ALEMBIC_VERSION}, "
+                f"got {version}. Run 'alembic upgrade head'."
+            )
+
+
+async def _check_active_experiment(settings: BaseAIATSettings) -> None:
+    """Esperimento esiste e non è terminato."""
+    async with get_db_session(settings) as session:
+        experiment = await session.get(Experiment, settings.experiment_id)
+        if experiment is None:
+            raise RuntimeError(f"Experiment '{settings.experiment_id}' not found in DB")
+        if experiment.ended_at is not None:
+            raise RuntimeError(f"Experiment ended at {experiment.ended_at}, cannot start")
+        if experiment.git_commit_sha != settings.git_commit_sha:
+            # Warning, non fatale: permette restart del servizio dopo deploy patch.
+            logger.warning(
+                "git_commit_sha mismatch with experiment seed",
+                experiment_sha=experiment.git_commit_sha,
+                runtime_sha=settings.git_commit_sha,
+            )
+
+
+async def _agent_startup_checks(settings: AgentSettings) -> None:
+    """Check specifici per servizio agent (4 servizi Railway)."""
+
+    # [A1] Model anagrafica registrata
+    async with get_db_session(settings) as session:
+        model = await session.get(Model, settings.model_id)
+        if model is None:
+            raise RuntimeError(
+                f"Model '{settings.model_id}' not registered in DB. "
+                f"Run 'python scripts/seed_experiment.py' first."
+            )
+
+    # [A2] Provider coerente con quanto registrato per il model_id
+    if model.provider != settings.llm_provider:
+        raise RuntimeError(
+            f"Provider mismatch: settings={settings.llm_provider}, "
+            f"models.provider={model.provider}"
+        )
+
+    # [A3] Wallet address coerente con quello registrato per il modello (fix B.14)
+    if model.wallet_address != settings.hl_wallet_address:
+        raise RuntimeError(
+            f"Wallet mismatch for model '{settings.model_id}': "
+            f"models.wallet_address={model.wallet_address}, "
+            f"AIAT_HL_WALLET_ADDRESS={settings.hl_wallet_address}"
+        )
+
+    # [A4] Pricing presente in YAML per questo model_id (fix B.14)
+    pricing = load_pricing_for_model(settings.model_id)
+    if pricing is None:
+        raise RuntimeError(f"No pricing config for model '{settings.model_id}' in model_pricing.yaml")
+
+    # [A5] Prompt template hash registrato
+    async with get_db_session(settings) as session:
+        template = await session.get(PromptTemplate, settings.prompt_template_hash)
+        if template is None:
+            raise RuntimeError(
+                f"Prompt template '{settings.prompt_template_hash}' not registered. "
+                f"Run 'python scripts/register_prompt_template.py' first."
+            )
+
+    # [A6] Hyperliquid testnet reachability + wallet funded
+    hl = HyperliquidClient(
+        private_key=settings.hl_wallet_private_key.get_secret_value(),
+        wallet_address=settings.hl_wallet_address,
+        network=settings.network,
+    )
+    state = await hl.fetch_portfolio_state()
+    if state.equity_usd <= 0:
+        raise RuntimeError(
+            f"Wallet equity=0 for model '{settings.model_id}'. Fund testnet wallet first."
+        )
+
+    # [A7] LLM provider credentials valid (smoke call ~$0.001)
+    llm = load_llm(settings)
+    try:
+        await asyncio.wait_for(
+            llm._llm.ainvoke("Reply with exactly: pong"),
+            timeout=15,
+        )
+    except (LLMTimeoutError, LLMAuthError, Exception) as e:
+        raise RuntimeError(f"LLM provider credentials invalid or unreachable: {e!r}")
+
+    # [A8] Guardrail config validity + invariante #8 (sempre attivi)
+    if not (0 < settings.max_size_pct <= 1):
+        raise RuntimeError("AIAT_MAX_SIZE_PCT must be in (0, 1]")
+    if settings.hard_max_leverage < 1:
+        raise RuntimeError("AIAT_HARD_MAX_LEVERAGE must be >= 1")
+    if not (0 <= settings.min_open_confidence <= 1):
+        raise RuntimeError("AIAT_MIN_OPEN_CONFIDENCE must be in [0, 1]")
+
+    # [A9] inject_decision_history == False (invariante #5, fix B.14)
+    if settings.inject_decision_history is not False:
+        raise RuntimeError(
+            "AIAT_INJECT_DECISION_HISTORY must be False for thesis run "
+            "(Memoria 2 OFF, RESEARCH §3.2 + invariante #5)"
+        )
+
+    # [A10] Baseline configs registrate per l'esperimento (fix B.14 review-r2,
+    # rafforzato in B.14-followup review-r2-v2: ora fatal, non più warning).
+    # Pre-registrazione tecnica obbligatoria: senza baseline preregistrati al seed,
+    # l'esperimento è scientificamente compromesso (impossibile dimostrare che i
+    # parametri del naive momentum non siano stati ottimizzati a posteriori).
+    EXPECTED_BASELINES = {"buy_and_hold", "cash", "naive_momentum_ema_20_50"}
+    async with get_db_session(settings) as session:
+        registered_baselines = set(await session.scalars(
+            select(BaselineConfig.baseline_name).where(
+                BaselineConfig.experiment_id == settings.experiment_id
+            )
+        ))
+        missing = EXPECTED_BASELINES - registered_baselines
+        if missing:
+            raise RuntimeError(
+                f"Missing baseline_configs for experiment '{settings.experiment_id}': "
+                f"{sorted(missing)}. "
+                f"Run 'python scripts/seed_experiment.py' to register baselines "
+                f"BEFORE starting the experiment. Pre-registration is mandatory for "
+                f"scientific validity (RESEARCH §3.3)."
+            )
+
+
+async def _orchestrator_startup_checks(settings: ContextOrchestratorSettings) -> None:
+    """Check specifici per il 5° servizio context-orchestrator."""
+
+    # [O1] NO credenziali LLM presenti (least privilege check, fix B.13/B.14)
+    # Verifica difensiva: anche se Pydantic Settings esclude i campi LLM, una
+    # env var leftover potrebbe essere stata definita. Errore esplicito.
+    suspicious_envs = ["AIAT_OPENAI_API_KEY", "AIAT_ANTHROPIC_API_KEY",
+                       "AIAT_DEEPSEEK_API_KEY", "AIAT_QWEN_API_KEY",
+                       "AIAT_HL_WALLET_PRIVATE_KEY", "AIAT_MODEL_ID"]
+    leaked = [v for v in suspicious_envs if os.environ.get(v)]
+    if leaked:
+        raise RuntimeError(
+            f"context-orchestrator service has unexpected env vars set: {leaked}. "
+            f"Least privilege violation. Remove these from Railway config."
+        )
+
+    # [O2] HL info endpoint raggiungibile (read-only, no wallet credentials)
+    from aiat.context.collectors.onchain import HLPublicInfoClient
+    hl_info = HLPublicInfoClient(network=settings.network)
+    try:
+        meta = await asyncio.wait_for(hl_info.fetch_meta(), timeout=10)
+        if not meta or "universe" not in meta:
+            raise RuntimeError("HL info endpoint returned empty meta")
+    except Exception as e:
+        raise RuntimeError(f"HL info endpoint unreachable: {e!r}")
+
+    # [O3] RSS sources raggiungibili (almeno una)
+    from aiat.context.collectors.news import NewsCollector
+    news = NewsCollector(timeout_seconds=10)
+    reachable = await news.check_sources_reachability()
+    if reachable == 0:
+        raise RuntimeError("No RSS news source reachable")
+
+    # [O4] Fear&Greed API raggiungibile
+    from aiat.context.collectors.sentiment import SentimentCollector
+    sent = SentimentCollector(timeout_seconds=5)
+    try:
+        await sent.collect()
+    except Exception as e:
+        raise RuntimeError(f"Fear&Greed API unreachable: {e!r}")
+```
+
+### 10.2 Runtime validation (per ogni decision)
+
+Validazioni applicate DOPO `LLMClient.invoke()` ma PRIMA della persistenza:
+
+1. **Pydantic validation** (automatica): se `TradeDecision.model_validate()` fallisce → fallback freetext, e se fallisce di nuovo → `LLMUnrecoverableError` → `runs.status='failed'` con `failure_stage='llm_parse'`.
+2. **Vocabolario controllato `key_signals`** (in `Literal[...]` type): rigetto automatico se il modello cita signal non in lista.
+3. **Vincoli condizionali HOLD/FLAT vs LONG/SHORT** (model_validator in `ActionDecision`): rigetto automatico.
+4. **Guardrails post-clamping** (sempre attivi, invariante #8): produzione `GuardrailReport` per ogni action.
+5. **Decimal precision** ovunque (invariante #12).
+
+### 10.3 Pydantic Settings (separate per ruolo, least privilege)
+
+**Fix B.13 review-r2**: il context-orchestrator (5° Railway service) NON deve avere credenziali LLM né chiave privata del wallet HL. Sono segreti inutili per quel ruolo e violano il principio di *least privilege*. Settings unica per agent + orchestrator esporrebbe l'attacco superficiale (compromesso del context-orchestrator → accesso a wallet privati). Soluzione: tre Settings, discriminate da `service_role`.
+
+```python
+# src/aiat/config/settings.py
+from decimal import Decimal
+from typing import Literal
+from pydantic import Field, SecretStr, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class BaseAIATSettings(BaseSettings):
+    """Campi comuni a tutti i ruoli (agent + context-orchestrator)."""
+    model_config = SettingsConfigDict(
+        env_prefix="AIAT_",
+        env_file=".env",
+        case_sensitive=False,
+        extra="forbid",
+    )
+
+    # Identity dell'esperimento (comune)
+    experiment_id: str
+    git_commit_sha: str  # iniettato a build-time da CI
+
+    # Database (entrambi i ruoli accedono al DB condiviso)
+    database_url: SecretStr
+
+    # Network locked (invariante #9, comune)
+    network: Literal["testnet"] = "testnet"
+
+    # Observability
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+
+    # Service role discriminator
+    service_role: Literal["agent", "context_orchestrator"]
+
+
+class AgentSettings(BaseAIATSettings):
+    """
+    Settings per i 4 servizi agent (uno per modello LLM).
+    Possiede credenziali LLM + wallet HL specifici del modello assegnato.
+    """
+    service_role: Literal["agent"] = "agent"
+
+    # Model identity (uno dei 4)
+    model_id: str
+    prompt_template_hash: str
+    schema_version: Literal["v1"] = "v1"
+
+    # LLM provider
+    llm_provider: Literal["openai", "anthropic", "deepseek", "qwen"]
+    model_name_api: str
+    temperature: Decimal | None = None
+    top_p: Decimal | None = None
+    max_tokens: int | None = None
+    seed: int | None = None
+
+    # LLM API keys: solo UNA è attesa (corrispondente a llm_provider)
+    openai_api_key: SecretStr | None = None
+    anthropic_api_key: SecretStr | None = None
+    deepseek_api_key: SecretStr | None = None
+    qwen_api_key: SecretStr | None = None
+
+    # Hyperliquid wallet (uno per modello)
+    hl_wallet_private_key: SecretStr
+    hl_wallet_address: str
+
+    # Guardrails (Strategia C+, PRE_PRD §13.3 — sempre attivi, invariante #8)
+    max_size_pct: Decimal = Field(default=Decimal("0.20"), ge=0, le=1)
+    hard_max_leverage: Decimal = Field(default=Decimal("10"), ge=1)
+    min_open_confidence: Decimal = Field(default=Decimal("0.4"), ge=0, le=1)
+
+    # Context (invariante #5)
+    inject_decision_history: bool = False  # Memoria 2: OFF per tesi
+
+    # Scheduling
+    agent_start_delay_seconds: int = 30
+    hard_timeout_seconds: int = 180
+
+    @model_validator(mode="after")
+    def validate_api_key_matches_provider(self) -> "AgentSettings":
+        """Garantisce che la API key fornita corrisponda al provider scelto."""
+        mapping = {
+            "openai": self.openai_api_key,
+            "anthropic": self.anthropic_api_key,
+            "deepseek": self.deepseek_api_key,
+            "qwen": self.qwen_api_key,
+        }
+        if mapping[self.llm_provider] is None:
+            raise ValueError(
+                f"llm_provider='{self.llm_provider}' requires "
+                f"AIAT_{self.llm_provider.upper()}_API_KEY"
+            )
+        return self
+
+
+class ContextOrchestratorSettings(BaseAIATSettings):
+    """
+    Settings per il 5° servizio (context-orchestrator).
+    NON possiede credenziali LLM né wallet privato: least privilege.
+    Accede solo a sorgenti pubbliche/free (HL info endpoint, RSS, F&G).
+    """
+    service_role: Literal["context_orchestrator"] = "context_orchestrator"
+
+    # Cron offsets (HH:00/15/30/45)
+    cron_minute_offsets: list[int] = [0, 15, 30, 45]
+    hard_timeout_seconds: int = 30  # più stretto: deve completare prima dei 4 agent
+
+    # Eventuali API key di sorgenti esterne (es. premium news feed)
+    # NESSUNA chiave LLM. NESSUNA chiave wallet.
+    newsfeed_api_key: SecretStr | None = None  # opzionale, free tier per default
+
+
+def load_settings() -> AgentSettings | ContextOrchestratorSettings:
+    """Dispatcher: legge AIAT_SERVICE_ROLE e ritorna la subclass corretta."""
+    import os
+    role = os.environ.get("AIAT_SERVICE_ROLE")
+    if role == "agent":
+        return AgentSettings()  # type: ignore[call-arg]
+    elif role == "context_orchestrator":
+        return ContextOrchestratorSettings()  # type: ignore[call-arg]
+    else:
+        raise RuntimeError(
+            f"AIAT_SERVICE_ROLE must be 'agent' or 'context_orchestrator', got '{role}'"
+        )
+```
+
+**Implicazioni operative**:
+- I 4 servizi agent Railway hanno env vars `AIAT_SERVICE_ROLE=agent` + tutte le credenziali del proprio modello + il proprio wallet HL.
+- Il 5° servizio context-orchestrator ha `AIAT_SERVICE_ROLE=context_orchestrator` + DB url + eventuale newsfeed key.
+- Se il context-orchestrator viene compromesso, l'attaccante NON ha accesso ai wallet di trading né alle API key LLM.
+- Lo `startup_checks` (vedi §10.1) usa runtime type checking (`isinstance(settings, AgentSettings)`) per applicare check diversi ai due ruoli.
+
+---
+
+*Fine PRD V2 Round 2 v3 (post 3 cicli di peer-review esterna, 21 fix totali integrati su Round 2: 16 nel ciclo v1→v2 + 5 nel ciclo v2→v3). Blueprint tecnico Round 2 pronto per commit definitivo. Prossimo round: Round 3 (deploy strategy + milestones + risk register + propagation map).*
