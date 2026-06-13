@@ -30,6 +30,20 @@ jobs:
     name: Unit Tests (coverage ≥80%)
     runs-on: ubuntu-latest
     needs: lint-and-type
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: aiat
+          POSTGRES_PASSWORD: aiat
+          POSTGRES_DB: aiat_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
@@ -37,8 +51,13 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: uv sync --frozen
-      - name: Run unit tests with coverage
-        run: uv run pytest tests/unit -q --cov=src/aiat --cov-report=term-missing --cov-fail-under=80
+      # Global coverage 80% over unit + integration: SQLAlchemy models are
+      # exercised by integration tests (alembic upgrade), not unit. Mirrors
+      # tools/gate_check.sh so local gate and CI measure coverage identically.
+      - name: Run unit + integration tests with coverage
+        run: uv run pytest tests/unit tests/integration -q --cov=src/aiat --cov-report=term-missing --cov-fail-under=80
+        env:
+          AIAT_DATABASE_URL: "postgresql+asyncpg://aiat:aiat@localhost:5432/aiat_test"
 
   test-unit-core-95:
     name: Core Unit Tests (coverage ≥95%)
