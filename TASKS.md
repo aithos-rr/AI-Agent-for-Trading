@@ -246,7 +246,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/unit/domain/test_enums.py -q && uv run mypy src`
   - **done-when**: gli 8 enum esistono coi valori di §6.1 e il test passa.
 
-- [ ] **M1-T02** — `domain/schemas.py`: `TradeDecision` + `ActionDecision`
+- [x] **M1-T02** — `domain/schemas.py`: `TradeDecision` + `ActionDecision`
   - **what**: TDD. In `schemas.py`: `ControlledSignal = Literal[...]` (i 18 valori di §6.2,
     preliminari — finalizzati in M3-T06/D4), `ActionDecision` e `TradeDecision` con tutti
     i `model_validator(mode="after")` di §6.2: HOLD/FLAT → size_pct=0, leverage=0,
@@ -263,7 +263,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
     HOLD+size>0, LONG senza SL/TP, limit senza limit_price, signal fuori vocabolario,
     confidence al bordo, confidence fuori [0,1]).
 
-- [ ] **M1-T03** — `domain/schemas.py` (cont.): schemi contesto + DTO runtime
+- [x] **M1-T03** — `domain/schemas.py` (cont.): schemi contesto + DTO runtime
   - **what**: TDD. Aggiungere schemi contesto §6.3 (`TechnicalIndicators`,
     `SentimentSnapshot`, `NewsItem`, `OnChainSnapshot`, `PortfolioState`,
     `OpenPositionSummary`, `ContextBundle` con docstring "market context byte-identico
@@ -276,7 +276,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when**: roundtrip JSON `TradeDecision`/`ContextBundle`/`CostEventData` →
     dict → modello è byte-stabile; il test passa.
 
-- [ ] **M1-T04** — `domain/exceptions.py`
+- [x] **M1-T04** — `domain/exceptions.py`
   - **what**: Gerarchia base delle eccezioni di dominio (es. `AIATError` base +
     `ContextBuildError`, `ExecutionRejectedError`/`ExecutionTimeoutError` se usate dai
     contratti §7.1/§7.5). Type hints completi.
@@ -286,7 +286,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run python -c "import aiat.domain.exceptions" && uv run mypy src`
   - **done-when**: il modulo importa e mypy è clean.
 
-- [ ] **M1-T05** — `db/models/base.py`
+- [x] **M1-T05** — `db/models/base.py`
   - **what**: `DeclarativeBase` SQLAlchemy 2.x (`class Base(DeclarativeBase): ...`) +
     mixin comuni (es. `TimestampMixin` con `created_at` server_default `now()`). Tipi
     `Mapped[]`. Predisporre `Numeric` per i soldi (inv #12).
@@ -302,7 +302,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
 > denormalizzazione `experiment_id`/`model_id`/`run_id` dove §5 inv #3 lo richiede, tutti i
 > CHECK/UNIQUE/INDEX del DDL; **aggiorna `db/models/__init__.py`** esportando le classi.
 
-- [ ] **M1-T06a** — Models §3.2.1: anagrafica/config (3 tabelle)
+- [x] **M1-T06a** — Models §3.2.1: anagrafica/config (3 tabelle)
   - **what**: `experiment.py` (`Experiment`), `model.py` (`Model`, CHECK tier/geography,
     wallet_address UNIQUE, pricing Numeric≥0), `prompt_template.py` (`PromptTemplate`,
     PK sha256_hash, label UNIQUE, controlled_signals JSONB).
