@@ -477,7 +477,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
 > Principio **additivo**: i 4 client nativi (§8) restano implementati e attivi — OpenRouter è
 > solo un base_url alternativo scelto a runtime dalla factory, non li rimpiazza.
 
-- [ ] **M2-T01** — `llm/exceptions.py`
+- [x] **M2-T01** — `llm/exceptions.py`
   - **what**: TDD. Le **6 classi** §8.2: `LLMError` (base), `LLMTimeoutError`,
     `LLMRateLimitError`, `LLMAuthError`, `LLMParsingError`, `LLMUnrecoverableError`
     (`__init__(primary_error, fallback_error)`). (La TASK_MAP dice "5 classi" ma ne elenca
@@ -488,7 +488,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/unit/llm/test_exceptions.py -q && uv run mypy src`
   - **done-when**: le 6 eccezioni esistono con la gerarchia corretta e il test passa.
 
-- [ ] **M2-T02** — `llm/base.py`: `BaseLLMClient` ABC
+- [x] **M2-T02** — `llm/base.py`: `BaseLLMClient` ABC
   - **what**: ABC completo §7.3 (`provider`, `model_name_api`, `async def invoke(prompt, *,
     timeout_seconds=90) -> LLMInvocationResult`, docstring con semantica fallback/cost/
     nuisance).
@@ -498,7 +498,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run python -c "from aiat.llm.base import BaseLLMClient" && uv run mypy src`
   - **done-when**: l'ABC importa e mypy è clean.
 
-- [ ] **M2-T03** — `llm/structured.py`: `invoke_structured` + parser
+- [x] **M2-T03** — `llm/structured.py`: `invoke_structured` + parser
   - **what**: TDD. `invoke_structured` con **fallback selettivo solo parsing** (NON
     timeout/rate/auth), `_extract_json_balanced` (state machine NORMAL/IN_STRING/
     IN_STRING_ESCAPE, §8.2 fix B.9), `_is_parsing_error`/`_is_rate_limit_error`/
@@ -512,7 +512,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when**: i casi parser di §9.2 passano (estrazione bilanciata + fallback +
     `LLMUnrecoverableError`).
 
-- [ ] **M2-T04** **[D3]** — Raffina classificazione eccezioni (isinstance) + **ADR**
+- [x] **M2-T04** **[D3]** — Raffina classificazione eccezioni (isinstance) + **ADR**
   - **what**: TDD. Raffinare `_is_rate_limit_error`/`_is_auth_error`: **isinstance()
     primario** su classi SDK ufficiali (`openai.RateLimitError`,
     `anthropic.RateLimitError`, `openai.AuthenticationError`, ecc.) + string-match
@@ -526,7 +526,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when**: i test classificano via isinstance() le eccezioni mockate dei 4 SDK e
     l'ADR D3 esiste ed è indicizzato.
 
-- [ ] **M2-T05** — `llm/stats_handler.py`: `StatsCallbackHandler`
+- [x] **M2-T05** — `llm/stats_handler.py`: `StatsCallbackHandler`
   - **what**: TDD. `StatsCallbackHandler(AsyncCallbackHandler)` §8.3: aggregazione
     multi-tentativo (`n_attempts`), `on_llm_end` estrae usage per provider, `_extract_usage`
     (OpenAI/Anthropic/DeepSeek-R1/Qwen), `build_cost_event()` con **Decimal precision**
@@ -543,7 +543,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when**: usage extraction per i 4 provider (formati nativi via risposte
     **sintetiche**, ADR-0008) + `cost_usd` Decimal corretto; test passa.
 
-- [ ] **M2-T06** — `llm/openai_client.py`
+- [x] **M2-T06** — `llm/openai_client.py`
   - **what**: TDD (unit, langchain mockato). `OpenAIClient(BaseLLMClient)` su
     `langchain-openai`, usa `invoke_structured` + `StatsCallbackHandler`, popola
     `LLMInvocationResult` (nuisance snapshot).
@@ -553,7 +553,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/unit/llm/test_openai_client.py -q && uv run mypy src`
   - **done-when**: il client implementa l'ABC; unit test (mock) verde.
 
-- [ ] **M2-T07** — `llm/anthropic_client.py`
+- [x] **M2-T07** — `llm/anthropic_client.py`
   - **what**: TDD (unit, mock). `AnthropicClient(BaseLLMClient)` su `langchain-anthropic`.
   - **prd**: §8.1
   - **dep**: M2-T02, M2-T03, M2-T05
@@ -561,7 +561,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/unit/llm/test_anthropic_client.py -q && uv run mypy src`
   - **done-when**: il client implementa l'ABC; unit test (mock) verde.
 
-- [ ] **M2-T08** — `llm/openai_compatible_client.py`
+- [x] **M2-T08** — `llm/openai_compatible_client.py`
   - **what**: TDD (unit, mock). `OpenAICompatibleClient(BaseLLMClient)` con `base_url`
     custom (DeepSeek `https://api.deepseek.com/v1`, Qwen
     `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`).
@@ -571,7 +571,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/unit/llm/test_openai_compatible_client.py -q && uv run mypy src`
   - **done-when**: il client implementa l'ABC con base_url override; unit test (mock) verde.
 
-- [ ] **M2-T09** — `llm/factory.py`: `load_llm`
+- [x] **M2-T09** — `llm/factory.py`: `load_llm`
   - **what**: TDD (unit, mock). `load_llm(settings: AgentSettings) -> BaseLLMClient`
     (**tipizzato su `AgentSettings`, NON `BaseAIATSettings`** — least privilege, fix B.17).
     **Dual-mode (ADR-0008)**, switch su `settings.llm_gateway`: con `gateway="openrouter"`
@@ -591,7 +591,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
     `direct` per i 4 provider (openai/anthropic/deepseek/qwen) **e** `openrouter`
     (`OpenAICompatibleClient` con base_url OpenRouter).
 
-- [ ] **M2-T10** — `config/model_pricing.yaml`
+- [x] **M2-T10** — `config/model_pricing.yaml`
   - **what**: Creare `src/aiat/config/model_pricing.yaml` con pricing USD/1M token per i 4
     modelli (struttura §8.4: `input`/`output`/`reasoning`). I nomi esatti dei modelli (D1)
     sono deferiti a M7: qui struttura + valori correnti/placeholder. Helper
@@ -605,7 +605,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run python -c "import yaml; d=yaml.safe_load(open('src/aiat/config/model_pricing.yaml')); assert 'models' in d and len(d['models'])>=4, d; print('pricing ok')"`
   - **done-when**: YAML valido con ≥4 modelli, ciascuno con input/output/reasoning.
 
-- [ ] **M2-T11** — `tests/integration/test_llm_providers.py` + config VCR
+- [x] **M2-T11** — `tests/integration/test_llm_providers.py` + config VCR
   - **what**: Scrivere il test file con le **15 funzioni** di §9.4 (4 structured success,
     fallback, unrecoverable, timeout, rate-limit, auth, cost-tracking ×2, cost-aggregation,
     3 reasoning-trace) marcate con `@pytest.mark.vcr`, e aggiungere la **config VCR** a
@@ -652,7 +652,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
     `OpenAICompatibleClient`); le cassette dei provider **diretti** per l'esperimento si
     registrano a **M6** (ADR-0008).
 
-- [ ] **M2-T13** — Coverage `llm/` ≥95%
+- [x] **M2-T13** — Coverage `llm/` ≥95%
   - **what**: Completare i test unit (mock) finché `llm/` raggiunge ≥95% misurato **solo su
     unit** (il gating CI core §9.6 usa `tests/unit/{domain,llm,execution}`, non integration).
   - **prd**: §9.1

@@ -74,3 +74,44 @@
 **Next**: MILESTONE_COMPLETE M1 → proceed to M2 (LLM abstraction + StatsHandler).
 
 ---
+
+## 2026-06-13 — M2-T01..T13 (LLM abstraction layer + ADR D3)
+
+**Tasks completed**: M2-T01 through M2-T11, M2-T13 (M2-T12 HUMAN-GATED — see below)
+
+**Changed**:
+- `src/aiat/llm/exceptions.py` — 6 exception classes (LLMError, LLMTimeoutError, LLMRateLimitError, LLMAuthError, LLMParsingError, LLMUnrecoverableError)
+- `src/aiat/llm/base.py` — BaseLLMClient ABC
+- `src/aiat/llm/structured.py` — invoke_structured + _extract_json_balanced (state machine) + _is_parsing_error/_is_rate_limit_error/_is_auth_error with module-level SDK type resolution (ADR-0009)
+- `src/aiat/llm/stats_handler.py` — StatsCallbackHandler with OpenAI/Anthropic/DeepSeek-R1/Qwen usage extraction, Decimal cost computation
+- `src/aiat/llm/openai_client.py` — OpenAIClient(BaseLLMClient)
+- `src/aiat/llm/anthropic_client.py` — AnthropicClient(BaseLLMClient)
+- `src/aiat/llm/openai_compatible_client.py` — OpenAICompatibleClient with DEEPSEEK/QWEN/OPENROUTER base URLs
+- `src/aiat/llm/factory.py` — load_llm dual-mode (direct / openrouter, ADR-0008)
+- `src/aiat/config/settings.py` — AgentSettings stub (llm_provider, llm_gateway, model_name_api, keys, temperature, top_p, max_tokens, seed)
+- `src/aiat/config/model_pricing.yaml` + `src/aiat/config/pricing.py` — load_pricing_for_model()
+- `tests/unit/llm/` — 119 unit tests covering all modules
+- `tests/integration/test_llm_providers.py` — 15 VCR-marked tests (collect-only verified; cassettes pending M2-T12)
+- `tests/cassettes/.keep` — placeholder for VCR cassettes directory
+- `docs/decisions/0009-exception-classification.md` — ADR D3 (isinstance() primary + string-match fallback)
+- `docs/decisions/README.md` — ADR 0009 entry added
+
+**Verify output**:
+- `uv run ruff check src tests` → clean
+- `uv run ruff format --check src tests` → clean
+- `uv run mypy src` → clean (49 files)
+- `uv run lint-imports` → 1 contract kept, 0 broken
+- `uv run pytest tests/unit/llm --cov=src/aiat/llm --cov-fail-under=95` → 119 passed, 98% coverage
+
+**Learnings**:
+- Module-level SDK type resolution (try/except ImportError at import time, not inside functions) avoids uncoverable branch-miss on installed packages. Functions use pre-resolved tuples directly.
+- `asyncio.TimeoutError` → `TimeoutError` (UP041): Python 3.11+ unifies them; ruff enforces.
+- `raise ... from err` (B904) required inside except blocks — B904 is not auto-fixable, must be done manually.
+- `LLMResult` in LangChain validates `generations` as real `Generation`/`ChatGeneration` instances, rejects `MagicMock`. Tests must use real `ChatGeneration(message=AIMessage(...))`.
+- `ChatAnthropic` constructor kwargs (`model`, `max_tokens`) need `# type: ignore[call-arg]` due to missing mypy stubs.
+
+**M2-T12 HUMAN-GATED**: Record 15 VCR cassettes via OpenRouter requires real `AIAT_OPENROUTER_API_KEY` + network access to openrouter.ai (blocked by devcontainer firewall). Leaving M2-T12 unchecked.
+
+**Next**: RALPH_BLOCKED — M2-T12 is the only remaining M2 task and is HUMAN-GATED. Proceed to M3 in parallel.
+
+---

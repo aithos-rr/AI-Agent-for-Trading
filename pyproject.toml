@@ -63,6 +63,7 @@ module = [
     "pandas_ta.*",
     "vcr.*",
     "pytest_postgresql.*",
+    "yaml",
 ]
 ignore_missing_imports = true
 
