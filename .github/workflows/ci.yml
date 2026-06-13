@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  lint-and-type:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Ruff lint
+        run: uv run ruff check src tests
+      - name: Ruff format check
+        run: uv run ruff format --check src tests
+      - name: Mypy
+        run: uv run mypy src
+      - name: Import contracts
+        run: uv run lint-imports
+
+  test-unit:
+    name: Unit Tests (coverage ≥80%)
+    runs-on: ubuntu-latest
+    needs: lint-and-type
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Run unit tests with coverage
+        run: uv run pytest tests/unit -q --cov=src/aiat --cov-report=term-missing --cov-fail-under=80
+
+  test-unit-core-95:
+    name: Core Unit Tests (coverage ≥95%)
+    runs-on: ubuntu-latest
+    needs: lint-and-type
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Run core unit tests (domain)
+        run: uv run pytest tests/unit/domain -q --cov=src/aiat/domain --cov-report=term-missing --cov-fail-under=95
+      - name: Run core unit tests (llm)
+        run: uv run pytest tests/unit/llm -q --cov=src/aiat/llm --cov-report=term-missing --cov-fail-under=95
+      - name: Run core unit tests (execution)
+        run: uv run pytest tests/unit/execution -q --cov=src/aiat/execution --cov-report=term-missing --cov-fail-under=95
+
+  test-integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: test-unit
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: aiat
+          POSTGRES_PASSWORD: aiat
+          POSTGRES_DB: aiat_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Run integration tests
+        run: uv run pytest tests/integration -q
+        env:
+          AIAT_DATABASE_URL: "postgresql+asyncpg://aiat:aiat@localhost:5432/aiat_test"
+
+  test-e2e:
+    name: E2E Tests (mock)
+    runs-on: ubuntu-latest
+    needs: test-integration
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: aiat
+          POSTGRES_PASSWORD: aiat
+          POSTGRES_DB: aiat_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Run e2e tests
+        run: uv run pytest tests/e2e -q -m "not testnet"
+        env:
+          AIAT_DATABASE_URL: "postgresql+asyncpg://aiat:aiat@localhost:5432/aiat_test"

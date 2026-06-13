@@ -44,3 +44,47 @@ dev = [
     "mypy",
     "import-linter",
 ]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "T201"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[[tool.mypy.overrides]]
+module = [
+    "apscheduler.*",
+    "hyperliquid.*",
+    "pandas_ta.*",
+    "vcr.*",
+    "pytest_postgresql.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "invariant: marks tests that verify a PRD invariant",
+    "testnet: marks tests that require a real Hyperliquid testnet wallet",
+    "vcr: marks tests that use VCR cassettes",
+]
+
+[tool.importlinter]
+root_package = "aiat"
+
+[[tool.importlinter.contracts]]
+name = "domain is independent"
+type = "forbidden"
+source_modules = ["aiat.domain"]
+forbidden_modules = [
+    "aiat.db",
+    "aiat.llm",
+    "aiat.context",
+    "aiat.execution",
+    "aiat.orchestration",
+]

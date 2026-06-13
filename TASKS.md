@@ -111,7 +111,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `test -s uv.lock && uv sync --frozen && echo "frozen ok"`
   - **done-when**: `uv.lock` esiste non vuoto e `uv sync --frozen` riesce.
 
-- [ ] **M0-T03** — Skeleton `src/aiat/` + `tests/`
+- [x] **M0-T03** — Skeleton `src/aiat/` + `tests/`
   - **what**: Creare il layout `src/aiat/` con tutti gli `__init__.py` dei sotto-package
     (`config`, `domain`, `db`, `db/models`, `db/repositories`, `context`,
     `context/collectors`, `prompts`, `llm`, `execution`, `orchestration`,
@@ -125,7 +125,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run python -c "import aiat" && uv run python -c "import aiat.domain, aiat.db.models, aiat.llm, aiat.execution, aiat.context.collectors, aiat.orchestration"`
   - **done-when**: il package `aiat` e tutti i sotto-package si importano senza errori.
 
-- [ ] **M0-T04** — `__main__.py` dispatcher minimale (stub)
+- [x] **M0-T04** — `__main__.py` dispatcher minimale (stub)
   - **what**: Creare `src/aiat/__main__.py` con uno stub che legge `AIAT_SERVICE_ROLE`,
     chiama un `load_settings()` placeholder (o legge l'env direttamente) e **logga** il
     ruolo via `structlog` (MAI `print()` — inv #10). Logica completa rimandata a M5-T07.
@@ -135,7 +135,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run ruff check src/aiat/__main__.py && uv run python -c "import aiat.__main__; print('main importable')"`
   - **done-when**: il modulo si importa, supera ruff (nessun `print`), non crasha all'import.
 
-- [ ] **M0-T05** — Config `ruff` (linter+formatter, T201)
+- [x] **M0-T05** — Config `ruff` (linter+formatter, T201)
   - **what**: In `pyproject.toml` `[tool.ruff]`: target `py312`, abilitare regola `T201`
     (no `print`, inv #10) + set base (E/F/I/UP/B). Eseguire `ruff format` sullo skeleton.
   - **prd**: §1.2 (inv #10)
@@ -144,7 +144,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run ruff check src tests && uv run ruff format --check src tests`
   - **done-when**: `ruff check` e `ruff format --check` escono 0 su `src`+`tests`.
 
-- [ ] **M0-T06** — Config `mypy` strict
+- [x] **M0-T06** — Config `mypy` strict
   - **what**: In `pyproject.toml` `[tool.mypy]`: `python_version=3.12`, `strict=true`
     (override per-modulo se serve allentare su test). Garantire che lo skeleton tipizzi.
   - **prd**: §1.2
@@ -153,7 +153,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run mypy src`
   - **done-when**: `mypy src` esce 0 (clean) sullo skeleton.
 
-- [ ] **M0-T07** — Config `pytest` + coverage + `.coveragerc` + smoke test
+- [x] **M0-T07** — Config `pytest` + coverage + `.coveragerc` + smoke test
   - **what**: In `pyproject.toml` `[tool.pytest.ini_options]`: `asyncio_mode="auto"`,
     `testpaths=["tests"]`, registrare il marker `invariant`. **NON** mettere
     `--cov-fail-under` negli `addopts` (il gating coverage vive nei comandi CI, §9.6, non
@@ -167,7 +167,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest -q`
   - **done-when**: `pytest` colleziona ≥1 test, passa, esce 0.
 
-- [ ] **M0-T08** — Config `import-linter`
+- [x] **M0-T08** — Config `import-linter`
   - **what**: In `pyproject.toml` `[importlinter]` + `[[importlinter.contracts]]`:
     `root_package=aiat`, ≥1 contratto — es. `domain` indipendente (forbidden:
     `aiat.domain -> aiat.db|llm|context|execution|orchestration`) + layering
@@ -179,7 +179,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run lint-imports`
   - **done-when**: `lint-imports` esce 0 (contratti rispettati) sullo skeleton.
 
-- [ ] **M0-T09** — `docker/Dockerfile` multi-stage non-root
+- [x] **M0-T09** — `docker/Dockerfile` multi-stage non-root
   - **what**: Creare `docker/Dockerfile` esatto come §11.3: stage `builder`
     (`python:3.12-slim`, `uv sync --frozen --no-install-project --no-dev`), stage
     `runtime` (`useradd -u 10001 aiat`, copia `.venv`+`src`+`alembic`, `PYTHONPATH=/app/src`,
@@ -192,7 +192,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
     `PYTHONPATH`. **Nota**: il `docker build` reale (daemon assente nel loop) va eseguito
     da umano/CI: `docker build -f docker/Dockerfile -t aiat:test .`.
 
-- [ ] **M0-T10** — `.github/workflows/ci.yml`
+- [x] **M0-T10** — `.github/workflows/ci.yml`
   - **what**: Creare `.github/workflows/ci.yml` come §9.6 (uv sync --frozen, ruff check,
     ruff format --check, mypy, pytest unit con `--cov-fail-under=80`, step core 95% su
     `tests/unit/{domain,llm,execution}`, pytest integration, pytest e2e, import contracts).
@@ -205,7 +205,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when**: il file YAML è valido, contiene gli step lint/type/test e usa
     `lint-imports`. (CI green reale verificabile solo dopo push.)
 
-- [ ] **M0-T11** — Verifica `.env.example` copre §11.4
+- [x] **M0-T11** — Verifica `.env.example` copre §11.4
   - **what**: Verificare che `.env.example` (già presente, commit 55f0727) contenga tutti
     i nomi env var di §11.4; integrare se mancano. (Già fatto: solo verifica.)
   - **prd**: §11.4
@@ -214,7 +214,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `for v in AIAT_EXPERIMENT_ID AIAT_GIT_COMMIT_SHA AIAT_DATABASE_URL AIAT_NETWORK AIAT_LOG_LEVEL AIAT_SERVICE_ROLE AIAT_MODEL_ID AIAT_PROMPT_TEMPLATE_HASH AIAT_SCHEMA_VERSION AIAT_LLM_PROVIDER AIAT_MODEL_NAME_API AIAT_TEMPERATURE AIAT_SEED AIAT_MAX_TOKENS AIAT_OPENAI_API_KEY AIAT_ANTHROPIC_API_KEY AIAT_DEEPSEEK_API_KEY AIAT_QWEN_API_KEY AIAT_HL_WALLET_PRIVATE_KEY AIAT_HL_WALLET_ADDRESS AIAT_MAX_SIZE_PCT AIAT_HARD_MAX_LEVERAGE AIAT_MIN_OPEN_CONFIDENCE AIAT_INJECT_DECISION_HISTORY AIAT_AGENT_START_DELAY_SECONDS AIAT_HARD_TIMEOUT_SECONDS; do grep -q "$v" .env.example || { echo "MISSING $v"; exit 1; }; done && echo "env vars ok"`
   - **done-when**: tutti i nomi `AIAT_*` attesi (§11.4) sono presenti in `.env.example`.
 
-- [ ] **M0-T12** — `README.md` minimale
+- [x] **M0-T12** — `README.md` minimale
   - **what**: Creare `README.md` (titolo progetto, link a `docs/`, comando setup
     `uv sync`, comando run `uv run python -m aiat`).
   - **prd**: §2.2

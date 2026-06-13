@@ -21,3 +21,28 @@
 **Next**: M0-T03 (skeleton src/aiat/ + tests/).
 
 ---
+
+## 2026-06-13 — M0-T03 through M0-T12 (M0 complete)
+
+**Tasks**: M0-T03 skeleton, M0-T04 __main__ stub, M0-T05 ruff config, M0-T06 mypy strict, M0-T07 pytest+coveragerc+smoke, M0-T08 import-linter, M0-T09 Dockerfile, M0-T10 ci.yml, M0-T11 .env.example check, M0-T12 README.
+
+**Changed**:
+- `src/aiat/` + all sub-packages (`config`, `domain`, `db/models`, `db/repositories`, `context/collectors`, `prompts`, `llm`, `execution`, `orchestration`, `observability`) with `__init__.py`
+- `tests/` skeleton with `unit/{domain,llm,execution,context,orchestration}`, `integration/`, `e2e/`
+- `src/aiat/__main__.py` — stub that reads AIAT_SERVICE_ROLE and logs via structlog
+- `pyproject.toml` — ruff (T201+E/F/I/UP/B, target py312), mypy (strict, overrides for untyped 3rd party), pytest (asyncio_mode=auto, markers), importlinter (domain independent contract)
+- `.coveragerc` — branch=True, omit __main__/logging_config, standard excludes
+- `tests/test_smoke.py` — package import smoke test
+- `docker/Dockerfile` — multi-stage builder+runtime, uid 10001, PYTHONPATH=/app/src
+- `.github/workflows/ci.yml` — lint+mypy, unit (80%), core-95% (domain/llm/execution), integration, e2e
+- `README.md` — minimal with uv sync + run commands
+
+**Learnings**:
+- import-linter `layers` contract `ignore_imports` field is not supported (or requires imports to exist). Simplified to just the `forbidden` domain-independence contract for the skeleton phase.
+- `mypy` strict mode requires `ignore_missing_imports` overrides for 3rd-party packages without type stubs (apscheduler, hyperliquid, pandas-ta, vcr, pytest-postgresql).
+
+**Result**: Full M0 DoD green — uv sync/ruff/mypy/pytest/lint-imports all exit 0. Dockerfile structurally correct.
+
+**Next**: M1-T01 (domain/enums.py — 8 enums from §6.1).
+
+---
