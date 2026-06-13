@@ -102,3 +102,20 @@ USER root
 RUN apt-get update && apt-get install -y --no-install-recommends tmux \
   && apt-get clean && rm -rf /var/lib/apt/lists/*
 USER node
+
+# --- AI-Lab addition: PostgreSQL server for pytest-postgresql (project-specific) ---
+# AI-Agent-for-Trading needs the Postgres SERVER binaries (initdb/pg_ctl/postgres),
+# not just the client, because pytest-postgresql (PRD §9.3) spins up an ephemeral
+# cluster for integration/e2e tests. The Debian 'postgresql' package installs these
+# under /usr/lib/postgresql/<ver>/bin, which is NOT on PATH by default — so we add it.
+# Scope: this repo only (not promoted to the canonical scaffold) — not every vibe
+# project uses a database.
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends postgresql \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
+# Expose the Postgres server binaries on PATH (resolve the versioned bin dir dynamically).
+RUN PG_BIN=$(dirname "$(ls /usr/lib/postgresql/*/bin/pg_ctl | head -1)") \
+  && echo "export PATH=\"$PG_BIN:\$PATH\"" >> /etc/profile.d/postgres-path.sh \
+  && chmod 0644 /etc/profile.d/postgres-path.sh
+ENV PATH="/usr/lib/postgresql/15/bin:${PATH}"
+USER node

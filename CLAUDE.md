@@ -125,7 +125,7 @@ Per ogni PR:
 - [ ] `uv run ruff check src tests` clean
 - [ ] `uv run ruff format --check src tests` clean
 - [ ] `uv run mypy src` clean
-- [ ] `uv run import-linter` clean
+- [ ] `uv run lint-imports` clean
 - [ ] Se è una migration: `alembic upgrade head` + `alembic downgrade base`
       testati su Postgres pulito
 
@@ -208,7 +208,7 @@ uv add <package>                     # aggiungi dep (poi chiedi se ok per pyproj
 uv run ruff check src tests
 uv run ruff format src tests
 uv run mypy src
-uv run import-linter
+uv run lint-imports
 
 # Test
 uv run pytest                                      # tutti
