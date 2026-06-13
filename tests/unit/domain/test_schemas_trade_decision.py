@@ -194,3 +194,68 @@ def test_decimal_types() -> None:
     assert isinstance(action.leverage, Decimal)
     assert isinstance(action.size_pct, Decimal)
     assert isinstance(action.confidence, Decimal)
+
+
+# ---------------------------------------------------------------------------
+# Coverage gaps: lines 77, 79, 81, 84, 86, 114
+# ---------------------------------------------------------------------------
+
+
+def test_hold_with_wrong_entry_type_raises() -> None:
+    """Line 77: HOLD/FLAT entry_type must be 'none'."""
+    bad = {**HOLD_ACTION_BTC, "entry_type": "market"}
+    with pytest.raises(ValidationError, match="entry_type='none'"):
+        ActionDecision(**bad)
+
+
+def test_hold_with_stop_loss_raises() -> None:
+    """Line 79: HOLD/FLAT must not declare SL/TP."""
+    bad = {**HOLD_ACTION_BTC, "stop_loss_pct": "0.02"}
+    with pytest.raises(ValidationError, match="must not declare SL/TP"):
+        ActionDecision(**bad)
+
+
+def test_hold_with_limit_price_raises() -> None:
+    """Line 81: HOLD/FLAT must not specify limit_price."""
+    bad = {**HOLD_ACTION_BTC, "limit_price": "50000"}
+    with pytest.raises(ValidationError, match="must not specify limit_price"):
+        ActionDecision(**bad)
+
+
+def test_long_with_zero_size_pct_raises() -> None:
+    """Line 84: LONG/SHORT must have size_pct > 0."""
+    bad = {
+        **LONG_ACTION,
+        "symbol": "BTC",
+        "size_pct": "0",
+    }
+    with pytest.raises(ValidationError, match="size_pct>0"):
+        ActionDecision(**bad)
+
+
+def test_long_with_none_entry_type_raises() -> None:
+    """Line 86: LONG/SHORT must use market or limit entry_type."""
+    bad = {
+        **LONG_ACTION,
+        "symbol": "BTC",
+        "entry_type": "none",
+        "limit_price": None,
+    }
+    with pytest.raises(ValidationError, match="entry_type='market' or 'limit'"):
+        ActionDecision(**bad)
+
+
+def test_trade_decision_with_wrong_symbols_raises() -> None:
+    """Line 114: actions must cover BTC/ETH/SOL exactly (duplicate symbol passes field-level)."""
+    data = {
+        "portfolio_reasoning": "A" * 50,
+        "risk_assessment": "B" * 30,
+        # BTC appears twice, SOL missing — passes per-field validator, fails model validator
+        "actions": [
+            HOLD_ACTION_BTC,
+            {**HOLD_ACTION_BTC, "symbol": "BTC"},
+            {**HOLD_ACTION_BTC, "symbol": "ETH"},
+        ],
+    }
+    with pytest.raises(ValidationError, match="BTC/ETH/SOL"):
+        TradeDecision(**data)

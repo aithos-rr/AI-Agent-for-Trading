@@ -323,7 +323,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run python -c "from aiat.db.models import ContextSnapshot, ContextBuildRun" && uv run mypy src`
   - **done-when**: i 2 modelli importano e mypy è clean.
 
-- [ ] **M1-T06c** — Models §3.2.3: run + decisioni (4 tabelle)
+- [x] **M1-T06c** — Models §3.2.3: run + decisioni (4 tabelle)
   - **what**: `run.py` (`Run`, UNIQUE `(experiment_id,model_id,scheduled_for)`, **FK
     composita** `(context_snapshot_id,experiment_id,tick_id)`→context_snapshots, CHECK
     status 7-valori), `llm_invocation.py` (`LLMInvocation`, run_id UNIQUE, Numeric(4,3)
@@ -336,7 +336,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run python -c "from aiat.db.models import Run, LLMInvocation, Decision, DecisionAction" && uv run mypy src`
   - **done-when**: i 4 modelli importano (FK composita inclusa) e mypy è clean.
 
-- [ ] **M1-T06d** — Models §3.2.4: wallet/posizioni (2 tabelle)
+- [x] **M1-T06d** — Models §3.2.4: wallet/posizioni (2 tabelle)
   - **what**: `account_snapshot.py` (`AccountSnapshot`, run_id UNIQUE,
     `portfolio_state_hash`), `position.py` (`Position`, side CHECK LONG/SHORT,
     `opening_action_id` UNIQUE index, `chk_position_closed_consistency`, index parziale
@@ -347,7 +347,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run python -c "from aiat.db.models import AccountSnapshot, Position" && uv run mypy src`
   - **done-when**: i 2 modelli importano e mypy è clean.
 
-- [ ] **M1-T06e** — Models §3.2.5: orders (1 tabella)
+- [x] **M1-T06e** — Models §3.2.5: orders (1 tabella)
   - **what**: `order.py` (`Order`, CHECK `order_kind` entry/stop_loss/take_profit/close,
     CHECK status 6-valori, Numeric prezzi/size, index su action/model/status parziale).
   - **prd**: §3.2.5
@@ -356,7 +356,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run python -c "from aiat.db.models import Order" && uv run mypy src`
   - **done-when**: `Order` importa e mypy è clean.
 
-- [ ] **M1-T06f** — Models §3.2.6: ledger costi (4 tabelle)
+- [x] **M1-T06f** — Models §3.2.6: ledger costi (4 tabelle)
   - **what**: `fee_event.py` (`FeeEvent`, FK order_id+position_id+run_id), `funding_event.py`
     (`FundingEvent`, **niente run_id** — vedi §3.3, CHECK period_end>start),
     `cost_event.py` (`CostEvent`, decision_id UNIQUE, `n_attempts`≥1, Numeric(12,8)),
@@ -367,7 +367,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run python -c "from aiat.db.models import FeeEvent, FundingEvent, CostEvent, TaxSimPeriod" && uv run mypy src`
   - **done-when**: i 4 modelli importano e mypy è clean.
 
-- [ ] **M1-T06g** — Models §3.2.7: outcomes (1 tabella)
+- [x] **M1-T06g** — Models §3.2.7: outcomes (1 tabella)
   - **what**: `outcome.py` (`Outcome`, position_id UNIQUE, `opening_action_id`,
     `opening_run_id`+`closing_run_id`, `was_profitable_net`, `decision_action_confidence`,
     `horizon_met`, indici model_time/confidence/action).
@@ -377,7 +377,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run python -c "from aiat.db.models import Outcome" && uv run mypy src`
   - **done-when**: `Outcome` importa e mypy è clean.
 
-- [ ] **M1-T06h** — Models §3.2.8: baseline (2 tabelle)
+- [x] **M1-T06h** — Models §3.2.8: baseline (2 tabelle)
   - **what**: `baseline_config.py` (`BaselineConfig`, CHECK baseline_name, UNIQUE
     `(experiment_id,baseline_name)`, `config_hash`), `baseline_equity_snapshot.py`
     (`BaselineEquitySnapshot`, FK baseline_config_id, UNIQUE
@@ -388,7 +388,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run python -c "from aiat.db.models import BaselineConfig, BaselineEquitySnapshot" && uv run mypy src`
   - **done-when**: i 2 modelli importano e mypy è clean.
 
-- [ ] **M1-T06i** — Models §3.2.9: errors (1 tabella) + chiusura set 20
+- [x] **M1-T06i** — Models §3.2.9: errors (1 tabella) + chiusura set 20
   - **what**: `error.py` (`Error`, FK nullable run/decision/experiment/model, index
     model_time/kind). Verificare che `db/models/__init__.py` esporti **tutte e 20** le
     entità (Experiment…Error).
@@ -398,7 +398,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run python -c "import aiat.db.models as m; n=[x for x in ('Experiment','Model','PromptTemplate','ContextSnapshot','ContextBuildRun','Run','LLMInvocation','Decision','DecisionAction','AccountSnapshot','Position','Order','FeeEvent','FundingEvent','CostEvent','TaxSimPeriod','Outcome','BaselineConfig','BaselineEquitySnapshot','Error') if hasattr(m,x)]; assert len(n)==20, n; print('20 models ok')" && uv run mypy src`
   - **done-when**: tutte e 20 le classi modello sono esportate da `aiat.db.models`.
 
-- [ ] **M1-T07** — `db/session.py`
+- [x] **M1-T07** — `db/session.py`
   - **what**: Async engine (`create_async_engine`, driver `asyncpg`) + factory
     `AsyncSession` / `async_sessionmaker`. Helper `get_db_session(settings)` (usato da §10.1).
   - **prd**: §1.2
@@ -407,7 +407,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run python -c "import aiat.db.session" && uv run mypy src`
   - **done-when**: il modulo importa e mypy è clean.
 
-- [ ] **M1-T08** — Setup `alembic/`
+- [x] **M1-T08** — Setup `alembic/`
   - **what**: `alembic init` adattato: `alembic/env.py` async-aware (legge
     `AIAT_DATABASE_URL`, `target_metadata = Base.metadata` importando tutti i modelli),
     `alembic/script.py.mako`, `alembic.ini` a **root** (§2.2; DISCREPANZA #4 confermata).
@@ -417,7 +417,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run python -c "from alembic.config import Config; Config('alembic.ini'); import aiat.db.models" && uv run alembic --config alembic.ini history && echo "alembic config ok"`
   - **done-when**: la config Alembic carica e vede `Base.metadata` con i 20 modelli.
 
-- [ ] **M1-T09** 🐘 — Migration `001_initial_schema.py`
+- [x] **M1-T09** 🐘 — Migration `001_initial_schema.py`
   - **what**: Generare la migration di bootstrap (autogenerate dai 20 modelli, poi review
     manuale per CHECK condizionali, FK composita runs→context_snapshots, indici parziali,
     UNIQUE). Una sola migration contiene tutto il DDL §3.2.
@@ -429,7 +429,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
     🐘**: l'`alembic upgrade head` reale (creazione 20 tabelle) è verificato da M1-T11 su
     Postgres effimero.
 
-- [ ] **M1-T10** 🐘 — `tests/conftest.py`: fixture `pytest-postgresql`
+- [x] **M1-T10** 🐘 — `tests/conftest.py`: fixture `pytest-postgresql`
   - **what**: Fixture come §9.3: `postgresql_proc(port=None)`, `postgresql`, `db_url`
     (applica `alembic upgrade head` sul DB effimero), `db_session` (`AsyncSession`,
     rollback in teardown).
@@ -441,7 +441,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
     `postgresql_proc`/`db_url`/`db_session`. **Nota 🐘**: l'istanziazione effettiva (avvio
     cluster) richiede Postgres server e viene esercitata da M1-T11.
 
-- [ ] **M1-T11** 🐘 — `tests/integration/test_db_migrations.py`
+- [x] **M1-T11** 🐘 — `tests/integration/test_db_migrations.py`
   - **what**: Test §9.3: upgrade head da vuoto crea **20 tabelle**, tutti i CHECK
     applicati, tutti gli indici, downgrade base + upgrade idempotente. Verifica anche
     presenza colonne `experiment_id`/`model_id`/`run_id` sulle tabelle operative (inv #3).
@@ -452,7 +452,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when** 🐘: con Postgres server disponibile, `alembic upgrade head` crea 20
     tabelle con tutti i constraint e il downgrade/upgrade è idempotente.
 
-- [ ] **M1-T12** — Coverage `domain/` ≥95%
+- [x] **M1-T12** — Coverage `domain/` ≥95%
   - **what**: Completare i test unit finché `domain/` raggiunge ≥95% (CI gating §9.1).
   - **prd**: §9.1
   - **dep**: M1-T02, M1-T03

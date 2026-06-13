@@ -1,0 +1,65 @@
+"""Pytest fixtures for integration and e2e tests (§9.3)."""
+
+import os
+
+import psycopg
+import pytest
+import pytest_asyncio
+from alembic.config import Config
+from pytest_postgresql.factories import postgresql_proc
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from alembic import command
+
+# Ephemeral PostgreSQL process — port=None for auto-selection (§9.3).
+# Session-scoped: Postgres server starts once per test session.
+postgresql_proc_fixture = postgresql_proc(
+    port=None,
+    executable="/usr/lib/postgresql/15/bin/pg_ctl",
+)
+
+
+def _create_db(proc: object, dbname: str) -> None:  # type: ignore[misc]
+    """Create *dbname* on the ephemeral server (connecting via postgres admin db)."""
+    p = proc  # type: ignore[attr-defined]
+    with psycopg.connect(
+        host=p.host, port=p.port, user=p.user, dbname="postgres", autocommit=True
+    ) as conn:
+        conn.execute(f"CREATE DATABASE {dbname}")
+
+
+@pytest.fixture(scope="session")
+def db_url(postgresql_proc_fixture: object) -> str:  # type: ignore[override]
+    """Apply alembic migrations to ephemeral Postgres; return asyncpg URL (§9.3).
+
+    Session-scoped: migrations run once; db_session rollbacks provide test isolation.
+    """
+    _create_db(postgresql_proc_fixture, "aiat_tests")
+    p = postgresql_proc_fixture  # type: ignore[attr-defined]
+    asyncpg_url = f"postgresql+asyncpg://{p.user}@{p.host}:{p.port}/aiat_tests"
+    os.environ["AIAT_DATABASE_URL"] = asyncpg_url
+    cfg = Config("alembic.ini")
+    cfg.set_main_option("sqlalchemy.url", asyncpg_url)
+    command.upgrade(cfg, "head")
+    return asyncpg_url
+
+
+@pytest_asyncio.fixture(scope="function")
+async def db_session(db_url: str) -> AsyncSession:  # type: ignore[misc]
+    """Async session with rollback teardown for test isolation (§9.3)."""
+    engine = create_async_engine(db_url)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with session_factory() as session:
+        yield session
+        await session.rollback()
+    await engine.dispose()
+
+
+# VCR config for LLM integration tests (§9.4).
+# Tests use @pytest.mark.vcr to select their cassette.
+vcr_config = {
+    "cassette_library_dir": "tests/cassettes",
+    "record_mode": "none",
+    "filter_headers": ["authorization", "x-api-key"],
+    "match_on": ["method", "scheme", "host", "port", "path", "query", "body"],
+}
