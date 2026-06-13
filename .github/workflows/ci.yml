@@ -30,34 +30,23 @@ jobs:
     name: Unit Tests (coverage ≥80%)
     runs-on: ubuntu-latest
     needs: lint-and-type
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: aiat
-          POSTGRES_PASSWORD: aiat
-          POSTGRES_DB: aiat_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
         with:
           python-version: "3.12"
+      # pytest-postgresql starts its OWN ephemeral cluster from these binaries
+      # (pg_ctl/initdb); it does NOT connect to an external service container.
+      - name: Install PostgreSQL server (pytest-postgresql needs pg_ctl/initdb)
+        run: sudo apt-get update && sudo apt-get install -y postgresql
       - name: Install dependencies
         run: uv sync --frozen
       # Global coverage 80% over unit + integration: SQLAlchemy models are
       # exercised by integration tests (alembic upgrade), not unit. Mirrors
       # tools/gate_check.sh so local gate and CI measure coverage identically.
+      # No AIAT_DATABASE_URL needed — conftest points it at the ephemeral cluster.
       - name: Run unit + integration tests with coverage
         run: uv run pytest tests/unit tests/integration -q --cov=src/aiat --cov-report=term-missing --cov-fail-under=80
-        env:
-          AIAT_DATABASE_URL: "postgresql+asyncpg://aiat:aiat@localhost:5432/aiat_test"
 
   test-unit-core-95:
     name: Core Unit Tests (coverage ≥95%)
@@ -70,69 +59,62 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: uv sync --frozen
-      - name: Run core unit tests (domain)
+      # domain is implemented (M1) → hard 95% gate, always enforced.
+      - name: Core coverage — domain (≥95%)
         run: uv run pytest tests/unit/domain -q --cov=src/aiat/domain --cov-report=term-missing --cov-fail-under=95
-      - name: Run core unit tests (llm)
-        run: uv run pytest tests/unit/llm -q --cov=src/aiat/llm --cov-report=term-missing --cov-fail-under=95
-      - name: Run core unit tests (execution)
-        run: uv run pytest tests/unit/execution -q --cov=src/aiat/execution --cov-report=term-missing --cov-fail-under=95
+      # llm (M2) / execution (M4) are not implemented yet. pytest exits 5 when
+      # it collects no tests; we treat ONLY exit 5 as a pass (tolerant of
+      # absence). Test failures and coverage shortfalls (exit 1) still fail the
+      # job, so the 95% gate auto-activates — rigorously — when those tests land.
+      - name: Core coverage — llm (≥95% when present)
+        run: |
+          code=0
+          uv run pytest tests/unit/llm -q --cov=src/aiat/llm --cov-report=term-missing --cov-fail-under=95 || code=$?
+          if [ "$code" -eq 5 ]; then echo "::notice::no llm tests yet (M2) — tolerated, 95% gate inactive"; exit 0; fi
+          exit "$code"
+      - name: Core coverage — execution (≥95% when present)
+        run: |
+          code=0
+          uv run pytest tests/unit/execution -q --cov=src/aiat/execution --cov-report=term-missing --cov-fail-under=95 || code=$?
+          if [ "$code" -eq 5 ]; then echo "::notice::no execution tests yet (M4) — tolerated, 95% gate inactive"; exit 0; fi
+          exit "$code"
 
   test-integration:
     name: Integration Tests
     runs-on: ubuntu-latest
     needs: test-unit
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: aiat
-          POSTGRES_PASSWORD: aiat
-          POSTGRES_DB: aiat_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
         with:
           python-version: "3.12"
+      - name: Install PostgreSQL server (pytest-postgresql needs pg_ctl/initdb)
+        run: sudo apt-get update && sudo apt-get install -y postgresql
       - name: Install dependencies
         run: uv sync --frozen
       - name: Run integration tests
         run: uv run pytest tests/integration -q
-        env:
-          AIAT_DATABASE_URL: "postgresql+asyncpg://aiat:aiat@localhost:5432/aiat_test"
 
   test-e2e:
     name: E2E Tests (mock)
     runs-on: ubuntu-latest
     needs: test-integration
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: aiat
-          POSTGRES_PASSWORD: aiat
-          POSTGRES_DB: aiat_test
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-        ports:
-          - 5432:5432
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v3
         with:
           python-version: "3.12"
+      - name: Install PostgreSQL server (pytest-postgresql needs pg_ctl/initdb)
+        run: sudo apt-get update && sudo apt-get install -y postgresql
       - name: Install dependencies
         run: uv sync --frozen
-      - name: Run e2e tests
-        run: uv run pytest tests/e2e -q -m "not testnet"
-        env:
-          AIAT_DATABASE_URL: "postgresql+asyncpg://aiat:aiat@localhost:5432/aiat_test"
+      # No e2e tests yet (arrive M5+). Same tolerant-of-absence handling as the
+      # core gates: exit 5 (nothing collected — including all-deselected by the
+      # marker filter) is a pass; real failures still fail. Auto-activates when
+      # e2e tests land.
+      - name: Run e2e tests (mock)
+        run: |
+          code=0
+          uv run pytest tests/e2e -q -m "not testnet" || code=$?
+          if [ "$code" -eq 5 ]; then echo "::notice::no e2e tests yet (M5+) — tolerated"; exit 0; fi
+          exit "$code"

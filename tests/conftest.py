@@ -1,6 +1,8 @@
 """Pytest fixtures for integration and e2e tests (§9.3)."""
 
+import glob
 import os
+import shutil
 
 import psycopg
 import pytest
@@ -11,11 +13,40 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from alembic import command
 
+
+def _resolve_pg_ctl() -> str:
+    """Locate the ``pg_ctl`` binary across environments (§9.3).
+
+    ``pytest_postgresql`` launches its *own* ephemeral PostgreSQL cluster from
+    local binaries — it does not connect to an external server — so it needs an
+    absolute path to ``pg_ctl``. That path differs per environment, so resolve
+    it dynamically instead of hardcoding one major version:
+
+    1. ``PATH`` (``shutil.which``) — the devcontainer puts PG15 on PATH.
+    2. Debian/Ubuntu layout ``/usr/lib/postgresql/<ver>/bin/pg_ctl`` — CI
+       ``ubuntu-latest`` installs the server there (e.g. PG16) but *not* on
+       PATH; pick the highest major version present.
+    3. Fallback to the historical devcontainer path (PG15).
+    """
+    found = shutil.which("pg_ctl")
+    if found:
+        return found
+    candidates = glob.glob("/usr/lib/postgresql/*/bin/pg_ctl")
+    if candidates:
+
+        def _major(path: str) -> int:
+            version = path.split("/usr/lib/postgresql/")[1].split("/", 1)[0]
+            return int(version.split(".")[0])
+
+        return max(candidates, key=_major)
+    return "/usr/lib/postgresql/15/bin/pg_ctl"
+
+
 # Ephemeral PostgreSQL process — port=None for auto-selection (§9.3).
 # Session-scoped: Postgres server starts once per test session.
 postgresql_proc_fixture = postgresql_proc(
     port=None,
-    executable="/usr/lib/postgresql/15/bin/pg_ctl",
+    executable=_resolve_pg_ctl(),
 )
 
 
