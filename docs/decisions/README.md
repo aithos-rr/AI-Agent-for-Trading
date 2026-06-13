@@ -35,6 +35,7 @@ e l'originale viene marcato `superseded by ADR-YYYY`.
 | ID | Titolo | Status | Data | Milestone | Closes deferral |
 |----|--------|--------|------|-----------|-----------------|
 | 0001 | Adozione del pattern ADR per Phase 5 | accepted | 2026-05-14 | M0 | none |
+| 0008 | Routing LLM dual-mode — OpenRouter (sviluppo) / provider diretti (esperimento) | accepted | 2026-06-13 | M2 | none |
 
 ## Template
 
