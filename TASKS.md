@@ -235,7 +235,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
 > sia di M2 che di M3 (che poi parallelizzano). Fonte: §3.2 (DDL, **20 tabelle**), §6
 > (schemi Pydantic), §9.2-§9.3 (test), §12 M1. TDD obbligatorio (CLAUDE.md).
 
-- [ ] **M1-T01** — `domain/enums.py`
+- [x] **M1-T01** — `domain/enums.py`
   - **what**: TDD. Creare gli **8 enum di §6.1** (`StrEnum`): `Side`, `EntryType`, `Tier`,
     `Geography`, `RunStatus`, `ExecutionStatus`, `OrderKind`, `CloseReason` con i valori
     esatti del PRD. (NB: la TASK_MAP cita "GuardrailKind" ma **§6.1 NON lo definisce** →
