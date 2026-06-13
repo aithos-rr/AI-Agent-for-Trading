@@ -21,9 +21,7 @@ from aiat.db.models.base import Base, TimestampMixin
 class ContextSnapshot(TimestampMixin, Base):
     __tablename__ = "context_snapshots"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     experiment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     tick_id: Mapped[str] = mapped_column(String, nullable=False)
     tick_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -33,14 +31,8 @@ class ContextSnapshot(TimestampMixin, Base):
     build_duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
 
     __table_args__ = (
-        CheckConstraint(
-            "build_duration_ms >= 0", name="chk_ctx_snap_build_duration_ge0"
-        ),
-        UniqueConstraint(
-            "experiment_id", "tick_id", name="uq_context_snapshots_exp_tick"
-        ),
-        UniqueConstraint(
-            "id", "experiment_id", "tick_id", name="uq_context_snapshots_id_exp_tick"
-        ),
+        CheckConstraint("build_duration_ms >= 0", name="chk_ctx_snap_build_duration_ge0"),
+        UniqueConstraint("experiment_id", "tick_id", name="uq_context_snapshots_exp_tick"),
+        UniqueConstraint("id", "experiment_id", "tick_id", name="uq_context_snapshots_id_exp_tick"),
         Index("idx_context_tick", "tick_at", postgresql_ops={"tick_at": "DESC"}),
     )

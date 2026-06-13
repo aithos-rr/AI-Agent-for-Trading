@@ -21,18 +21,12 @@ from aiat.db.models.base import Base, TimestampMixin
 class ContextBuildRun(TimestampMixin, Base):
     __tablename__ = "context_build_runs"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     experiment_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     tick_id: Mapped[str] = mapped_column(String, nullable=False)
     tick_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String, nullable=False)
     failure_stage: Mapped[str | None] = mapped_column(String, nullable=True)
     error_context: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
@@ -47,12 +41,8 @@ class ContextBuildRun(TimestampMixin, Base):
             "status IN ('running','success','partial','failed','timeout')",
             name="chk_ctx_build_run_status",
         ),
-        UniqueConstraint(
-            "experiment_id", "tick_id", name="uq_context_build_runs_exp_tick"
-        ),
-        Index(
-            "idx_context_build_runs_tick", "tick_at", postgresql_ops={"tick_at": "DESC"}
-        ),
+        UniqueConstraint("experiment_id", "tick_id", name="uq_context_build_runs_exp_tick"),
+        Index("idx_context_build_runs_tick", "tick_at", postgresql_ops={"tick_at": "DESC"}),
         Index(
             "idx_context_build_runs_status",
             "status",

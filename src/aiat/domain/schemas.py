@@ -47,12 +47,8 @@ class ActionDecision(BaseModel):
     side: Side
     leverage: Annotated[Decimal, Field(ge=0, le=50, decimal_places=2)]
     size_pct: Annotated[Decimal, Field(ge=0, le=1, decimal_places=4)]
-    stop_loss_pct: Annotated[
-        Decimal | None, Field(default=None, gt=0, decimal_places=4)
-    ]
-    take_profit_pct: Annotated[
-        Decimal | None, Field(default=None, gt=0, decimal_places=4)
-    ]
+    stop_loss_pct: Annotated[Decimal | None, Field(default=None, gt=0, decimal_places=4)]
+    take_profit_pct: Annotated[Decimal | None, Field(default=None, gt=0, decimal_places=4)]
     entry_type: EntryType
     limit_price: Annotated[Decimal | None, Field(default=None, gt=0, decimal_places=8)]
 
@@ -68,9 +64,7 @@ class ActionDecision(BaseModel):
         description="Time horizon in minutes within which the confidence is calibrated."
     )
     action_reasoning: Annotated[str, Field(min_length=20, max_length=2000)]
-    action_key_signals: list[ControlledSignal] = Field(
-        default_factory=list, max_length=8
-    )
+    action_key_signals: list[ControlledSignal] = Field(default_factory=list, max_length=8)
 
     @model_validator(mode="after")
     def validate_side_consistency(self) -> "ActionDecision":
@@ -145,9 +139,7 @@ class SentimentSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     fear_greed_index: Annotated[int, Field(ge=0, le=100)]
-    fear_greed_label: Literal[
-        "extreme_fear", "fear", "neutral", "greed", "extreme_greed"
-    ]
+    fear_greed_label: Literal["extreme_fear", "fear", "neutral", "greed", "extreme_greed"]
     fetched_at: str  # ISO timestamp
 
 

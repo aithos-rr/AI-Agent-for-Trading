@@ -41,9 +41,7 @@ LONG_ACTION: dict = {
 }
 
 
-def make_trade_decision(
-    btc: dict, eth: dict | None = None, sol: dict | None = None
-) -> dict:
+def make_trade_decision(btc: dict, eth: dict | None = None, sol: dict | None = None) -> dict:
     eth = eth or {**HOLD_ACTION_BTC, "symbol": "ETH"}
     sol = sol or {**HOLD_ACTION_BTC, "symbol": "SOL"}
     return {

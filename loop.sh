@@ -6,6 +6,7 @@ MAX_ITERATIONS="${1:-25}"
 MODEL="${RALPH_MODEL:-sonnet}"
 MARKER_DONE="RALPH_COMPLETE"
 MARKER_BLOCKED="RALPH_BLOCKED"
+MARKER_MILESTONE="MILESTONE_COMPLETE"
 STALL_LIMIT=3
 
 # Guardia: bypass permissions è consentito SOLO dentro la sandbox
@@ -43,6 +44,11 @@ for i in $(seq 1 "$MAX_ITERATIONS"); do
     stall=0
   fi
 
+  if grep -q "$MARKER_MILESTONE" <<< "$output"; then
+    ms=$(grep -oE "MILESTONE_COMPLETE M[0-9]+" <<< "$output" | head -1)
+    echo "✔ $ms at iteration $i — STOP. Run the external gate: ./tools/gate_check.sh"
+    exit 0
+  fi
   if grep -q "$MARKER_DONE" <<< "$output"; then
     echo "✔ RALPH_COMPLETE at iteration $i"; exit 0
   fi
