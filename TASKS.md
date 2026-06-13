@@ -87,7 +87,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
 > Nessuna credenziale. Tutto verificabile offline (eccetto `docker build` reale).
 > Fonte: PRD §1.2-§1.3 (stack), §2.2 (struttura), §9.6 (CI), §11.3 (Docker), §12 M0.
 
-- [ ] **M0-T01** — `pyproject.toml` con `uv` + dipendenze
+- [x] **M0-T01** — `pyproject.toml` con `uv` + dipendenze
   - **what**: Creare `pyproject.toml` (`[project]` Python ≥3.12, `[build-system]`
     hatchling con package src-layout `packages=["src/aiat"]`, `[tool.uv]`). Dipendenze
     runtime §1.2-§1.3 **pinnate**: `langchain-core`, `langchain-openai`,
