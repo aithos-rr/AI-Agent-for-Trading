@@ -211,3 +211,16 @@ __marimo__/
 account_status*.json
 # Formatted prompts dumped at runtime (contain real portfolio data)
 formatted_*.txt
+
+# === AI-Lab vibe harness additions ===
+# Claude Code runtime artifacts: ignore everything under .claude/
+# EXCEPT the committed commands (part of the harness).
+.claude/*
+!.claude/commands/
+.claude/commands/*
+!.claude/commands/prd.md
+
+# Ralph loop: iteration logs are noise (progress/log.md IS tracked).
+# Note: *.log already covers iteration-*.log globally (line ~59),
+# this is kept explicit for clarity.
+progress/iteration-*.log
