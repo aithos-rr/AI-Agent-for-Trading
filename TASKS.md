@@ -102,7 +102,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv sync && uv run python -c "import langchain_core, pydantic, sqlalchemy, asyncpg, alembic, apscheduler, httpx, structlog, pandas, numpy, tenacity, yaml; print('deps ok')"`
   - **done-when**: `uv sync` esce 0 e tutte le dipendenze chiave sono importabili.
 
-- [ ] **M0-T02** — Genera e committa `uv.lock`
+- [x] **M0-T02** — Genera e committa `uv.lock`
   - **what**: Generare il lockfile da `pyproject.toml` e committarlo (no `uv sync`
     durante run sperimentale — risk T7).
   - **prd**: §1.1

@@ -11,3 +11,13 @@
 **Next**: M0-T02 (generare uv.lock e committarlo — già generato da uv sync).
 
 ---
+
+## 2026-06-13 — M0-T02
+
+**Task**: Genera e committa `uv.lock`  
+**Changed**: `uv.lock` già generato da uv sync in M0-T01 e committato.  
+**Result**: `uv sync --frozen` esce 0.  
+**Learnings**: Il lockfile viene generato automaticamente da `uv sync` — nessuna azione extra necessaria.  
+**Next**: M0-T03 (skeleton src/aiat/ + tests/).
+
+---
