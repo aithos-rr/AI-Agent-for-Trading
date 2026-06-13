@@ -8,6 +8,7 @@ All tests use OpenAICompatibleClient with gateway=openrouter for cassette
 recording (single base_url), so cassette responses are in OpenAI-style format.
 """
 
+import os
 from decimal import Decimal
 
 import pytest
@@ -27,6 +28,12 @@ _TEST_PRICING: dict[str, Decimal] = {
     "reasoning": Decimal("0.00"),
 }
 
+# NOTE: _OPENROUTER_SETTINGS_BASE / _or_settings are NOT used by the 15 active
+# VCR tests below (they instantiate OpenAICompatibleClient directly with an
+# env-with-fallback api_key). The "test-or-key" placeholder here is therefore
+# never used to make real network calls during cassette recording, so it is left
+# as-is. If a future test uses _or_settings to drive real OpenRouter calls, apply
+# the same os.environ.get("AIAT_OPENROUTER_API_KEY", "test-or-key") pattern here.
 _OPENROUTER_SETTINGS_BASE = {
     "llm_gateway": "openrouter",
     "openrouter_api_key": "test-or-key",
@@ -59,7 +66,7 @@ async def test_openai_invoke_structured() -> None:
     from aiat.domain.schemas import TradeDecision
 
     client = OpenAICompatibleClient(
-        api_key="test-or-key",
+        api_key=os.environ.get("AIAT_OPENROUTER_API_KEY", "test-or-key"),
         model_name="openai/gpt-4o",
         base_url=OPENROUTER_BASE_URL,
         temperature=Decimal("0.7"),
@@ -79,7 +86,7 @@ async def test_anthropic_invoke_structured() -> None:
     from aiat.domain.schemas import TradeDecision
 
     client = OpenAICompatibleClient(
-        api_key="test-or-key",
+        api_key=os.environ.get("AIAT_OPENROUTER_API_KEY", "test-or-key"),
         model_name="anthropic/claude-3-5-sonnet",
         base_url=OPENROUTER_BASE_URL,
         temperature=Decimal("0.7"),
@@ -97,7 +104,7 @@ async def test_deepseek_invoke_structured_via_compatible() -> None:
     from aiat.domain.schemas import TradeDecision
 
     client = OpenAICompatibleClient(
-        api_key="test-or-key",
+        api_key=os.environ.get("AIAT_OPENROUTER_API_KEY", "test-or-key"),
         model_name="deepseek/deepseek-r1",
         base_url=OPENROUTER_BASE_URL,
         temperature=Decimal("0.6"),
@@ -115,7 +122,7 @@ async def test_qwen_invoke_structured_via_compatible() -> None:
     from aiat.domain.schemas import TradeDecision
 
     client = OpenAICompatibleClient(
-        api_key="test-or-key",
+        api_key=os.environ.get("AIAT_OPENROUTER_API_KEY", "test-or-key"),
         model_name="qwen/qwen3-235b-a22b",
         base_url=OPENROUTER_BASE_URL,
         temperature=Decimal("0.7"),
@@ -142,7 +149,7 @@ async def test_openai_fallback_freetext() -> None:
     from aiat.domain.schemas import TradeDecision
 
     client = OpenAICompatibleClient(
-        api_key="test-or-key",
+        api_key=os.environ.get("AIAT_OPENROUTER_API_KEY", "test-or-key"),
         model_name="openai/gpt-4o",
         base_url=OPENROUTER_BASE_URL,
         temperature=Decimal("0.7"),
@@ -159,7 +166,7 @@ async def test_openai_fallback_freetext() -> None:
 async def test_llm_unrecoverable_error() -> None:
     """Both primary and fallback return invalid JSON → LLMUnrecoverableError."""
     client = OpenAICompatibleClient(
-        api_key="test-or-key",
+        api_key=os.environ.get("AIAT_OPENROUTER_API_KEY", "test-or-key"),
         model_name="openai/gpt-4o",
         base_url=OPENROUTER_BASE_URL,
         temperature=Decimal("0.7"),
@@ -180,7 +187,7 @@ async def test_llm_unrecoverable_error() -> None:
 async def test_cost_tracking_openai() -> None:
     """Verify cost_usd is computed from usage tokens (OpenAI via OR)."""
     client = OpenAICompatibleClient(
-        api_key="test-or-key",
+        api_key=os.environ.get("AIAT_OPENROUTER_API_KEY", "test-or-key"),
         model_name="openai/gpt-4o",
         base_url=OPENROUTER_BASE_URL,
         temperature=Decimal("0.7"),
@@ -199,7 +206,7 @@ async def test_cost_tracking_openai() -> None:
 async def test_cost_tracking_anthropic() -> None:
     """Verify cost_usd is computed from usage tokens (Anthropic via OR)."""
     client = OpenAICompatibleClient(
-        api_key="test-or-key",
+        api_key=os.environ.get("AIAT_OPENROUTER_API_KEY", "test-or-key"),
         model_name="anthropic/claude-3-5-sonnet",
         base_url=OPENROUTER_BASE_URL,
         temperature=Decimal("0.7"),
@@ -225,7 +232,7 @@ async def test_timeout_handling() -> None:
     Uses a very short timeout_seconds so the wait_for fires.
     """
     client = OpenAICompatibleClient(
-        api_key="test-or-key",
+        api_key=os.environ.get("AIAT_OPENROUTER_API_KEY", "test-or-key"),
         model_name="openai/gpt-4o",
         base_url=OPENROUTER_BASE_URL,
         temperature=Decimal("0.7"),
@@ -241,7 +248,7 @@ async def test_timeout_handling() -> None:
 async def test_rate_limit_propagation() -> None:
     """HTTP 429 response → LLMRateLimitError (NOT freetext fallback)."""
     client = OpenAICompatibleClient(
-        api_key="test-or-key",
+        api_key=os.environ.get("AIAT_OPENROUTER_API_KEY", "test-or-key"),
         model_name="openai/gpt-4o",
         base_url=OPENROUTER_BASE_URL,
         temperature=Decimal("0.7"),
@@ -280,7 +287,7 @@ async def test_cost_aggregation_primary_plus_fallback() -> None:
     cost_event.n_attempts must equal 2 (both LLM calls billed).
     """
     client = OpenAICompatibleClient(
-        api_key="test-or-key",
+        api_key=os.environ.get("AIAT_OPENROUTER_API_KEY", "test-or-key"),
         model_name="openai/gpt-4o",
         base_url=OPENROUTER_BASE_URL,
         temperature=Decimal("0.7"),
@@ -308,7 +315,7 @@ async def test_openai_reasoning_tokens() -> None:
         "reasoning": Decimal("10.00"),
     }
     client = OpenAICompatibleClient(
-        api_key="test-or-key",
+        api_key=os.environ.get("AIAT_OPENROUTER_API_KEY", "test-or-key"),
         model_name="openai/o3-mini",
         base_url=OPENROUTER_BASE_URL,
         temperature=Decimal("0.7"),
@@ -329,7 +336,7 @@ async def test_anthropic_thinking_usage() -> None:
         "reasoning": Decimal("15.00"),
     }
     client = OpenAICompatibleClient(
-        api_key="test-or-key",
+        api_key=os.environ.get("AIAT_OPENROUTER_API_KEY", "test-or-key"),
         model_name="anthropic/claude-3-5-sonnet",
         base_url=OPENROUTER_BASE_URL,
         temperature=Decimal("1.0"),
@@ -352,7 +359,7 @@ async def test_deepseek_r1_reasoning_usage() -> None:
         "reasoning": Decimal("2.19"),
     }
     client = OpenAICompatibleClient(
-        api_key="test-or-key",
+        api_key=os.environ.get("AIAT_OPENROUTER_API_KEY", "test-or-key"),
         model_name="deepseek/deepseek-r1",
         base_url=OPENROUTER_BASE_URL,
         temperature=Decimal("0.6"),
