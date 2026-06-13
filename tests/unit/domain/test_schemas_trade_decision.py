@@ -5,7 +5,6 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from aiat.domain.enums import EntryType, Side
 from aiat.domain.schemas import ActionDecision, TradeDecision
 
 # ---------------------------------------------------------------------------
@@ -42,7 +41,9 @@ LONG_ACTION: dict = {
 }
 
 
-def make_trade_decision(btc: dict, eth: dict | None = None, sol: dict | None = None) -> dict:
+def make_trade_decision(
+    btc: dict, eth: dict | None = None, sol: dict | None = None
+) -> dict:
     eth = eth or {**HOLD_ACTION_BTC, "symbol": "ETH"}
     sol = sol or {**HOLD_ACTION_BTC, "symbol": "SOL"}
     return {
@@ -102,7 +103,12 @@ def test_hold_with_positive_size_raises() -> None:
 
 
 def test_long_without_sl_tp_raises() -> None:
-    bad = {**LONG_ACTION, "symbol": "BTC", "stop_loss_pct": None, "take_profit_pct": None}
+    bad = {
+        **LONG_ACTION,
+        "symbol": "BTC",
+        "stop_loss_pct": None,
+        "take_profit_pct": None,
+    }
     with pytest.raises(ValidationError, match="must declare both SL and TP"):
         ActionDecision(**bad)
 

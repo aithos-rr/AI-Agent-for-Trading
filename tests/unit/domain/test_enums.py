@@ -1,7 +1,5 @@
 """Tests for domain enums (§6.1)."""
 
-import pytest
-
 from aiat.domain.enums import (
     CloseReason,
     EntryType,
@@ -49,13 +47,28 @@ class TestGeography:
 
 class TestRunStatus:
     def test_all_7_values(self) -> None:
-        expected = {"running", "success", "partial", "failed", "timeout", "missed", "skipped"}
+        expected = {
+            "running",
+            "success",
+            "partial",
+            "failed",
+            "timeout",
+            "missed",
+            "skipped",
+        }
         assert {s.value for s in RunStatus} == expected
 
 
 class TestExecutionStatus:
     def test_all_6_values(self) -> None:
-        expected = {"not_applicable", "pending", "filled", "partial", "failed", "cancelled"}
+        expected = {
+            "not_applicable",
+            "pending",
+            "filled",
+            "partial",
+            "failed",
+            "cancelled",
+        }
         assert {s.value for s in ExecutionStatus} == expected
 
 

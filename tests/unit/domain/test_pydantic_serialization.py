@@ -1,10 +1,8 @@
 """Tests for Pydantic roundtrip serialization (§6.3, §6.4, M1-T03)."""
 
-import json
 from decimal import Decimal
 
 from aiat.domain.schemas import (
-    ActionDecision,
     ContextBundle,
     CostEventData,
     NewsItem,

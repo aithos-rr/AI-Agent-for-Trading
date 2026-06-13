@@ -312,7 +312,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run python -c "from aiat.db.models import Experiment, Model, PromptTemplate" && uv run mypy src`
   - **done-when**: i 3 modelli importano e mypy è clean.
 
-- [ ] **M1-T06b** — Models §3.2.2: context (2 tabelle)
+- [x] **M1-T06b** — Models §3.2.2: context (2 tabelle)
   - **what**: `context_snapshot.py` (`ContextSnapshot`, UNIQUE `(experiment_id,tick_id)` +
     UNIQUE `(id,experiment_id,tick_id)` per la FK composita, index `tick_at DESC`),
     `context_build_run.py` (`ContextBuildRun`, CHECK status, index parziale su

@@ -1,10 +1,8 @@
 """SQLAlchemy model for `models` (§3.2.1)."""
 
-import uuid
-from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, DateTime, Numeric, String
+from sqlalchemy import CheckConstraint, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from aiat.db.models.base import Base, TimestampMixin
