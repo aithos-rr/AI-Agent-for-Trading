@@ -35,6 +35,8 @@ e l'originale viene marcato `superseded by ADR-YYYY`.
 | ID | Titolo | Status | Data | Milestone | Closes deferral |
 |----|--------|--------|------|-----------|-----------------|
 | 0001 | Adozione del pattern ADR per Phase 5 | accepted | 2026-05-14 | M0 | none |
+| 0006 | Conteggio tabelle DB — 20, non 17 | accepted | 2026-06-13 | M1 | none |
+| 0007 | Set repository — §7.6 autoritativo, niente `ledger.py` | accepted | 2026-06-13 | M1, M3, M4, M5 | none |
 | 0008 | Routing LLM dual-mode — OpenRouter (sviluppo) / provider diretti (esperimento) | accepted | 2026-06-13 | M2 | none |
 
 ## Template
