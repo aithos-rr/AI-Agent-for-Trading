@@ -470,6 +470,12 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
 > Codice + unit test (mock) scrivibili dal loop. **Chiude D3** (ADR). Parallelizzabile con
 > M3 dopo M1. ⚠️ Il record cassette (M2-T12) è **🛑 [HUMAN-GATED]**: serve API key reali +
 > rete verso i provider (bloccata dal firewall). Fonte: §7.3, §8, §9.2(llm), §9.4, §12 M2.
+>
+> **Routing dual-mode (ADR-0008)**: in sviluppo si usa `AIAT_LLM_GATEWAY=openrouter` (1 chiave
+> `AIAT_OPENROUTER_API_KEY`, base_url `https://openrouter.ai/api/v1`) riusando
+> `OpenAICompatibleClient`; l'esperimento (M6/M7) usa `gateway=direct` (default fail-safe).
+> Principio **additivo**: i 4 client nativi (§8) restano implementati e attivi — OpenRouter è
+> solo un base_url alternativo scelto a runtime dalla factory, non li rimpiazza.
 
 - [ ] **M2-T01** — `llm/exceptions.py`
   - **what**: TDD. Le **6 classi** §8.2: `LLMError` (base), `LLMTimeoutError`,
@@ -525,11 +531,17 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
     multi-tentativo (`n_attempts`), `on_llm_end` estrae usage per provider, `_extract_usage`
     (OpenAI/Anthropic/DeepSeek-R1/Qwen), `build_cost_event()` con **Decimal precision**
     (inv #12). Coprire §9.2: usage extraction 4 provider + `cost_usd` Decimal.
+    **ADR-0008**: gli unit test con **risposte sintetiche** nei formati token **nativi**
+    (OpenAI `prompt_tokens`/`completion_tokens`; Anthropic `input_tokens`/`output_tokens`;
+    DeepSeek-R1 `reasoning_tokens`; Qwen) sono la **PRIMARY coverage** di quei formati: in
+    modalità `openrouter` le cassette (T11/T12) esercitano solo il percorso OpenAI-style e
+    **non** i formati nativi. Questo task **non** dipende dal gateway.
   - **prd**: §8.3 (inv #12)
   - **dep**: M2-T01, M1-T03
   - **files**: `src/aiat/llm/stats_handler.py`, `tests/unit/llm/test_stats_handler.py`
   - **verify**: `uv run pytest tests/unit/llm/test_stats_handler.py -q && uv run mypy src`
-  - **done-when**: usage extraction per i 4 provider + `cost_usd` Decimal corretto; test passa.
+  - **done-when**: usage extraction per i 4 provider (formati nativi via risposte
+    **sintetiche**, ADR-0008) + `cost_usd` Decimal corretto; test passa.
 
 - [ ] **M2-T06** — `llm/openai_client.py`
   - **what**: TDD (unit, langchain mockato). `OpenAIClient(BaseLLMClient)` su
@@ -561,19 +573,32 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
 
 - [ ] **M2-T09** — `llm/factory.py`: `load_llm`
   - **what**: TDD (unit, mock). `load_llm(settings: AgentSettings) -> BaseLLMClient`
-    (**tipizzato su `AgentSettings`, NON `BaseAIATSettings`** — least privilege, fix B.17),
-    `match` su `settings.llm_provider` → i 4 client. Test di dispatch per i 4 provider.
-  - **prd**: §8.1 (fix B.17)
-  - **dep**: M2-T06, M2-T07, M2-T08
+    (**tipizzato su `AgentSettings`, NON `BaseAIATSettings`** — least privilege, fix B.17).
+    **Dual-mode (ADR-0008)**, switch su `settings.llm_gateway`: con `gateway="openrouter"`
+    ritorna `OpenAICompatibleClient` (`base_url="https://openrouter.ai/api/v1"`, chiave
+    `AIAT_OPENROUTER_API_KEY`, model name in convenzione OpenRouter, es. `"openai/gpt-4o"`,
+    `"anthropic/claude-3.5-sonnet"`); con `gateway="direct"` (**default**) il dispatch nativo
+    §8.1 resta **invariato** — `match` su `settings.llm_provider` → `OpenAIClient` /
+    `AnthropicClient` / `OpenAICompatibleClient` (deepseek|qwen). Principio **additivo**:
+    entrambi i rami coesistono, **nessun client rimosso**.
+  - **prd**: §8.1 (fix B.17) + ADR-0008
+  - **dep**: M2-T06, M2-T07, M2-T08 — il campo `llm_gateway` di `AgentSettings` è definito in
+    **M5** (`config/settings.py`); per M2 il test usa un `settings` mockato/minimale con
+    l'attributo `gateway` (`direct`/`openrouter`).
   - **files**: `src/aiat/llm/factory.py`, `tests/unit/llm/test_factory.py`
   - **verify**: `uv run pytest tests/unit/llm/test_factory.py -q && uv run mypy src`
-  - **done-when**: il dispatch ritorna il client corretto per openai/anthropic/deepseek/qwen.
+  - **done-when**: il dispatch ritorna il client corretto in **entrambe** le modalità —
+    `direct` per i 4 provider (openai/anthropic/deepseek/qwen) **e** `openrouter`
+    (`OpenAICompatibleClient` con base_url OpenRouter).
 
 - [ ] **M2-T10** — `config/model_pricing.yaml`
   - **what**: Creare `src/aiat/config/model_pricing.yaml` con pricing USD/1M token per i 4
     modelli (struttura §8.4: `input`/`output`/`reasoning`). I nomi esatti dei modelli (D1)
     sono deferiti a M7: qui struttura + valori correnti/placeholder. Helper
     `load_pricing_for_model()` se utile a §10.1 A4.
+    **Nota (ADR-0008)**: in modalità `openrouter` i nomi modello seguono la convenzione
+    OpenRouter (`"provider/model"`), in `direct` i nomi nativi; il pricing deve poter mappare
+    **entrambi** (o almeno documentare che i nomi OpenRouter vanno aggiunti alla mappa).
   - **prd**: §8.4
   - **dep**: M1
   - **files**: `src/aiat/config/model_pricing.yaml`
@@ -587,6 +612,10 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
     `tests/conftest.py` (`cassette_library_dir="tests/cassettes"`, `record_mode="none"`,
     `filter_headers=["authorization","x-api-key"]`, `match_on` §9.4). [Merge di TASK_MAP
     M2-T11(codice) + M2-T12.] Il loop scrive il codice; **non** registra cassette.
+    **Nota (ADR-0008)**: le cassette saranno registrate via **OpenRouter**
+    (`gateway=openrouter`, T12), quindi i test girano contro il percorso
+    `OpenAICompatibleClient` e le risposte nelle cassette sono in **formato OpenAI-style**.
+    La config VCR e il `match_on` restano invariati.
   - **prd**: §9.4
   - **dep**: M2-T03, M2-T05, M2-T09
   - **files**: `tests/integration/test_llm_providers.py`, `tests/conftest.py`, `tests/cassettes/.keep`
@@ -595,23 +624,33 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
     cassette); config VCR presente. L'esecuzione reale è M2-T12.
 
 - [ ] **M2-T12** 🛑 **[HUMAN-GATED]** — Record 15 cassette VCR
-  - **what**: Registrare le 15 cassette in `tests/cassettes/` contro le API reali dei 4
-    provider (`record_mode="once"`), una volta sola (~$0.01). Il loop **non** può farlo:
-    firewall blocca openai/deepseek/qwen e mancano le API key.
-  - **prd**: §9.4
+  - **what**: Registrare le 15 cassette in `tests/cassettes/` **via OpenRouter**
+    (`AIAT_LLM_GATEWAY=openrouter`, `record_mode="once"`), **una volta sola** (~$0.01), sotto
+    **supervisione umana**. **Decisione ADR-0008 (Strada 2, scelta accademica)**: le cassette
+    le registra l'**umano** sotto supervisione (**non** il loop in autonomia), per controllo e
+    verificabilità dei dati di test — sono artefatti sperimentali della tesi. Resta
+    human-gated, ma ora basta **una** chiave (`AIAT_OPENROUTER_API_KEY`) e **un** dominio
+    (`openrouter.ai`, da aprire nel firewall) invece dei 4 provider separati.
+  - **prd**: §9.4 + ADR-0008
   - **dep**: M2-T11
   - **files**: `tests/cassettes/*.yaml`
-  - **human-action**: impostare `AIAT_OPENAI_API_KEY`/`AIAT_ANTHROPIC_API_KEY`/
-    `AIAT_DEEPSEEK_API_KEY`/`AIAT_QWEN_API_KEY` in `.env`, eseguire con record_mode=once
-    (es. `VCR_RECORD_MODE=once uv run pytest tests/integration/test_llm_providers.py`) da
-    una rete senza firewall, committare le cassette (senza header auth, filtrati da VCR).
-  - **verify**: `test -n "$AIAT_OPENAI_API_KEY" && ls tests/cassettes/*.yaml >/dev/null 2>&1 && uv run pytest tests/integration/test_llm_providers.py -q`
-  - **loop-rule**: se il `verify:` non è soddisfacibile (no key/no rete/no cassette) **non
-    fingere il completamento**: lascia il task non spuntato, annota in `progress/log.md`
-    "M2-T12 HUMAN-GATED, blocco qui (record VCR richiede API key reali)". Se è l'unico task
-    eseguibile rimasto, stampa `RALPH_BLOCKED`.
+  - **human-action**: (1) aprire `openrouter.ai` nel firewall del devcontainer
+    (`init-firewall.sh`); (2) impostare `AIAT_OPENROUTER_API_KEY` e
+    `AIAT_LLM_GATEWAY=openrouter` in `.env`; (3) eseguire con record_mode=once (es.
+    `VCR_RECORD_MODE=once uv run pytest tests/integration/test_llm_providers.py`); (4)
+    verificare le risposte registrate; (5) committare le cassette (header `authorization`/
+    `x-api-key` filtrati da VCR).
+  - **verify**: `test -n "$AIAT_OPENROUTER_API_KEY" && ls tests/cassettes/*.yaml >/dev/null 2>&1 && uv run pytest tests/integration/test_llm_providers.py -q`
+  - **loop-rule**: se il `verify:` non è soddisfacibile (no `AIAT_OPENROUTER_API_KEY` / no
+    rete verso `openrouter.ai` / no cassette) **non fingere il completamento**: lascia il task
+    non spuntato, annota in `progress/log.md` "M2-T12 HUMAN-GATED, blocco qui (record VCR via
+    OpenRouter richiede chiave reale + rete)". Se è l'unico task eseguibile rimasto, stampa
+    `RALPH_BLOCKED`.
   - **done-when**: le 15 cassette esistono e `pytest test_llm_providers.py` passa in replay
     (`record_mode=none`).
+  - **nota**: queste sono cassette di **sviluppo** (formato OpenRouter/OpenAI-style, percorso
+    `OpenAICompatibleClient`); le cassette dei provider **diretti** per l'esperimento si
+    registrano a **M6** (ADR-0008).
 
 - [ ] **M2-T13** — Coverage `llm/` ≥95%
   - **what**: Completare i test unit (mock) finché `llm/` raggiunge ≥95% misurato **solo su
@@ -622,8 +661,10 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/unit/llm --cov=src/aiat/llm --cov-report=term-missing --cov-fail-under=95 -q`
   - **done-when**: coverage `llm/` ≥95% dai soli unit test.
 
-> **DoD M2** (gate): unit llm verdi; 4 client + factory + stats_handler completi; coverage
-> `llm/` ≥95%; ADR D3 creato. Punto attenzione umano: record cassette (M2-T12).
+> **DoD M2** (gate): unit llm verdi; 4 client nativi + factory **dual-mode**
+> (`AIAT_LLM_GATEWAY` {direct(default), openrouter}, ADR-0008) + stats_handler completi;
+> coverage `llm/` ≥95%; ADR D3 creato. Punto attenzione umano: record cassette **via
+> OpenRouter** (M2-T12).
 
 ---
 
