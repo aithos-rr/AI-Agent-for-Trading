@@ -546,3 +546,30 @@ ADR-0011/0013 + costante `_RSS_SOURCES` + un re-run smoke di validazione. Tracci
 memoria di sessione (`m3-open-data-decisions`).
 
 **Next**: M3 concluso con rigore. Procedere a M4 (ExecutionLayer, chiude D2) via Ralph loop.
+
+---
+
+## 2026-06-14 — M4-T01 `execution/sizing.py` — DONE
+
+**Task**: TDD implementation of position sizing (Decimal-only, no float — invariant #12).
+
+**What changed**:
+- Created `src/aiat/execution/sizing.py`:
+  - `PositionSizing` frozen dataclass (all-Decimal fields)
+  - `compute_position_sizing()` function
+  - Formulae: `initial_margin = equity × size_pct`, `size_units = margin / price`,
+    `notional = price × size_units × leverage`, SL/TP prices for LONG/SHORT
+- Created `tests/unit/execution/test_sizing.py` (13 tests):
+  - PRD §9.2 assertions: `notional = price × size_units × leverage`
+  - Decimal type checks for every field (no float leakage)
+  - LONG/SHORT SL/TP price direction correctness
+  - Immutability (frozen dataclass) test
+
+**Verify output**:
+```
+13 passed in 0.07s   (pytest tests/unit/execution/test_sizing.py -q)
+All checks passed!   (ruff check src tests)
+Success: no issues found in 59 source files   (mypy src)
+```
+
+**Next**: M4-T02 — `execution/guardrails.py` (4 guardrail Strategia C+, closes when all cases pass in order).

@@ -813,7 +813,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
 > ╚══════════════════════════════════════════════════════════════════════╝
 > ```
 
-- [ ] **M4-T01** — `execution/sizing.py`
+- [x] **M4-T01** — `execution/sizing.py`
   - **what**: TDD. Sizing posizioni in **Decimal** (es. `notional = price * size_units *
     leverage`), **mai `float`** (inv #12). Coprire §9.2: precisione Decimal, nessuna
     aritmetica float.
