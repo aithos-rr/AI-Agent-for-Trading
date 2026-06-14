@@ -289,3 +289,30 @@ uv run mypy src → Success: no issues found in 55 source files
 ```
 
 **Next**: M3-T07 — `context/builder.py` (ContextBuilder composing 4 collectors into ContextBundle)
+
+---
+
+## 2026-06-14 — M3-T07 (ContextBuilder)
+
+**Task**: M3-T07 — `context/builder.py`: `ContextBuilder`
+
+**Changed**:
+- `src/aiat/context/builder.py` — `ContextBuilder` class that composes TechnicalCollector×3 (BTC/ETH/SOL), SentimentCollector, NewsCollector, OnchainCollector into a `ContextBundle` via parallel fetch (`asyncio.gather(..., return_exceptions=True)`). Per-source timestamps recorded on successful fetch. `ContextBuildError` raised if any collector fails, with error message naming each failing source. Module-level `_SOURCE_LABELS` tuple ensures `zip(strict=True)` is safe.
+- `tests/unit/context/test_builder.py` — 19 unit tests with mock collectors (`AsyncMock`): happy path (bundle returned, tick fields, 3 technical entries, correct symbols, sentiment/news/onchain content, 6 source_timestamp keys, ISO string format, all collectors called), failure paths (each of the 6 sources failing individually raises `ContextBuildError` with the source name in the message, multiple-failure reporting, successful sources absent from error message, pydantic roundtrip).
+
+**Design decisions**:
+- `_stamped()` inner async function captures `source_timestamps` dict and records timestamp only on successful return; exceptions propagate out and are captured by `return_exceptions=True`.
+- Named constructor parameters (`technical_btc`, `technical_eth`, `technical_sol`) rather than a sequence — explicit and type-safe; easier to inject mocks in tests.
+- Hard overall timeout (30s per §4.1) is the ContextOrchestrator's responsibility (M3-T09), not the builder's.
+
+**Verify output**:
+```
+uv run pytest tests/unit/context/test_builder.py -q
+19 passed in 0.21s
+
+uv run ruff check src tests → All checks passed!
+uv run ruff format --check src tests → 88 files already formatted
+uv run mypy src → Success: no issues found in 56 source files
+```
+
+**Next**: M3-T08 🐘 — `db/repositories/context_build.py` (ContextBuildRepository — requires Postgres)

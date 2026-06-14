@@ -736,7 +736,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/unit/context/test_controlled_signals.py -q && ls docs/decisions/*-controlled-signals.md >/dev/null 2>&1 && grep -q controlled-signals docs/decisions/README.md`
   - **done-when**: vocabolario allineato al `Literal` di schemas + ADR D4 esiste/indicizzato.
 
-- [ ] **M3-T07** — `context/builder.py`: `ContextBuilder`
+- [x] **M3-T07** — `context/builder.py`: `ContextBuilder`
   - **what**: TDD (collectors mockati). `ContextBuilder` compone i 4 collector in un
     `ContextBundle`, calcola `source_timestamps`. Fetch parallelo con timeout per source
     (§4.1 CO.1).
