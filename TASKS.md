@@ -693,7 +693,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/unit/context/test_technical.py -q && uv run mypy src`
   - **done-when**: il collector produce `TechnicalIndicators` da candele mockate; test verde.
 
-- [ ] **M3-T03** — `context/collectors/sentiment.py`
+- [x] **M3-T03** — `context/collectors/sentiment.py`
   - **what**: TDD (httpx mock). `SentimentCollector` Fear&Greed → `SentimentSnapshot`
     (index 0-100, label, fetched_at). Espone `collect()` (usato da §10.1 O4).
   - **prd**: §2.2, §6.3

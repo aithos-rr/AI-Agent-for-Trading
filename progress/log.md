@@ -165,3 +165,31 @@ Success: no issues found in 51 source files
 ```
 
 **Next**: M3-T03 — `context/collectors/sentiment.py`
+
+---
+
+## 2026-06-14 — M3-T03 (SentimentCollector)
+
+**Task**: M3-T03 — `context/collectors/sentiment.py`
+
+**Changed**:
+- `src/aiat/context/collectors/sentiment.py` — `SentimentCollector[SentimentSnapshot]` fetches Fear & Greed index from `https://api.alternative.me/fng/` (public, no API key); maps `value_classification` string to `Literal["extreme_fear","fear","neutral","greed","extreme_greed"]` via `_LABEL_MAP`; all error paths raise `CollectorTimeoutError` / `CollectorSourceError`; `fetched_at` is UTC ISO string.
+- `tests/unit/context/test_sentiment.py` — 20 unit tests covering: happy path (SentimentSnapshot returned), all label mappings (5), index boundaries 0/100, HTTP 500 → CollectorSourceError, ReadTimeout → CollectorTimeoutError, ConnectError → CollectorSourceError, empty data array, missing data key, unknown classification label, default timeout (5s), custom timeout, default cache_ttl (60s).
+
+**Notes**:
+- Fear & Greed API is `alternative.me` (public, free, no key) — legacy code used CMC Pro API (requires key); switched to public endpoint matching PRD §10.1 O4 design (`SentimentCollector(timeout_seconds=5)` with no key).
+- Ruff UP017: `datetime.timezone.utc` → `from datetime import UTC` then `datetime.now(tz=UTC)`.
+
+**Verify output**:
+```
+uv run pytest tests/unit/context/test_sentiment.py -q
+20 passed in 0.22s
+
+uv run ruff check src tests && uv run ruff format --check src tests
+All checks passed! / 80 files already formatted
+
+uv run mypy src
+Success: no issues found in 52 source files
+```
+
+**Next**: M3-T04 — `context/collectors/news.py` + ADR [D5]
