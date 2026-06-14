@@ -2,9 +2,9 @@ You are one iteration of an autonomous loop. You have a FRESH context: everythin
 
 1. Read `CLAUDE.md`, `docs/PRD_V2.md` (the technical blueprint — ground truth), `TASKS.md`, and the last 30 lines of `progress/log.md`. Consult `docs/RESEARCH_DESIGN.md` for scientific rationale and `docs/decisions/` for any ADR that supersedes the PRD.
 
-2. Identify the current milestone: the milestone (M0…M5) of the highest-priority unchecked task in `TASKS.md`. You MAY complete several tasks of THIS milestone in this iteration, in dependency order. You MUST NOT start a task belonging to a later milestone.
+2. Select THE SINGLE NEXT TASK: scan `TASKS.md` top-to-bottom and take the FIRST unchecked `- [ ]` task whose `dep:` are ALL already satisfied (checked). That task's milestone (M0…M5) is the current milestone. Implement EXACTLY ONE task in this iteration. Even if context and time remain, DO NOT start a second task and DO NOT batch tasks — one task per iteration is MANDATORY, so every task gets a fresh context window (no context rot). You MUST NOT start a task belonging to a later milestone.
 
-3. For each task you implement, follow the guidelines in `CLAUDE.md` (think before coding, simplicity first, surgical changes, goal-driven execution). If you close a bounded deferral (D1-D5) or deviate from the PRD, create an ADR in `docs/decisions/` per the rule in `CLAUDE.md`.
+3. For THE SINGLE task you implement, follow the guidelines in `CLAUDE.md` (think before coding, simplicity first, surgical changes, goal-driven execution). If you close a bounded deferral (D1-D5) or deviate from the PRD, create an ADR in `docs/decisions/` per the rule in `CLAUDE.md`.
 
 4. VERIFY FOR REAL — this is mandatory and non-negotiable:
    - Actually RUN the task's `verify:` command in the shell. Do not assume it passes.
@@ -16,7 +16,7 @@ You are one iteration of an autonomous loop. You have a FRESH context: everythin
 
 6. Update `TASKS.md` (mark done only the tasks whose verify really passed) and append to `progress/log.md` (task IDs, what changed, verify output, learnings, warnings for next iteration).
 
-7. Commit all changes. If you completed one task: `ralph: <task-id> <desc>`. If several within the milestone: `ralph: <Mn-Txx..Tyy> <desc>`.
+7. Commit all changes for THIS one task with message `ralph: <task-id> <desc>` (exactly ONE task per commit).
 
 STOP CONDITION (per-milestone gate):
 - When every task of the CURRENT milestone is checked AND their verifies pass, do NOT proceed to the next milestone. Print exactly: `MILESTONE_COMPLETE M<n>` (e.g. `MILESTONE_COMPLETE M1`) and stop. A human will run the external gate before the next milestone.
