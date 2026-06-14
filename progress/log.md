@@ -825,3 +825,31 @@ un difetto; il verificatore scettico l'ha correttamente respinto (premise ground
 
 **Next**: M4 PASSED committato e pushato. STOP FISICO: (a) M4-T08 wallet HL testnet reale;
 (b) decisione convenzione `size_units` (sopra). Entrambi richiedono input umano.
+
+---
+
+## 2026-06-14 — convenzione `size_units` RISOLTA (utente) → ADR-0015
+
+**Decisione utente**: convenzione **leveraged** (= `positions.py`). `size_units` = quantità
+eseguita on-chain (leveraged). `sizing.py` corretto: `notional = margin·leverage`,
+`size_units = notional/price` (era `size_units = margin/price`, `notional = price·units·leverage`).
+**ADR-0015** creato (devia da §9.2 r.2346, superata; prevalgono §3.2.4 DDL + §7.5) + README.
+
+**Fix applicati**: `execution/sizing.py` (formula + docstring); `tests/unit/execution/
+test_sizing.py` (4 assert riconvenzionati: es. margin 100/lev 2 → notional 200, **size_units
+2** non 1; evitato round-trip Decimal lossy asserendo le relazioni esatte
+`notional=margin·lev` e `size_units=notional/price`).
+
+**Rinviato a M5 (in ADR-0015)**: `MockHyperliquidClient._open_orders` mette ancora
+`size_pct` in `requested_size_units` (placeholder, NON percorso dati reale — il decision_loop
+M5 non esiste); la conversione `size_pct→size_units` via `compute_position_sizing` va fatta
+quando M5 cabla `execute_action→open_position` + client HL reale. (Scoping: il mock non tocca
+la validità scientifica oggi; fix-now solo il vero disallineamento sizing.py↔positions.py.)
+
+**Verify**: `./tools/gate_check.sh M4` → **GATE PASSED** (393/207/45, cov 96.97%/99.18%).
+
+**Strategia (discussa con l'utente)**: si conferma l'approccio **gated incrementale**
+(verify+debug per milestone), NON "scrivi tutta M5 poi testa alla fine" — il bug funding-sign
+appena intercettato al gate M4 è la prova del valore della verifica incrementale. I test reali
+(API/testnet/ENV) restano gate umani fuori dal container. M4-T08: 1 wallet testnet basta per
+lo smoke; servono 4 wallet (1/modello, isolamento inv #1/#13) solo per M6/M7.

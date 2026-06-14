@@ -2,7 +2,8 @@
 
 Verifies:
 - Decimal precision: no float arithmetic anywhere
-- notional_value_usd = price * size_units * leverage
+- size_units is the leveraged executed quantity (ADR-0015): notional = size_units * price,
+  size_units = (equity * size_pct * leverage) / price, margin = notional / leverage
 - SL/TP price derivation for LONG and SHORT
 """
 
@@ -17,8 +18,12 @@ from aiat.execution.sizing import compute_position_sizing
 class TestComputePositionSizing:
     """Core sizing formula tests."""
 
-    def test_notional_equals_price_times_size_units_times_leverage(self) -> None:
-        """notional_value_usd = price * size_units * leverage (PRD §9.2)."""
+    def test_notional_reconciles_with_positions_repository(self) -> None:
+        """notional = size_units * price and = margin * leverage (ADR-0015).
+
+        size_units is the leveraged executed quantity, so notional must NOT multiply
+        by leverage again — this is the invariant PositionsRepository relies on.
+        """
         result = compute_position_sizing(
             equity_usd=Decimal("10000"),
             size_pct=Decimal("0.10"),
@@ -28,8 +33,10 @@ class TestComputePositionSizing:
             stop_loss_pct=Decimal("0.03"),
             take_profit_pct=Decimal("0.06"),
         )
-        expected_notional = result.entry_price * result.size_units * result.leverage
-        assert result.notional_value_usd == expected_notional
+        # notional = size_units * price (what positions.py computes from the fill)
+        assert result.notional_value_usd == result.size_units * result.entry_price
+        # and notional = margin * leverage (what positions.py inverts to get margin)
+        assert result.notional_value_usd == result.initial_margin_usd * result.leverage
 
     def test_initial_margin_is_equity_times_size_pct(self) -> None:
         result = compute_position_sizing(
@@ -43,7 +50,7 @@ class TestComputePositionSizing:
         )
         assert result.initial_margin_usd == Decimal("10000") * Decimal("0.20")
 
-    def test_size_units_is_margin_divided_by_price(self) -> None:
+    def test_size_units_is_leveraged_notional_divided_by_price(self) -> None:
         equity = Decimal("1000")
         size_pct = Decimal("0.10")
         price = Decimal("100")
@@ -57,14 +64,14 @@ class TestComputePositionSizing:
             stop_loss_pct=Decimal("0.03"),
             take_profit_pct=Decimal("0.06"),
         )
-        # size_units = (equity * size_pct) / price
-        expected_units = (equity * size_pct) / price
+        # size_units = (equity * size_pct * leverage) / price — the leveraged quantity
+        expected_units = (equity * size_pct * leverage) / price
         assert result.size_units == expected_units
 
     def test_notional_concrete_values(self) -> None:
         """Concrete spot-check: $1000 equity, 10% size, $100 price, 2x leverage.
 
-        margin = 100, size_units = 1, notional = 1 * 100 * 2 = 200.
+        margin = 100, notional = 100 * 2 = 200, size_units = 200 / 100 = 2 (leveraged).
         """
         result = compute_position_sizing(
             equity_usd=Decimal("1000"),
@@ -76,7 +83,7 @@ class TestComputePositionSizing:
             take_profit_pct=Decimal("0.06"),
         )
         assert result.initial_margin_usd == Decimal("100")
-        assert result.size_units == Decimal("1")
+        assert result.size_units == Decimal("2")
         assert result.notional_value_usd == Decimal("200")
 
 
@@ -172,7 +179,12 @@ class TestDecimalPrecision:
         assert isinstance(result.leverage, Decimal), "leverage must be Decimal"
 
     def test_notional_formula_pure_decimal(self) -> None:
-        """Cross-verify that notional = price * size_units * leverage holds exactly."""
+        """Pure-Decimal internal relationships hold exactly (ADR-0015).
+
+        Asserts the relationships computed without a lossy division round-trip:
+        notional = margin * leverage, and size_units = notional / price by definition.
+        (notional == size_units * price is only exact when the division terminates.)
+        """
         result = compute_position_sizing(
             equity_usd=Decimal("7777.77"),
             size_pct=Decimal("0.1300"),
@@ -182,7 +194,8 @@ class TestDecimalPrecision:
             stop_loss_pct=Decimal("0.04"),
             take_profit_pct=Decimal("0.08"),
         )
-        assert result.notional_value_usd == result.entry_price * result.size_units * result.leverage
+        assert result.notional_value_usd == result.initial_margin_usd * result.leverage
+        assert result.size_units == result.notional_value_usd / result.entry_price
 
     def test_input_entry_price_echoed_back(self) -> None:
         """entry_price stored verbatim so caller can verify referential integrity."""

@@ -2,11 +2,19 @@
 
 All arithmetic uses Decimal — never float.
 
+`size_units` is the LEVERAGED executed quantity (the asset amount actually held
+on the exchange), reconciling with PositionsRepository, which derives notional
+from the on-chain fill quantity. This deviates from the literal PRD §9.2 line 2346
+formula `notional = price * size_units * leverage` (which double-counts leverage
+when size_units is the leveraged quantity). See ADR-0015.
+
 Formulae:
     initial_margin_usd  = equity_usd * size_pct
-    size_units          = initial_margin_usd / entry_price
-    notional_value_usd  = entry_price * size_units * leverage
-                        = initial_margin_usd * leverage
+    notional_value_usd  = initial_margin_usd * leverage
+    size_units          = notional_value_usd / entry_price
+                        = (equity_usd * size_pct * leverage) / entry_price
+    (so notional_value_usd == size_units * entry_price and
+        initial_margin_usd == notional_value_usd / leverage, matching positions.py)
 
 Stop-loss / take-profit prices:
     LONG  SL = entry_price * (1 - sl_pct)   TP = entry_price * (1 + tp_pct)
@@ -57,8 +65,8 @@ def compute_position_sizing(
         :class:`PositionSizing` with all Decimal fields set.
     """
     initial_margin_usd = equity_usd * size_pct
-    size_units = initial_margin_usd / entry_price
-    notional_value_usd = entry_price * size_units * leverage
+    notional_value_usd = initial_margin_usd * leverage
+    size_units = notional_value_usd / entry_price
 
     one = Decimal("1")
     if side == Side.LONG:
