@@ -724,7 +724,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/unit/context/test_onchain.py -q && uv run mypy src`
   - **done-when**: produce `OnChainSnapshot` da risposta HL-info mockata; test verde.
 
-- [ ] **M3-T06** **[D4]** — `context/controlled_signals.py` + **ADR**
+- [x] **M3-T06** **[D4]** — `context/controlled_signals.py` + **ADR**
   - **what**: Definire il vocabolario controllato finale (`CONTROLLED_SIGNALS`) e
     garantire che **combaci** con `ControlledSignal = Literal[...]` in
     `domain/schemas.py` (M1-T02). **Creare ADR** (prossimo numero, slug

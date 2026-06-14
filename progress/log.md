@@ -257,3 +257,35 @@ All checks passed! / 84 files already formatted
 ```
 
 **Next**: M3-T06 — `context/controlled_signals.py` + ADR [D4]
+
+---
+
+## 2026-06-14 — M3-T06 (controlled_signals.py + ADR-0012 [D4])
+
+**Task**: M3-T06 — `context/controlled_signals.py` + ADR (closes bounded deferral D4)
+
+**Changed**:
+- `src/aiat/context/controlled_signals.py` — `CONTROLLED_SIGNALS: frozenset[str]` with all 18 values from §6.2, exactly matching `ControlledSignal = Literal[...]` in `domain/schemas.py`. Module docstring explains the hash-locking constraint (§3.2.1) and invariant #6.
+- `tests/unit/context/test_controlled_signals.py` — 22 tests: alignment test (`set(get_args(ControlledSignal)) == CONTROLLED_SIGNALS`), count (18), 5 categories, parametrized presence of all 18 signals, format invariant (`category.name`).
+- `docs/decisions/0012-controlled-signals.md` — ADR closing D4: 18-value §6.2 vocabulary adopted as final; rationale, alternatives considered (wait for smoke tests, reduce to 12), test gating, seed M7 propagation noted.
+- `docs/decisions/README.md` — added ADR-0012 entry.
+
+**D4 decision (ADR-0012)**:
+- Adopted §6.2 preliminary list verbatim (18 signals, 5 categories)
+- Rationale: vocabulary aligns with all 4 collectors (T02-T05); prompt_template_hash must be stable before M7 seed; no empirical evidence yet to warrant deviation
+- Risk documented: if M3-T11 smoke reveals LLM signal drift, a superseding ADR + hash update would be needed
+
+**Verify output**:
+```
+uv run pytest tests/unit/context/test_controlled_signals.py -q
+22 passed in 0.07s
+
+ls docs/decisions/*-controlled-signals.md → ok
+grep -q controlled-signals docs/decisions/README.md → ok
+
+uv run ruff check src tests → All checks passed!
+uv run ruff format --check src tests → 86 files already formatted
+uv run mypy src → Success: no issues found in 55 source files
+```
+
+**Next**: M3-T07 — `context/builder.py` (ContextBuilder composing 4 collectors into ContextBundle)
