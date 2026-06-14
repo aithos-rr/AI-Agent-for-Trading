@@ -69,7 +69,7 @@ def _make_onchain() -> list[OnChainSnapshot]:
             symbol=sym,  # type: ignore[arg-type]
             funding_rate_8h=Decimal("0.0001"),
             open_interest_usd=Decimal("500000000"),
-            long_short_ratio=Decimal("1.2"),
+            premium=Decimal("-0.0002"),
             liquidations_24h_usd=Decimal("10000"),
         )
         for sym in ("BTC", "ETH", "SOL")

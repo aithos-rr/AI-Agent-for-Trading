@@ -54,6 +54,15 @@ _RSS_EMPTY = """\
 
 _RSS_INVALID = "THIS IS NOT XML <<<"
 
+# Not well-formed XML (raw '&' + unclosed <br>): strict parser fails -> lenient fallback.
+_RSS_MALFORMED = (
+    '<?xml version="1.0"?><rss><channel>'
+    "<item><title>Broken &amp; raw & ampersand</title>"
+    "<description>has <b>bold<br> and a raw & char</description>"
+    "<pubDate>Mon, 10 Jun 2026 12:00:00 +0000</pubDate></item>"
+    "</channel></rss>"
+)
+
 # Mixed timezone offsets: the FIRST item is more recent in absolute UTC terms
 # (09:30 -0500 = 14:30 UTC) than the second (12:00 +0000 = 12:00 UTC), but a naive
 # lexicographic sort on the raw ISO string would order them WRONG.
@@ -164,6 +173,29 @@ class TestNewsCollectorHappyPath:
         assert len(result) == 2
         assert result[0].title == "Most recent in UTC"
         assert result[1].title == "Older in UTC"
+
+    @pytest.mark.asyncio
+    async def test_get_follows_redirects(self) -> None:
+        """Real CoinDesk returns HTTP 308; the collector must follow redirects."""
+        client = _two_source_client(
+            _make_response(text=_RSS_CRYPTOPANIC),
+            _make_response(text=_RSS_COINDESK),
+        )
+        await NewsCollector(client=client).collect()
+        assert client.get.call_args_list
+        for call in client.get.call_args_list:
+            assert call.kwargs.get("follow_redirects") is True
+
+    @pytest.mark.asyncio
+    async def test_malformed_feed_recovered_by_lenient_fallback(self) -> None:
+        """A not-well-formed feed (real CryptoPanic case) is recovered best-effort."""
+        client = _two_source_client(
+            _make_response(text=_RSS_MALFORMED),
+            _make_response(text=_RSS_EMPTY),
+        )
+        result = await NewsCollector(client=client).collect()
+        assert len(result) == 1
+        assert result[0].title.startswith("Broken")
 
     @pytest.mark.asyncio
     async def test_sentiment_polarity_is_none(self) -> None:

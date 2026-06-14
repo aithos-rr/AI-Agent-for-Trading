@@ -62,7 +62,7 @@ def _make_bundle(tick_id: str = _TICK_ID, tick_at: str = _TICK_AT) -> ContextBun
                 symbol="BTC",
                 funding_rate_8h=Decimal("0.0001"),
                 open_interest_usd=Decimal("500000000"),
-                long_short_ratio=Decimal("1.2"),
+                premium=Decimal("-0.0002"),
                 liquidations_24h_usd=Decimal("10000"),
             )
         ],

@@ -92,7 +92,7 @@ def test_context_bundle_roundtrip() -> None:
                 symbol="BTC",
                 funding_rate_8h=Decimal("0.0001"),
                 open_interest_usd=Decimal("1e10"),
-                long_short_ratio=Decimal("1.2"),
+                premium=Decimal("-0.0002"),
                 liquidations_24h_usd=Decimal("5e6"),
             )
         ],

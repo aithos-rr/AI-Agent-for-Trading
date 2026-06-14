@@ -86,7 +86,7 @@ class HLPublicInfoClient:
 
 
 class OnchainCollector(BaseCollector[list[OnChainSnapshot]]):
-    """Fetches on-chain data (funding rate, OI, long/short ratio, liquidations) from HL.
+    """Fetches on-chain data (funding rate 8h, OI, premium, liquidations) from HL.
 
     Uses the public Hyperliquid /info endpoint — no wallet credentials required.
     Covers BTC, ETH, SOL (§6.3 OnChainSnapshot). Liquidations_24h_usd is approximated
@@ -151,18 +151,15 @@ class OnchainCollector(BaseCollector[list[OnChainSnapshot]]):
 
             ctx = asset_ctxs[idx]
             try:
-                funding_rate = _to_decimal(ctx["funding"])
+                # HL `funding` è il rate ORARIO; ×8 → rate equivalente 8h (ADR-0013).
+                funding_rate_8h = _to_decimal(ctx["funding"]) * 8
                 oi_coins = _to_decimal(ctx["openInterest"])
                 mark_px = _to_decimal(ctx["markPx"])
                 oi_usd = oi_coins * mark_px
 
-                impact_pxs = ctx.get("impactPxs")
-                if isinstance(impact_pxs, list) and len(impact_pxs) >= 2:
-                    bid_impact = _to_decimal(impact_pxs[0])
-                    ask_impact = _to_decimal(impact_pxs[1])
-                    long_short_ratio = bid_impact / ask_impact if ask_impact != 0 else Decimal("1")
-                else:
-                    long_short_ratio = Decimal("1")
+                # HL /info non espone un long/short ratio globale: usiamo `premium`
+                # (perp vs oracle), segnale direzionale reale (ADR-0013).
+                premium = _to_decimal(ctx["premium"])
 
                 day_vlm = _to_decimal(ctx.get("dayNtlVlm", "0"))
                 liquidations_24h_usd = day_vlm * _LIQUIDATIONS_COEFF
@@ -173,9 +170,9 @@ class OnchainCollector(BaseCollector[list[OnChainSnapshot]]):
             snapshots.append(
                 OnChainSnapshot(
                     symbol=symbol,  # type: ignore[arg-type]
-                    funding_rate_8h=funding_rate,
+                    funding_rate_8h=funding_rate_8h,
                     open_interest_usd=oi_usd,
-                    long_short_ratio=long_short_ratio,
+                    premium=premium,
                     liquidations_24h_usd=liquidations_24h_usd,
                 )
             )

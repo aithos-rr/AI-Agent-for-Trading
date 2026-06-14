@@ -479,3 +479,45 @@ GATE PASSED for M3
 **Next**: M3 (parte loop) COMPLETA e validata. Resta solo **M3-T11 [HUMAN-GATED]** (smoke
 reale orchestrator: rete sbloccata + AIAT_DATABASE_URL su Postgres reale) + decisioni F4/F5.
 Handoff all'utente.
+
+---
+
+## 2026-06-14 — M3-T11 smoke reale (umano) + decisioni F4/F5/news → ADR-0013
+
+**Contesto**: smoke manuale dei 4 collector contro API reali (host fuori firewall, script
+usa-e-getta `/smoke_m3.py`, gitignored). Scoperto che `python -m aiat` è ancora lo stub M0
+(wiring orchestrator rimandato a M5-T07), quindi M3-T11 *letterale* non chiudibile ora; lo
+smoke dei collector ha però validato i parser sul reale e rivelato 3 problemi confermati
+dal dato vero.
+
+**Esito smoke**: technical ✅ (price_usd esatto), sentiment ✅ (F&G), news ❌ (entrambe le
+fonti rotte), onchain ⚠️ (F4/F5 confermati). Dato reale: `funding=0.0000125` (orario),
+`premium=-0.0002442` (BTC), nessun long/short globale, CoinDesk HTTP 308, CryptoPanic XML
+non valido.
+
+**Decisioni utente (3/3 raccomandate) → implementate, ADR-0013**:
+- **F5 funding ×8**: `funding_rate_8h = ctx["funding"] * 8` (HL ritorna l'orario; nome campo
+  invariato, semantica corretta).
+- **F4 premium**: rinominato `OnChainSnapshot.long_short_ratio` → `premium` (Decimal signed,
+  `ctx["premium"]`); rimossa la derivazione fasulla da `impactPxs`. Deviazione §6.3 → ADR-0013.
+- **News robuste**: `follow_redirects=True` (GET+HEAD, risolve CoinDesk 308) + parsing a 2
+  livelli (ElementTree strict → fallback lenient `html.parser`, risolve CryptoPanic). Nessuna
+  dep nuova.
+
+**Changed**: `domain/schemas.py` (premium), `context/collectors/onchain.py` (×8, premium),
+`context/collectors/news.py` (follow_redirects + `_parse_rss_strict`/`_parse_rss_lenient`),
+test onchain/news/builder/serialization/integration aggiornati, `docs/decisions/0013-*.md`
++ README, `.gitignore` (smoke).
+
+**Verify (gate esterno M3, container + Postgres)**:
+```
+ruff / format / mypy --strict / lint-imports → clean
+pytest all tiers → 295 passed, coverage globale 97.57% (soglia 80%)
+pytest core (domain+llm) → 98.86% (soglia 95%)
+pytest integration (Postgres effimero) → 35 passed
+GATE PASSED for M3
+```
+
+**Next**: i fix sono unit-testati con mock realistici. Validazione finale facoltativa:
+re-run `/smoke_m3.py` sul host (deve mostrare news non vuote + `premium`/`funding ×8`).
+Smoke end-to-end `python -m aiat` rimandato a M5-T07 (entrypoint). M3 pronto; M4 può partire.

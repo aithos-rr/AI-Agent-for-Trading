@@ -224,3 +224,6 @@ formatted_*.txt
 # Note: *.log already covers iteration-*.log globally (line ~59),
 # this is kept explicit for clarity.
 progress/iteration-*.log
+
+# Throwaway M3-T11 manual smoke (run on host, never committed).
+/smoke_m3.py

@@ -159,7 +159,9 @@ class OnChainSnapshot(BaseModel):
     symbol: Literal["BTC", "ETH", "SOL"]
     funding_rate_8h: Decimal
     open_interest_usd: Decimal
-    long_short_ratio: Decimal
+    # `premium` (perp vs oracle): + = pressione long, - = short. Sostituisce il
+    # vecchio long_short_ratio (HL /info non espone un L/S globale). Vedi ADR-0013.
+    premium: Decimal
     liquidations_24h_usd: Decimal
 
 

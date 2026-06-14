@@ -35,6 +35,7 @@ def _make_asset_ctxs() -> list[dict[str, object]]:
             "prevDayPx": "92000.0",
             "dayNtlVlm": "1234567890.0",
             "markPx": "91950.0",
+            "premium": "-0.0002442114",
             "impactPxs": ["91960.0", "91940.0"],
         },
         {
@@ -43,6 +44,7 @@ def _make_asset_ctxs() -> list[dict[str, object]]:
             "prevDayPx": "3200.0",
             "dayNtlVlm": "567890123.0",
             "markPx": "3250.0",
+            "premium": "0.0001500000",
             "impactPxs": ["3249.0", "3251.0"],
         },
         {
@@ -51,6 +53,7 @@ def _make_asset_ctxs() -> list[dict[str, object]]:
             "prevDayPx": "145.0",
             "dayNtlVlm": "89012345.0",
             "markPx": "148.0",
+            "premium": "-0.0000500000",
             "impactPxs": ["148.1", "147.9"],
         },
     ]
@@ -164,18 +167,19 @@ class TestOnchainCollectorHappyPath:
         for snap in result:
             assert isinstance(snap.funding_rate_8h, Decimal)
             assert isinstance(snap.open_interest_usd, Decimal)
-            assert isinstance(snap.long_short_ratio, Decimal)
+            assert isinstance(snap.premium, Decimal)
             assert isinstance(snap.liquidations_24h_usd, Decimal)
 
     @pytest.mark.asyncio
-    async def test_btc_funding_rate_correct(self) -> None:
+    async def test_btc_funding_rate_is_hourly_times_8(self) -> None:
+        # HL funding is hourly; we store the 8h-equivalent (×8). ADR-0013.
         result = await _collector().collect()
-        assert result[0].funding_rate_8h == Decimal("0.0000125")
+        assert result[0].funding_rate_8h == Decimal("0.0000125") * 8  # == 0.0001
 
     @pytest.mark.asyncio
-    async def test_eth_negative_funding_rate(self) -> None:
+    async def test_eth_negative_funding_rate_times_8(self) -> None:
         result = await _collector().collect()
-        assert result[1].funding_rate_8h == Decimal("-0.0000050")
+        assert result[1].funding_rate_8h == Decimal("-0.0000050") * 8  # == -0.00004
 
     @pytest.mark.asyncio
     async def test_btc_open_interest_usd_is_oi_times_mark(self) -> None:
@@ -191,11 +195,10 @@ class TestOnchainCollectorHappyPath:
             assert snap.open_interest_usd > 0
 
     @pytest.mark.asyncio
-    async def test_btc_long_short_ratio_from_impact_prices(self) -> None:
+    async def test_btc_premium_from_ctx(self) -> None:
+        # premium (perp vs oracle) replaces the meaningless impactPxs ratio. ADR-0013.
         result = await _collector().collect()
-        btc = result[0]
-        expected = Decimal("91960.0") / Decimal("91940.0")
-        assert btc.long_short_ratio == expected
+        assert result[0].premium == Decimal("-0.0002442114")
 
     @pytest.mark.asyncio
     async def test_btc_liquidations_from_day_ntl_vlm(self) -> None:
@@ -205,16 +208,15 @@ class TestOnchainCollectorHappyPath:
         assert btc.liquidations_24h_usd == expected
 
     @pytest.mark.asyncio
-    async def test_no_impact_pxs_gives_ratio_one(self) -> None:
+    async def test_missing_premium_raises_source_error(self) -> None:
         meta = _make_meta()
         ctxs = _make_asset_ctxs()
-        for ctx in ctxs:
-            ctx.pop("impactPxs", None)
-        result = await OnchainCollector(
+        del ctxs[0]["premium"]
+        collector = OnchainCollector(
             hl_client=_hl_client_from_mock(_mock_response(body=[meta, ctxs]))
-        ).collect()
-        for snap in result:
-            assert snap.long_short_ratio == Decimal("1")
+        )
+        with pytest.raises(CollectorSourceError, match="Malformed asset context"):
+            await collector.collect()
 
 
 # ---------------------------------------------------------------------------

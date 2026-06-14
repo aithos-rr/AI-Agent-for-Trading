@@ -5,6 +5,7 @@ from __future__ import annotations
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from html.parser import HTMLParser
 from typing import Final
 
 import httpx
@@ -24,15 +25,36 @@ _RSS_SOURCES: Final[dict[str, str]] = {
 MAX_ITEMS_PER_TICK: Final[int] = 10
 
 
-def _parse_rss(xml_text: str, source_name: str) -> list[NewsItem]:
-    """Parse RSS 2.0 XML into a list of NewsItem.
+def _build_news_item(title: str, summary: str, raw_pub: str, source_name: str) -> NewsItem | None:
+    """Build a NewsItem from raw RSS fields; returns None if there is no title.
 
-    Args:
-        xml_text: raw XML string from the feed.
-        source_name: human-readable source label stored in NewsItem.source.
+    published_at is normalized to UTC so recency ordering is chronological even
+    across feeds with mixed timezone offsets.
+    """
+    title = title.strip()
+    if not title:
+        return None
+    try:
+        pub_dt = parsedate_to_datetime(raw_pub.strip())
+        if pub_dt.tzinfo is None:
+            pub_dt = pub_dt.replace(tzinfo=UTC)
+        published_at = pub_dt.astimezone(UTC).isoformat()
+    except Exception:
+        published_at = datetime.now(tz=UTC).isoformat()
+    return NewsItem(
+        title=title[:300],
+        summary=summary.strip()[:600],
+        source=source_name,
+        published_at=published_at,
+        sentiment_polarity=None,
+    )
+
+
+def _parse_rss_strict(xml_text: str, source_name: str) -> list[NewsItem]:
+    """Strict RSS 2.0 parse via stdlib ElementTree.
 
     Raises:
-        CollectorSourceError: if the XML is malformed.
+        CollectorSourceError: if the XML is not well-formed.
     """
     try:
         root = ET.fromstring(xml_text)
@@ -44,35 +66,74 @@ def _parse_rss(xml_text: str, source_name: str) -> list[NewsItem]:
         title_el = item_el.find("title")
         desc_el = item_el.find("description")
         pub_el = item_el.find("pubDate")
-
-        title = (title_el.text or "").strip() if title_el is not None else ""
-        summary = (desc_el.text or "").strip() if desc_el is not None else ""
-        raw_pub = (pub_el.text or "").strip() if pub_el is not None else ""
-
-        if not title:
-            continue
-
-        try:
-            pub_dt = parsedate_to_datetime(raw_pub)
-            # Normalize to UTC so lexicographic AND datetime ordering are chronological
-            # even when feeds emit mixed timezone offsets (avoids wrong recency sort).
-            if pub_dt.tzinfo is None:
-                pub_dt = pub_dt.replace(tzinfo=UTC)
-            published_at = pub_dt.astimezone(UTC).isoformat()
-        except Exception:
-            published_at = datetime.now(tz=UTC).isoformat()
-
-        items.append(
-            NewsItem(
-                title=title[:300],
-                summary=summary[:600],
-                source=source_name,
-                published_at=published_at,
-                sentiment_polarity=None,
-            )
+        item = _build_news_item(
+            title_el.text or "" if title_el is not None else "",
+            desc_el.text or "" if desc_el is not None else "",
+            pub_el.text or "" if pub_el is not None else "",
+            source_name,
         )
-
+        if item is not None:
+            items.append(item)
     return items
+
+
+class _LenientRSSParser(HTMLParser):
+    """Best-effort RSS extraction for feeds that are NOT well-formed XML (ADR-0013).
+
+    Real feeds (e.g. CryptoPanic) embed raw HTML / bare ampersands that the strict
+    parser rejects. HTMLParser is lenient and lowercases tag names.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.items: list[dict[str, str]] = []
+        self._cur: dict[str, str] | None = None
+        self._field: str | None = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "item":
+            self._cur = {"title": "", "description": "", "pubdate": ""}
+        elif tag in ("title", "description", "pubdate") and self._cur is not None:
+            self._field = tag
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "item" and self._cur is not None:
+            self.items.append(self._cur)
+            self._cur = None
+        elif tag == self._field:
+            self._field = None
+
+    def handle_data(self, data: str) -> None:
+        if self._cur is not None and self._field is not None:
+            self._cur[self._field] += data
+
+
+def _parse_rss_lenient(xml_text: str, source_name: str) -> list[NewsItem]:
+    """Lenient fallback parse for malformed feeds (best-effort)."""
+    parser = _LenientRSSParser()
+    parser.feed(xml_text)
+    items: list[NewsItem] = []
+    for raw in parser.items:
+        item = _build_news_item(raw["title"], raw["description"], raw["pubdate"], source_name)
+        if item is not None:
+            items.append(item)
+    return items
+
+
+def _parse_rss(xml_text: str, source_name: str) -> list[NewsItem]:
+    """Parse RSS 2.0; fall back to a lenient parser if the feed is malformed.
+
+    Raises:
+        CollectorSourceError: if the feed is unparseable AND yields no items.
+    """
+    try:
+        return _parse_rss_strict(xml_text, source_name)
+    except CollectorSourceError:
+        items = _parse_rss_lenient(xml_text, source_name)
+        if not items:
+            raise
+        logger.warning("news_lenient_parse_used", source=source_name, count=len(items))
+        return items
 
 
 class NewsCollector(BaseCollector[list[NewsItem]]):
@@ -103,7 +164,9 @@ class NewsCollector(BaseCollector[list[NewsItem]]):
             CollectorSourceError: on HTTP error or invalid response.
         """
         try:
-            resp = await self._client.get(url, timeout=float(self.timeout_seconds))
+            resp = await self._client.get(
+                url, timeout=float(self.timeout_seconds), follow_redirects=True
+            )
         except httpx.TimeoutException as exc:
             raise CollectorTimeoutError(
                 f"NewsCollector timed out fetching {source_name} after {self.timeout_seconds}s"
@@ -168,7 +231,9 @@ class NewsCollector(BaseCollector[list[NewsItem]]):
         reachability: dict[str, bool] = {}
         for source_name, url in _RSS_SOURCES.items():
             try:
-                resp = await self._client.head(url, timeout=float(self.timeout_seconds))
+                resp = await self._client.head(
+                    url, timeout=float(self.timeout_seconds), follow_redirects=True
+                )
                 reachability[source_name] = resp.status_code < 500
             except (httpx.TimeoutException, httpx.RequestError):
                 reachability[source_name] = False
