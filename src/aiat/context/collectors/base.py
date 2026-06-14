@@ -2,8 +2,6 @@
 
 from abc import ABC, abstractmethod
 
-from pydantic import BaseModel
-
 
 class CollectorTimeoutError(Exception):
     """Raised when a collector exceeds its timeout_seconds."""
@@ -13,8 +11,12 @@ class CollectorSourceError(Exception):
     """Raised when a remote source is unreachable or returns invalid data."""
 
 
-class BaseCollector[T: BaseModel](ABC):
-    """Base for collectors: technical, sentiment, news, onchain."""
+class BaseCollector[T](ABC):
+    """Base for collectors: technical, sentiment, news, onchain.
+
+    T is unconstrained to support both single Pydantic models (TechnicalIndicators,
+    SentimentSnapshot) and collections (list[NewsItem], list[OnChainSnapshot]).
+    """
 
     timeout_seconds: int
     cache_ttl_seconds: int
@@ -24,7 +26,7 @@ class BaseCollector[T: BaseModel](ABC):
         """Collect data from a remote source.
 
         Returns:
-            Pydantic model with the collected data.
+            Collected data (Pydantic model or list thereof).
 
         Raises:
             CollectorTimeoutError: if the operation exceeds self.timeout_seconds.

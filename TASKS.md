@@ -702,7 +702,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/unit/context/test_sentiment.py -q && uv run mypy src`
   - **done-when**: produce `SentimentSnapshot` da risposta F&G mockata; test verde.
 
-- [ ] **M3-T04** **[D5]** — `context/collectors/news.py` + **ADR**
+- [x] **M3-T04** **[D5]** — `context/collectors/news.py` + **ADR**
   - **what**: TDD (httpx mock). `NewsCollector` RSS (CryptoPanic, CoinDesk) → `list[NewsItem]`,
     `check_sources_reachability()` (usato da §10.1 O3). **Decidere** numero items/tick +
     lista RSS finale; **creare ADR** (prossimo numero, slug `rss-sources`) citando D5/§15.4;

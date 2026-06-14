@@ -193,3 +193,38 @@ Success: no issues found in 52 source files
 ```
 
 **Next**: M3-T04 — `context/collectors/news.py` + ADR [D5]
+
+---
+
+## 2026-06-14 — M3-T04 (NewsCollector + ADR D5)
+
+**Task**: M3-T04 — `context/collectors/news.py` + **ADR [D5]** (closes bounded deferral D5)
+
+**Changed**:
+- `src/aiat/context/collectors/base.py` — removed `T: BaseModel` bound from `BaseCollector[T]`; news/onchain collectors return `list[...]` which is not a BaseModel subclass. Removed unused `from pydantic import BaseModel` import.
+- `src/aiat/context/collectors/news.py` — `NewsCollector[list[NewsItem]]` fetching from 2 RSS sources (CryptoPanic + CoinDesk); sequential per-source fetch with partial failure tolerance (at least 1 must succeed); `_parse_rss()` uses stdlib `xml.etree.ElementTree` + `email.utils.parsedate_to_datetime`; `check_sources_reachability()` via HEAD requests; `MAX_ITEMS_PER_TICK=10`.
+- `tests/unit/context/test_news.py` — 26 unit tests: happy path (both sources), partial failure (one source down), all-fail paths (CollectorSourceError / CollectorTimeoutError), `check_sources_reachability`, defaults, title/summary truncation, sorting by recency, max_items cap.
+- `docs/decisions/0011-rss-sources.md` — ADR closing D5: 10 items/tick, 2 sources (CryptoPanic + CoinDesk), partial failure semantics documented. Next milestone obligation: seed must include `MAX_ITEMS_PER_TICK` in `prompt_template_hash`.
+- `docs/decisions/README.md` — added ADR-0011 entry.
+
+**D5 decision (ADR-0011)**:
+- 10 items/tick max (≈2250 tokens — fits all 4 target models)
+- 2 RSS sources: `cryptopanic` + `coindesk`
+- Partial failure tolerated: at least 1 source must succeed; `CollectorTimeoutError` only when ALL timed out
+
+**Verify output**:
+```
+uv run pytest tests/unit/context/test_news.py -q
+26 passed in 0.19s
+
+ls docs/decisions/*-rss-sources.md → ok
+grep -q rss-sources docs/decisions/README.md → ok
+
+uv run ruff check src tests && uv run ruff format --check src tests
+All checks passed! / 82 files already formatted
+
+uv run mypy src
+Success: no issues found in 53 source files
+```
+
+**Next**: M3-T05 — `context/collectors/onchain.py`
