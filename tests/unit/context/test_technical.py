@@ -143,3 +143,33 @@ async def test_raises_source_error_on_unsupported_symbol() -> None:
     collector = TechnicalCollector(symbol="DOGE", client=client)
     with pytest.raises(CollectorSourceError, match="Unsupported symbol"):
         await collector.collect()
+
+
+async def test_raises_source_error_on_invalid_json() -> None:
+    # resp.json() raises an exception → CollectorSourceError (lines 93-94)
+    resp = MagicMock(spec=httpx.Response)
+    resp.status_code = 200
+    resp.text = "not json"
+    resp.json.side_effect = ValueError("invalid json")
+    client = MagicMock(spec=httpx.AsyncClient)
+    client.post = AsyncMock(return_value=resp)
+    collector = TechnicalCollector(symbol="BTC", client=client)  # type: ignore[arg-type]
+    with pytest.raises(CollectorSourceError):
+        await collector.collect()
+
+
+async def test_raises_source_error_on_malformed_candle_keys() -> None:
+    # Candles missing "o" key → KeyError caught at lines 117-118
+    bad_candles: list[dict[str, object]] = [
+        {"c": "50000", "h": "50001", "l": "49999", "v": "10"} for _ in range(100)
+    ]
+    collector = TechnicalCollector(symbol="BTC", client=_mock_client(bad_candles))
+    with pytest.raises(CollectorSourceError, match="Malformed candle"):
+        await collector.collect()
+
+
+async def test_raises_source_error_on_insufficient_candles() -> None:
+    # 49 candles < required 50 (line 121)
+    collector = TechnicalCollector(symbol="BTC", client=_mock_client(_make_candles(n=49)))
+    with pytest.raises(CollectorSourceError, match="Insufficient candles"):
+        await collector.collect()

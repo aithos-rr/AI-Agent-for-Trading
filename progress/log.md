@@ -393,3 +393,43 @@ uv run mypy src → Success: no issues found in 58 source files
 ```
 
 **Next**: M3-T10 — Unit test collectors (aggregato)
+
+---
+
+## M3-T10 — Unit test collectors (aggregato) (2026-06-14)
+
+**Task**: M3-T10 — Ensure `tests/unit/context/` covers each collector; fill gaps left by T02-T05.
+
+**What changed**:
+Added 11 targeted tests across 4 test files to cover previously uncovered error branches:
+
+- `test_sentiment.py` (+3): invalid JSON (lines 71-72), data[0] not a dict (line 80),
+  malformed entry missing key (lines 85-86).
+- `test_technical.py` (+3): invalid JSON from candles endpoint (lines 93-94), malformed
+  candle data with missing keys (lines 117-118), insufficient candles <50 (line 121).
+- `test_news.py` (+2): items with empty title are skipped via `continue` (line 53),
+  invalid pubDate falls back to `datetime.now()` (lines 58-59).
+- `test_onchain.py` (+3): `fetch_meta()` non-200 response (line 57), unexpected
+  `metaAndAssetCtxs` structure with only 1 element (line 82), `TimeoutError` from inner
+  coroutine triggers `CollectorTimeoutError` (line 123).
+
+**Coverage result** (before → after):
+- `news.py`: 96% → 100%
+- `onchain.py`: 95% → 100%
+- `sentiment.py`: 89% → 100%
+- `technical.py`: 88% → 95% (lines 132-133 and 148-149 remain: defensive pandas-ta
+  exception handlers that require internal mock of the library to trigger — left uncovered
+  as they are extreme edge cases not worth fragile internal mocking)
+- Total context/: 93% → 99%
+
+**Verify output**:
+```
+uv run pytest tests/unit/context -q
+134 passed in 2.40s
+
+uv run ruff check src tests → All checks passed!
+uv run ruff format --check src tests → 92 files already formatted
+uv run mypy src → Success: no issues found in 58 source files
+```
+
+**Next**: M3-T11 HUMAN-GATED/⚠️, blocco qui (smoke reale richiede rete+DB reale).

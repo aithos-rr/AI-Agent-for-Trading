@@ -226,6 +226,63 @@ class TestNewsCollectorHappyPath:
             dt = datetime.fromisoformat(item.published_at)
             assert dt is not None
 
+    @pytest.mark.asyncio
+    async def test_items_with_empty_title_are_skipped(self) -> None:
+        # item with no <title> (or empty title) is skipped via `continue` (line 53)
+        rss = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>TestFeed</title>
+    <item>
+      <title></title>
+      <description>desc1</description>
+      <pubDate>Mon, 10 Jun 2026 12:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Real Item</title>
+      <description>desc2</description>
+      <pubDate>Mon, 10 Jun 2026 11:00:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>"""
+        client = _two_source_client(
+            _make_response(text=rss),
+            _make_response(text=_RSS_EMPTY),
+        )
+        collector = NewsCollector(client=client)
+        result = await collector.collect()
+        assert len(result) == 1
+        assert result[0].title == "Real Item"
+
+    @pytest.mark.asyncio
+    async def test_invalid_pubdate_falls_back_to_now(self) -> None:
+        # Invalid pubDate triggers except in parsedate_to_datetime → fallback to now() (lines 58-59)
+        from datetime import datetime
+
+        rss = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>TestFeed</title>
+    <item>
+      <title>Item with bad date</title>
+      <description>desc</description>
+      <pubDate>NOT A VALID DATE</pubDate>
+    </item>
+  </channel>
+</rss>"""
+        client = _two_source_client(
+            _make_response(text=rss),
+            _make_response(text=_RSS_EMPTY),
+        )
+        collector = NewsCollector(client=client)
+        result = await collector.collect()
+        assert len(result) == 1
+        # published_at must be a parseable ISO datetime (the fallback)
+        dt = datetime.fromisoformat(result[0].published_at)
+        assert dt is not None
+
 
 # ---------------------------------------------------------------------------
 # Partial failure: one source fails, other succeeds

@@ -97,6 +97,15 @@ class TestHLPublicInfoClientFetchMeta:
         assert "universe" in meta
 
     @pytest.mark.asyncio
+    async def test_fetch_meta_non_200_raises_source_error(self) -> None:
+        # fetch_meta() non-200 response → CollectorSourceError (line 57)
+        inner = MagicMock(spec=httpx.AsyncClient)
+        inner.post = AsyncMock(return_value=_mock_response(status_code=500))
+        hl = HLPublicInfoClient(client=inner)
+        with pytest.raises(CollectorSourceError):
+            await hl.fetch_meta()
+
+    @pytest.mark.asyncio
     async def test_testnet_url_contains_testnet(self) -> None:
         inner = MagicMock(spec=httpx.AsyncClient)
         resp = _mock_response(body=_make_meta())
@@ -262,6 +271,21 @@ class TestOnchainCollectorErrors:
             hl_client=_hl_client_from_mock(_mock_response(body=[meta, ctxs]))
         )
         with pytest.raises(CollectorSourceError):
+            await collector.collect()
+
+    @pytest.mark.asyncio
+    async def test_unexpected_meta_and_asset_ctxs_structure_raises_source_error(self) -> None:
+        # Response with only 1 element (not the expected [meta, ctxs] pair) → line 82
+        body: list[object] = [_make_meta()]
+        collector = OnchainCollector(hl_client=_hl_client_from_mock(_mock_response(body=body)))
+        with pytest.raises(CollectorSourceError, match="Unexpected"):
+            await collector.collect()
+
+    @pytest.mark.asyncio
+    async def test_asyncio_timeout_raises_collector_timeout_error(self) -> None:
+        # asyncio.wait_for timeout propagates as TimeoutError → line 123
+        collector = OnchainCollector(hl_client=_hl_client_raising(TimeoutError("timed out")))
+        with pytest.raises(CollectorTimeoutError):
             await collector.collect()
 
 

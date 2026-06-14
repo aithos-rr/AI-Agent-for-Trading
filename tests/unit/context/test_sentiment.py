@@ -169,6 +169,29 @@ class TestSentimentCollectorErrors:
         with pytest.raises(CollectorSourceError):
             await collector.collect()
 
+    @pytest.mark.asyncio
+    async def test_invalid_json_raises_source_error(self) -> None:
+        # body=None → _mock_client sets resp.json.side_effect = ValueError (lines 71-72)
+        collector = SentimentCollector(client=_mock_client(status_code=200))
+        with pytest.raises(CollectorSourceError, match="Invalid JSON"):
+            await collector.collect()
+
+    @pytest.mark.asyncio
+    async def test_data_entry_not_dict_raises_source_error(self) -> None:
+        # data[0] is a string, not a dict (line 80)
+        body = {"data": ["not_a_dict"]}
+        collector = SentimentCollector(client=_mock_client(body=body))
+        with pytest.raises(CollectorSourceError):
+            await collector.collect()
+
+    @pytest.mark.asyncio
+    async def test_malformed_entry_missing_key_raises_source_error(self) -> None:
+        # entry missing "value" key → KeyError caught at lines 85-86
+        body = {"data": [{"value_classification": "Greed"}]}
+        collector = SentimentCollector(client=_mock_client(body=body))
+        with pytest.raises(CollectorSourceError, match="Malformed"):
+            await collector.collect()
+
 
 class TestSentimentCollectorDefaults:
     def test_default_timeout(self) -> None:

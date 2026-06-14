@@ -770,7 +770,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when** 🐘: scrive context_snapshots + context_build_runs anche su fallimenti
     parziali; test verde.
 
-- [ ] **M3-T10** — Unit test collectors (aggregato)
+- [x] **M3-T10** — Unit test collectors (aggregato)
   - **what**: Garantire che `tests/unit/context/` copra ogni collector (httpx mock). Colmare
     eventuali gap lasciati da T02-T05.
   - **prd**: §12 M3
