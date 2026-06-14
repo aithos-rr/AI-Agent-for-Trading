@@ -2,7 +2,7 @@ You are one iteration of an autonomous loop. You have a FRESH context: everythin
 
 1. Read `CLAUDE.md`, `docs/PRD_V2.md` (the technical blueprint — ground truth), `TASKS.md`, and the last 30 lines of `progress/log.md`. Consult `docs/RESEARCH_DESIGN.md` for scientific rationale and `docs/decisions/` for any ADR that supersedes the PRD.
 
-2. Select THE SINGLE NEXT TASK: scan `TASKS.md` top-to-bottom and take the FIRST unchecked `- [ ]` task whose `dep:` are ALL already satisfied (checked). That task's milestone (M0…M5) is the current milestone. Implement EXACTLY ONE task in this iteration. Even if context and time remain, DO NOT start a second task and DO NOT batch tasks — one task per iteration is MANDATORY, so every task gets a fresh context window (no context rot). You MUST NOT start a task belonging to a later milestone.
+2. Select THE SINGLE NEXT TASK: scan `TASKS.md` top-to-bottom and take the FIRST unchecked `- [ ]` task that (a) has ALL its `dep:` satisfied (checked) AND (b) is NOT marked `[HUMAN-GATED]`. You cannot complete `[HUMAN-GATED]` tasks (they need real wallet/network/credentials) — SKIP them when selecting and leave them `- [ ]`. The selected task's milestone (M0…M5) is the CURRENT milestone. Implement EXACTLY ONE task in this iteration. Even if context and time remain, DO NOT start a second task and DO NOT batch tasks — one task per iteration is MANDATORY, so every task gets a fresh context window (no context rot). DO NOT select or start a task from a milestone LATER than the current one (the per-milestone external gate runs between milestones).
 
 3. For THE SINGLE task you implement, follow the guidelines in `CLAUDE.md` (think before coding, simplicity first, surgical changes, goal-driven execution). If you close a bounded deferral (D1-D5) or deviate from the PRD, create an ADR in `docs/decisions/` per the rule in `CLAUDE.md`.
 
@@ -12,13 +12,13 @@ You are one iteration of an autonomous loop. You have a FRESH context: everythin
    - A task that touches `src/` or `tests/` is NOT done until `uv run ruff check src tests`, `uv run mypy src`, and the relevant `uv run pytest …` all exit 0. Run `ruff check` (not just `ruff format`) — they are different.
    - If any verify fails, FIX until it passes. Never mark a task `[x]` on unverified or failing work. If you cannot make it pass, leave it `[ ]` and explain in the log.
 
-5. For [HUMAN-GATED] tasks: if the `verify:` requires a real resource that is absent (env var, real network, testnet wallet), do NOT fake completion. Leave the task `[ ]`, note "HUMAN-GATED, blocco qui" with the task ID in `progress/log.md`. If it is the only remaining executable task, print `RALPH_BLOCKED`.
+5. `[HUMAN-GATED]` tasks (e.g. M3-T11, M4-T08, M5-T14) need a real resource you do NOT have (env var, real network, testnet wallet). NEVER fake completion. Leave them `- [ ]`, and the first time you encounter one note "HUMAN-GATED, blocco qui" with the task ID in `progress/log.md`. Then SKIP to the next loop-eligible task (step 2) — a human-gated task does NOT block later loop-doable tasks (e.g. M4-T08 must not block M4-T09). Print `RALPH_BLOCKED` ONLY if there is NO loop-eligible task left in any milestone.
 
 6. Update `TASKS.md` (mark done only the tasks whose verify really passed) and append to `progress/log.md` (task IDs, what changed, verify output, learnings, warnings for next iteration).
 
 7. Commit all changes for THIS one task with message `ralph: <task-id> <desc>` (exactly ONE task per commit).
 
 STOP CONDITION (per-milestone gate):
-- When every task of the CURRENT milestone is checked AND their verifies pass, do NOT proceed to the next milestone. Print exactly: `MILESTONE_COMPLETE M<n>` (e.g. `MILESTONE_COMPLETE M1`) and stop. A human will run the external gate before the next milestone.
-- If ALL tasks across ALL milestones (M0-M5) are checked and pass, print exactly: `RALPH_COMPLETE`.
-- If `TASKS.md` is empty or has no real tasks, print exactly: `RALPH_BLOCKED` and explain in `progress/log.md`.
+- After completing your single task, if every NON-`[HUMAN-GATED]` task of the CURRENT milestone is checked AND their verifies pass, do NOT proceed to the next milestone. Print exactly: `MILESTONE_COMPLETE M<n>` (e.g. `MILESTONE_COMPLETE M1`) and stop. A human will run the external gate before the next milestone. (Any `[HUMAN-GATED]` task of this milestone stays `- [ ]` — it does NOT block `MILESTONE_COMPLETE`.)
+- If every non-`[HUMAN-GATED]` task across ALL milestones (M0-M5) is checked and passes, print exactly: `RALPH_COMPLETE`.
+- If `TASKS.md` has no loop-eligible task at all, print exactly: `RALPH_BLOCKED` and explain in `progress/log.md`.
