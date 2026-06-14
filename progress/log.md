@@ -608,3 +608,37 @@ Success: no issues found in 60 source files   (mypy src)
 ```
 
 **Next**: M4-T03 — `execution/hyperliquid_client.py` (ABC + mock, semantica LONG/SHORT/FLAT/HOLD).
+
+---
+
+## M4-T03 — `execution/hyperliquid_client.py` (ABC + mock)
+
+**Task**: TDD implementation of HyperliquidClient ABC + MockHyperliquidClient (§7.5).
+
+**What changed**:
+- Created `src/aiat/execution/hyperliquid_client.py`:
+  - `OrderResult(BaseModel)`: Pydantic v2 model for a single HL order result, `extra="forbid"`, `status` as Literal of 6 values, all Decimal fields, `raw_response: dict[str, Any]`
+  - `PositionClosureInfo(BaseModel)`: Pydantic v2 model for closed position info
+  - `HyperliquidClient(ABC)`: 3 abstract async methods — `fetch_portfolio_state`, `execute_action(action, run_id, current_position)`, `check_position_closure`; docstring documents full side semantics per §7.5 fix A.2/B.4
+  - `MockHyperliquidClient(HyperliquidClient)`: in-memory mock, implements full LONG/SHORT/FLAT/HOLD semantics:
+    - HOLD → []
+    - FLAT + no position → []
+    - FLAT + position → [CLOSE order]
+    - LONG/SHORT + no position → [ENTRY, STOP_LOSS, TAKE_PROFIT]
+    - LONG/SHORT + same side → [] (no add-to-position in v2)
+    - LONG/SHORT + opposite side → [CLOSE, ENTRY, STOP_LOSS, TAKE_PROFIT]
+  - `executed_actions` list for test introspection
+- Created `tests/unit/execution/test_hyperliquid_client.py` (26 tests):
+  - OrderResult model validation (valid filled/triggered, extra fields forbidden, all 6 statuses)
+  - PositionClosureInfo model validation
+  - ABC cannot be instantiated
+  - MockHyperliquidClient: portfolio state, HOLD, FLAT (no pos/with pos), LONG/SHORT (no pos, same side, opposite side), check_position_closure (known/unknown), executed_actions tracking
+
+**Verify output**:
+```
+26 passed in 0.16s   (pytest tests/unit/execution/test_hyperliquid_client.py -q)
+Success: no issues found in 61 source files   (mypy src)
+All checks passed!   (ruff check src tests)
+```
+
+**Next**: M4-T04 — `execution/outcome_resolver.py` + ADR [D2] (HOLD/FLAT labeling rule).

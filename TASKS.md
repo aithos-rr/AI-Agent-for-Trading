@@ -835,7 +835,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/unit/execution/test_guardrails.py -q && uv run mypy src`
   - **done-when**: tutti i casi guardrail §9.2 passano nell'ordine corretto, con report.
 
-- [ ] **M4-T03** — `execution/hyperliquid_client.py` (ABC + mock)
+- [x] **M4-T03** — `execution/hyperliquid_client.py` (ABC + mock)
   - **what**: TDD (HL mockato). ABC `HyperliquidClient` §7.5 (`fetch_portfolio_state`,
     `execute_action(action, run_id, current_position)`, `check_position_closure`) +
     `OrderResult`/`PositionClosureInfo`. Semantica LONG/SHORT/FLAT/HOLD (FLAT = close-only se
