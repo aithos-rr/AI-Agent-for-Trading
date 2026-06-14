@@ -90,9 +90,14 @@ async def invoke_structured(
 
     # PATH 1: primary attempt with structured output
     try:
-        structured_llm = llm.with_structured_output(TradeDecision).with_config(
-            {"callbacks": [stats_handler]}
-        )
+        # method="json_schema" forces native response_format (verified working via OpenRouter
+        # for OpenAI-compatible models). The default "function_calling" does not propagate the
+        # schema correctly through OpenRouter. NOTE: direct providers (esp. Anthropic, which
+        # uses tool-use rather than response_format) may need a provider-aware method — to be
+        # verified at M6 when direct-provider access is implemented (ADR-0008 scope boundary).
+        structured_llm = llm.with_structured_output(
+            TradeDecision, method="json_schema"
+        ).with_config({"callbacks": [stats_handler]})
         result = await asyncio.wait_for(
             structured_llm.ainvoke(prompt),
             timeout=timeout_seconds,
