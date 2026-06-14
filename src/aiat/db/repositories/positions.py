@@ -55,7 +55,16 @@ class PositionsRepository:
             raise ValueError("Entry order has no filled_price")
 
         entry_price = entry_order.filled_price
-        size_units = entry_order.filled_size_units or entry_order.requested_size_units
+        # Use the actual filled size when present; fall back to requested only when
+        # filled is unknown (None). A real Decimal("0") fill is distinct from None and
+        # must NOT be silently rewritten to requested — it would fabricate the size and
+        # corrupt notional/margin (inv #12). A genuine zero fill fails loud downstream
+        # via the chk_position_size_units_gt0 CHECK.
+        size_units = (
+            entry_order.filled_size_units
+            if entry_order.filled_size_units is not None
+            else entry_order.requested_size_units
+        )
         leverage = action.leverage_executed
         notional_value_usd = size_units * entry_price
         initial_margin_usd = notional_value_usd / leverage
@@ -170,9 +179,9 @@ class PositionsRepository:
         sum_fees_usd: Decimal = fee_row.scalar_one()
 
         funding_row = await self._session.execute(
-            select(
-                func.coalesce(func.sum(FundingEvent.funding_amount_usd), Decimal("0"))
-            ).where(FundingEvent.position_id == pos.id)
+            select(func.coalesce(func.sum(FundingEvent.funding_amount_usd), Decimal("0"))).where(
+                FundingEvent.position_id == pos.id
+            )
         )
         sum_funding_usd: Decimal = funding_row.scalar_one()
 
@@ -181,13 +190,9 @@ class PositionsRepository:
 
         opening_action = await self._session.get(DecisionAction, pos.opening_action_id)
         if opening_action is None:
-            raise ValueError(
-                f"Opening DecisionAction {pos.opening_action_id!r} not found"
-            )
+            raise ValueError(f"Opening DecisionAction {pos.opening_action_id!r} not found")
 
-        holding_duration_min = max(
-            0, int((closed_at_dt - pos.opened_at).total_seconds() / 60)
-        )
+        holding_duration_min = max(0, int((closed_at_dt - pos.opened_at).total_seconds() / 60))
         horizon_met = holding_duration_min <= opening_action.time_horizon_min
 
         outcome = Outcome(

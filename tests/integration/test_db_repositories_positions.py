@@ -279,6 +279,35 @@ async def test_open_position_creates_rows(db_session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
+async def test_open_position_falls_back_to_requested_size_when_fill_unknown(
+    db_session: AsyncSession,
+) -> None:
+    """When the entry fill size is unknown (None), open_position uses requested_size_units.
+
+    Guards the explicit `is not None` fallback (a real Decimal("0") fill is distinct
+    from None and must not be silently rewritten — it would fail loud downstream).
+    """
+    ids = await _seed(db_session)
+    repo = PositionsRepository(db_session)
+
+    orders = _make_order_results()
+    entry = orders[0].model_copy(
+        update={"requested_size_units": Decimal("2.0"), "filled_size_units": None}
+    )
+    orders[0] = entry
+
+    pos_id = await repo.open_position(
+        action_id=str(ids.action_id),
+        order_results=orders,
+        run_id=str(ids.opening_run_id),
+    )
+    pos = await db_session.get(Position, uuid.UUID(pos_id))
+    assert pos is not None
+    assert pos.size_units == Decimal("2.0")  # requested used as fallback
+    assert pos.notional_value_usd == Decimal("200.00")  # 2.0 * 100
+
+
+@pytest.mark.asyncio
 async def test_open_position_orders_and_fees_created(db_session: AsyncSession) -> None:
     """open_position creates 3 orders; 1 fee_event (entry only has fee_usd)."""
     from sqlalchemy import select
@@ -295,17 +324,21 @@ async def test_open_position_orders_and_fees_created(db_session: AsyncSession) -
     )
 
     orders = (
-        await db_session.execute(
-            select(Order).where(Order.decision_action_id == ids.action_id)
-        )
-    ).scalars().all()
+        (await db_session.execute(select(Order).where(Order.decision_action_id == ids.action_id)))
+        .scalars()
+        .all()
+    )
     assert len(orders) == 3
 
     fees = (
-        await db_session.execute(
-            select(FeeEvent).where(FeeEvent.position_id == uuid.UUID(pos_id))
+        (
+            await db_session.execute(
+                select(FeeEvent).where(FeeEvent.position_id == uuid.UUID(pos_id))
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(fees) == 1
     assert fees[0].fee_usd == Decimal("0.50")
     assert fees[0].fee_type == "taker_open"
@@ -343,9 +376,9 @@ async def test_close_position_updates_and_creates_outcome(db_session: AsyncSessi
 
     outcome = (
         await db_session.execute(
-            __import__("sqlalchemy", fromlist=["select"]).select(Outcome).where(
-                Outcome.position_id == uuid.UUID(pos_id)
-            )
+            __import__("sqlalchemy", fromlist=["select"])
+            .select(Outcome)
+            .where(Outcome.position_id == uuid.UUID(pos_id))
         )
     ).scalar_one_or_none()
     assert outcome is not None
@@ -388,9 +421,7 @@ async def test_close_position_unprofitable(db_session: AsyncSession) -> None:
     from sqlalchemy import select
 
     outcome = (
-        await db_session.execute(
-            select(Outcome).where(Outcome.position_id == uuid.UUID(pos_id))
-        )
+        await db_session.execute(select(Outcome).where(Outcome.position_id == uuid.UUID(pos_id)))
     ).scalar_one()
     assert outcome.was_profitable_net is False
     assert outcome.realized_pnl_gross_usd == Decimal("-5.00")
@@ -466,10 +497,14 @@ async def test_fee_event_run_id_matches_opening_run(db_session: AsyncSession) ->
     )
 
     fees = (
-        await db_session.execute(
-            select(FeeEvent).where(FeeEvent.position_id == uuid.UUID(pos_id))
+        (
+            await db_session.execute(
+                select(FeeEvent).where(FeeEvent.position_id == uuid.UUID(pos_id))
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(fees) == 1
     assert fees[0].run_id == ids.opening_run_id
     assert fees[0].model_id == ids.model_id
@@ -518,9 +553,7 @@ async def test_close_position_with_funding_events(db_session: AsyncSession) -> N
     )
 
     outcome = (
-        await db_session.execute(
-            select(Outcome).where(Outcome.position_id == uuid.UUID(pos_id))
-        )
+        await db_session.execute(select(Outcome).where(Outcome.position_id == uuid.UUID(pos_id)))
     ).scalar_one()
 
     assert outcome.sum_fees_usd == Decimal("0.50")

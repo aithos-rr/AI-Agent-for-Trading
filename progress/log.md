@@ -768,3 +768,60 @@ Required test coverage of 95% reached. Total coverage: 100.00%
 **All non-human-gated M4 tasks complete**: M4-T01 through M4-T07 and M4-T09 ✅. M4-T08 is HUMAN-GATED 🛑 (wallet HL testnet reale — PRIMO STOP FISICO).
 
 MILESTONE_COMPLETE M4
+
+---
+
+## 2026-06-14 — GATE M4 (orchestratore Opus): external gate + review adversariale
+
+**Loop**: 8 iterazioni Sonnet, 1 task/commit pulito (M4-T01→T07, T09; T08 lasciato `[ ]`
+HUMAN-GATED). ADR-0014 (holdflat-outcome) creato, chiude D2. ✅
+
+**External gate `./tools/gate_check.sh M4`** (container + Postgres effimero): inizialmente
+1 FAIL su `ruff format --check` (4 file non formattati — il verify per-task del loop non
+lancia `ruff format --check`). Fix meccanico `uv run ruff format` (solo wrapping, nessuna
+logica). Re-run → **GATE PASSED**: ruff/format/mypy --strict/lint-imports clean;
+393 passed (cov globale 96.97%, soglia 80%); core 207 passed (cov 99.18%, soglia 95%);
+integration 45 passed.
+
+**Review adversariale (Workflow multi-agent, 13 agent, verifica scettica vs PRD ground
+truth)** su inv #4/#8/#12 + D2 + correttezza moduli. 7 findings → 6 confermati, 1 respinto.
+
+Bug isolati CONFERMATI e CORRETTI (con test, autonomo):
+- **[CRITICAL] funding sign** `outcome_resolver.py:99`: faceva `pnl_net_fee + funding`
+  (ADD), contraddicendo PRD §3.2.6 (`funding_amount_usd signed: + = paghi, - = ricevi` →
+  va SOTTRATTO), §3.2.6 tax-sim (`gross - fees - funding`), e `positions.py:180` (corretto,
+  SUBTRACT, confermato da integration test +2.00→7.50). Corrotto `pnl_net_fee_funding_usd`
+  + `was_profitable_net` (label Brier, RESEARCH §4.2). **Fix**: `pnl_net_fee - funding`.
+- **[HIGH] test invertito** `test_outcome_resolver.py`: 3 test (`-12→-3`, `+10→+6`, `-2→70`)
+  codificavano la convenzione SBAGLIATA (positivo=ricevuto) e "verdeggiavano" il bug.
+  **Fix**: rinominati/corretti a convenzione PRD (`-12`=ricevuto→+21, `+10`=pagato→-14,
+  `-2`=ricevuto→74) + nuovo test di riconciliazione cross-path (resolver vs repo: +2.00→7.50).
+- **[HIGH] was_profitable_net divergente**: conseguenza del sign bug; risolto dal fix sopra
+  (operatore `>0` già identico nei due path). Coperto dal test di riconciliazione.
+- **[MEDIUM] fallback size** `positions.py:58`: `filled_size_units or requested` tratta un
+  fill reale `Decimal("0")` come falsy → riscriveva la size con la requested (size fabbricata,
+  inv #12). **Fix**: `is not None` esplicito (un vero zero-fill ora fallisce loud via
+  `chk_position_size_units_gt0`). + integration test del ramo fallback (filled=None→requested).
+
+Risultato test: all tiers 391→393, core 206→207, integration 44→45. Tutti verdi.
+
+Finding RESPINTO (1): "sizing test tautologico" — è un'osservazione di qualità del test, non
+un difetto; il verificatore scettico l'ha correttamente respinto (premise ground-truth invertita).
+
+**APERTO — DECISIONE DI DESIGN (NON corretto, richiede ADR + utente)**:
+- **[HIGH] convenzione `size_units`** — `sizing.py` usa `size_units = margin/price`
+  (unleveraged) con `notional = price·size_units·leverage`; `positions.py` usa
+  `size_units = filled qty` (leveraged, dall'exchange) con `notional = size_units·price`.
+  **Il PRD si auto-contraddice**: §9.2 riga 2346 avalla la formula di `sizing.py`, ma il
+  DDL §3.2.4 + realtà di esecuzione (HL fill) avallano `positions.py`. Stesso nome di colonna,
+  due semantiche → tocca notional/exposure/PnL (validità scientifica). `sizing.py` è **dead
+  code** oggi (chiamato solo dai suoi test, mai da `positions.py`/servizi) → NON blocca il gate
+  M4 (DoD moduli soddisfatto), ma va risolto PRIMA che M5 cabli `sizing.py`. Correlato: finding
+  DEFERRED su `MockHyperliquidClient._open_orders` che mette `size_pct` in `requested_size_units`
+  (conversione `size_pct→size_units` è lavoro M5/decision_loop, non ancora esistente).
+  Regola CLAUDE.md (deviazione PRD ambigua + validità scientifica) → **chiedo all'utente** +
+  ADR. Raccomandazione: adottare la convenzione leveraged di `positions.py` (= ciò che HL
+  riempie davvero), ADR che devia da §9.2 riga 2346, fix `sizing.py`.
+
+**Next**: M4 PASSED committato e pushato. STOP FISICO: (a) M4-T08 wallet HL testnet reale;
+(b) decisione convenzione `size_units` (sopra). Entrambi richiedono input umano.

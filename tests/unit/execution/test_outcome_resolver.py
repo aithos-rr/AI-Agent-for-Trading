@@ -67,7 +67,7 @@ class TestResolvePosition:
             sum_funding_usd=Decimal("0.00"),
         )
         result = self.resolver.resolve_position(inp)
-        # pnl_net_fee_funding = 100 - 5 + 0 = 95 > 0
+        # pnl_net_fee_funding = 100 - 5 - 0 = 95 > 0
         assert result.was_profitable_net is True
 
     def test_unprofitable_position_sets_was_profitable_false(self) -> None:
@@ -77,7 +77,7 @@ class TestResolvePosition:
             sum_funding_usd=Decimal("0.00"),
         )
         result = self.resolver.resolve_position(inp)
-        # pnl_net_fee_funding = 3 - 5 + 0 = -2 ≤ 0
+        # pnl_net_fee_funding = 3 - 5 - 0 = -2 ≤ 0
         assert result.was_profitable_net is False
 
     def test_exact_zero_pnl_not_profitable(self) -> None:
@@ -90,26 +90,43 @@ class TestResolvePosition:
         assert result.pnl_net_fee_funding_usd == Decimal("0")
         assert result.was_profitable_net is False  # strictly > 0 required
 
-    def test_negative_funding_worsens_pnl(self) -> None:
+    def test_received_funding_improves_pnl(self) -> None:
+        # PRD §3.2.6: funding_amount_usd negative = received (ricevi) → improves PnL.
         inp = _pos_input(
             realized_pnl_gross_usd=Decimal("10.00"),
             sum_fees_usd=Decimal("1.00"),
-            sum_funding_usd=Decimal("-12.00"),  # model pays funding
+            sum_funding_usd=Decimal("-12.00"),  # model receives funding
         )
         result = self.resolver.resolve_position(inp)
-        # pnl_net_fee_funding = 10 - 1 + (-12) = -3
-        assert result.pnl_net_fee_funding_usd == Decimal("-3.00")
-        assert result.was_profitable_net is False
+        # pnl_net_fee_funding = 10 - 1 - (-12) = 21
+        assert result.pnl_net_fee_funding_usd == Decimal("21.00")
+        assert result.was_profitable_net is True
 
-    def test_positive_funding_improves_pnl(self) -> None:
+    def test_paid_funding_worsens_pnl(self) -> None:
+        # PRD §3.2.6: funding_amount_usd positive = paid (paghi) → reduces PnL.
         inp = _pos_input(
             realized_pnl_gross_usd=Decimal("1.00"),
             sum_fees_usd=Decimal("5.00"),
-            sum_funding_usd=Decimal("10.00"),  # model receives funding
+            sum_funding_usd=Decimal("10.00"),  # model pays funding
         )
         result = self.resolver.resolve_position(inp)
-        # pnl_net_fee_funding = 1 - 5 + 10 = 6
-        assert result.pnl_net_fee_funding_usd == Decimal("6.00")
+        # pnl_net_fee_funding = 1 - 5 - 10 = -14
+        assert result.pnl_net_fee_funding_usd == Decimal("-14.00")
+        assert result.was_profitable_net is False
+
+    def test_funding_sign_matches_positions_repository(self) -> None:
+        # Cross-path reconciliation: same (gross, fees, funding) must yield the same
+        # pnl_net_fee_funding as PositionsRepository.close_position. The integration
+        # test test_close_position_with_funding_events fixes funding=+2.00 →
+        # pnl_net_fee_funding = 9.50 - 2.00 = 7.50; the resolver must agree.
+        inp = _pos_input(
+            realized_pnl_gross_usd=Decimal("10.00"),
+            sum_fees_usd=Decimal("0.50"),
+            sum_funding_usd=Decimal("2.00"),  # paid → subtracted
+        )
+        result = self.resolver.resolve_position(inp)
+        assert result.pnl_net_fee_usd == Decimal("9.50")
+        assert result.pnl_net_fee_funding_usd == Decimal("7.50")
         assert result.was_profitable_net is True
 
     def test_pnl_computations_are_consistent(self) -> None:
@@ -120,7 +137,8 @@ class TestResolvePosition:
         )
         result = self.resolver.resolve_position(inp)
         assert result.pnl_net_fee_usd == Decimal("72.00")  # 80 - 8
-        assert result.pnl_net_fee_funding_usd == Decimal("70.00")  # 72 - 2
+        # funding -2.00 = received → pnl_net_fee_funding = 72 - (-2) = 74
+        assert result.pnl_net_fee_funding_usd == Decimal("74.00")
 
     def test_tax_sim_always_zero(self) -> None:
         result = self.resolver.resolve_position(_pos_input())

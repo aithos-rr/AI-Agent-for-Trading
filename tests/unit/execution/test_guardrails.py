@@ -411,9 +411,9 @@ class TestGuardrailOrdering:
         """§9.2: all 4 guardrails in sequence — size clamped, leverage clamped, then HOLD."""
         btc = _long(
             "BTC",
-            size_pct=Decimal("0.5000"),   # g2: clamped to 0.20
-            leverage=Decimal("20"),        # g3: clamped to cap
-            confidence=Decimal("0.3000"), # g4: forced HOLD (<0.4)
+            size_pct=Decimal("0.5000"),  # g2: clamped to 0.20
+            leverage=Decimal("20"),  # g3: clamped to cap
+            confidence=Decimal("0.3000"),  # g4: forced HOLD (<0.4)
         )
         _, reports = Guardrails().apply(
             _decision(btc=btc),
@@ -422,9 +422,9 @@ class TestGuardrailOrdering:
             min_open_confidence=Decimal("0.4"),
         )
         r = _report(reports, "BTC")
-        assert r.size_pct_clamped   # guardrail 2 fired
-        assert r.leverage_clamped   # guardrail 3 fired
-        assert r.forced_hold        # guardrail 4 fired
+        assert r.size_pct_clamped  # guardrail 2 fired
+        assert r.leverage_clamped  # guardrail 3 fired
+        assert r.forced_hold  # guardrail 4 fired
         assert r.final_action.side == Side.HOLD
 
     def test_g4_does_not_fire_for_already_held_by_g1(self) -> None:

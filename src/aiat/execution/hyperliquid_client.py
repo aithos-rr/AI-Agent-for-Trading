@@ -104,9 +104,7 @@ class MockHyperliquidClient(HyperliquidClient):
         self._closed_positions: dict[str, PositionClosureInfo] = (
             closed_positions if closed_positions is not None else {}
         )
-        self.executed_actions: list[
-            tuple[ActionDecision, str, OpenPositionSummary | None]
-        ] = []
+        self.executed_actions: list[tuple[ActionDecision, str, OpenPositionSummary | None]] = []
 
     async def fetch_portfolio_state(self) -> PortfolioState:
         return self._portfolio_state

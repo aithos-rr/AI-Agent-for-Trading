@@ -96,7 +96,10 @@ class OutcomeResolver:
             OutcomeResult with all PnL fields computed.
         """
         pnl_net_fee = inp.realized_pnl_gross_usd - inp.sum_fees_usd
-        pnl_net_fee_funding = pnl_net_fee + inp.sum_funding_usd
+        # funding_amount_usd is signed: + = paid (cost), - = received (PRD §3.2.6).
+        # Funding paid REDUCES PnL, so it is subtracted (matches PositionsRepository
+        # .close_position and PRD §3.2.6 tax-sim formula `gross - fees - funding`).
+        pnl_net_fee_funding = pnl_net_fee - inp.sum_funding_usd
         return OutcomeResult(
             opening_action_id=inp.opening_action_id,
             opening_run_id=inp.opening_run_id,
