@@ -758,7 +758,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when** 🐘: con Postgres, le 4 operazioni scrivono/leggono correttamente
     context_snapshots + context_build_runs.
 
-- [ ] **M3-T09** 🐘 — `orchestration/context_orchestrator.py`
+- [x] **M3-T09** 🐘 — `orchestration/context_orchestrator.py`
   - **what**: Entrypoint del 5° servizio §7.1: `build_tick_context(tick_id, experiment_id)`
     compone `ContextBuilder` + `ContextBuildRepository`, gestisce fallimenti parziali →
     status, scrive **sempre** una context_build_runs row. Integration test su Postgres

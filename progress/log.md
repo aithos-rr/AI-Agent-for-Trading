@@ -356,3 +356,40 @@ uv run mypy src → Success: no issues found in 57 source files
 ```
 
 **Next**: M3-T09 🐘 — `orchestration/context_orchestrator.py` (requires Postgres)
+
+---
+
+## M3-T09 — `orchestration/context_orchestrator.py` (2026-06-14)
+
+**Task**: M3-T09 🐘 — ContextOrchestrator entrypoint for 5th Railway service (PRD §7.1)
+
+**Files created**:
+- `src/aiat/orchestration/context_orchestrator.py` — `ContextOrchestrator` class:
+  `build_tick_context(tick_id, tick_at, experiment_id)` composes `ContextBuilder` +
+  `ContextBuildRepository`, applies a hard timeout (`asyncio.wait_for`), and always
+  commits a `context_build_runs` row (status: success / failed / timeout). Owns the UoW.
+- `tests/integration/test_context_orchestrator.py` — 8 integration tests:
+  success (returns bundle + persists snapshot + build_run status='success'),
+  collector failure (raises ContextBuildError + build_run status='failed' + no snapshot),
+  timeout (raises ContextBuildError with 'timed out' + build_run status='timeout').
+
+**Design decisions**:
+- `build_tick_context` signature extended with `tick_at` parameter (required by
+  `ContextBuildRepository.start_build`; PRD Protocol omits it as an implementation detail).
+- `asyncio.TimeoutError` replaced with `TimeoutError` (UP041 ruff rule; identical in Python 3.11+).
+- `TimeoutError` handler uses `raise ... from None` (B904) to suppress chained exception context.
+- No "partial" status path: `ContextBuilder.build()` raises `ContextBuildError` on ANY
+  collector failure; the orchestrator maps this to status='failed'. The repository's
+  `status='partial'` remains available for a future extension.
+
+**Verify output**:
+```
+uv run pytest tests/integration/test_context_orchestrator.py -q
+8 passed in 5.93s
+
+uv run ruff check src tests → All checks passed!
+uv run ruff format --check src tests → 92 files already formatted
+uv run mypy src → Success: no issues found in 58 source files
+```
+
+**Next**: M3-T10 — Unit test collectors (aggregato)
