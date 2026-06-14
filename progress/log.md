@@ -573,3 +573,38 @@ Success: no issues found in 59 source files   (mypy src)
 ```
 
 **Next**: M4-T02 — `execution/guardrails.py` (4 guardrail Strategia C+, closes when all cases pass in order).
+
+---
+
+## 2026-06-14 — M4-T02 `execution/guardrails.py` — DONE
+
+**Task**: TDD implementation of 4 guardrail Strategia C+ (invariant #8 — never disableable).
+
+**What changed**:
+- Created `src/aiat/execution/guardrails.py`:
+  - `GuardrailStrategy` Protocol (§7.4 interface)
+  - `_force_hold(source)` helper: creates valid HOLD action preserving metadata
+  - `Guardrails` class with `apply()` and `_apply_to_action()`:
+    - G1: SL/TP mandatory — LONG/SHORT without SL or TP → force HOLD (defense-in-depth)
+    - G2: size_pct clamp → max_size_pct (AIAT_MAX_SIZE_PCT default 0.20)
+    - G3: leverage clamp → min(1 + confidence×9, hard_max) — quantized to 2dp ROUND_DOWN
+    - G4: confidence gate — confidence < min_open_confidence → force HOLD
+  - Returns (post-clamp TradeDecision, list[GuardrailReport] per action)
+- Created `tests/unit/execution/test_guardrails.py` (24 tests):
+  - Clean pass-through (no flags)
+  - G1: SL missing, TP missing, both missing, G1 skips G2/G3
+  - G2: size 0.50→0.20 clamp; at-limit not clamped; within-limit unchanged
+  - G3: leverage 20→8.2 by confidence formula; clamped to hard_max; round-down at 0.01
+  - G4: confidence 0.3→HOLD; at-threshold passes; above-threshold passes
+  - Ordering: G1→G2→G3→G4 confirmed; all-four-in-sequence flags all set correctly
+  - HOLD/FLAT unaffected by all guardrails
+  - GuardrailReport structure: original_side preserved, isinstance checks
+
+**Verify output**:
+```
+24 passed in 0.17s   (pytest tests/unit/execution/test_guardrails.py -q)
+All checks passed!   (ruff check src tests)
+Success: no issues found in 60 source files   (mypy src)
+```
+
+**Next**: M4-T03 — `execution/hyperliquid_client.py` (ABC + mock, semantica LONG/SHORT/FLAT/HOLD).

@@ -823,7 +823,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/unit/execution/test_sizing.py -q && uv run mypy src`
   - **done-when**: i calcoli usano solo Decimal e i test di precisione passano.
 
-- [ ] **M4-T02** — `execution/guardrails.py`: 4 guardrail Strategia C+
+- [x] **M4-T02** — `execution/guardrails.py`: 4 guardrail Strategia C+
   - **what**: TDD. I 4 guardrail §7.4 **in ordine** (1 SL/TP mandatory → 2 size_pct clamp ≤
     max_size_pct → 3 leverage clamp ≤ min(1+conf×9, hard_max) → 4 confidence<min →
     force HOLD), mai disattivabili (inv #8), `GuardrailReport` per action con
