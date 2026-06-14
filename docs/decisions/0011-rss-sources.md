@@ -61,8 +61,10 @@ falliscono:
 
 Il tipo generico `BaseCollector[T]` è stato devincolato da `T: BaseModel` (rimuovendo
 il bound) per supportare `list[NewsItem]` e `list[OnChainSnapshot]` come tipi di ritorno
-validi. Questo è coerente con il PRD §7.2 che non specifica alcun bound sul tipo T
-dell'ABC.
+validi. **Deviazione consapevole dal PRD §7.2**, che definisce esplicitamente
+`T = TypeVar("T", bound=BaseModel)`: il bound viene rilassato perché `collect()` deve
+poter restituire `list[...]`, che non è una sottoclasse di `BaseModel`. La deviazione è
+registrata qui come richiesto da CLAUDE.md ("ogni scostamento dal PRD frozen → ADR").
 
 ## Conseguenze
 

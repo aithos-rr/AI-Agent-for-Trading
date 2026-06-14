@@ -54,7 +54,11 @@ def _parse_rss(xml_text: str, source_name: str) -> list[NewsItem]:
 
         try:
             pub_dt = parsedate_to_datetime(raw_pub)
-            published_at = pub_dt.isoformat()
+            # Normalize to UTC so lexicographic AND datetime ordering are chronological
+            # even when feeds emit mixed timezone offsets (avoids wrong recency sort).
+            if pub_dt.tzinfo is None:
+                pub_dt = pub_dt.replace(tzinfo=UTC)
+            published_at = pub_dt.astimezone(UTC).isoformat()
         except Exception:
             published_at = datetime.now(tz=UTC).isoformat()
 
@@ -150,7 +154,7 @@ class NewsCollector(BaseCollector[list[NewsItem]]):
                 raise CollectorTimeoutError("All RSS news sources timed out") from errors[0]
             raise CollectorSourceError(f"All RSS news sources failed: {[str(e) for e in errors]}")
 
-        all_items.sort(key=lambda x: x.published_at, reverse=True)
+        all_items.sort(key=lambda x: datetime.fromisoformat(x.published_at), reverse=True)
         result = all_items[: self._max_items]
         logger.info("news_collected", total=len(result))
         return result

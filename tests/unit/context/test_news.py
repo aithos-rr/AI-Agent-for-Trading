@@ -54,6 +54,27 @@ _RSS_EMPTY = """\
 
 _RSS_INVALID = "THIS IS NOT XML <<<"
 
+# Mixed timezone offsets: the FIRST item is more recent in absolute UTC terms
+# (09:30 -0500 = 14:30 UTC) than the second (12:00 +0000 = 12:00 UTC), but a naive
+# lexicographic sort on the raw ISO string would order them WRONG.
+_RSS_MIXED_TZ = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>MixedTZ</title>
+    <item>
+      <title>Most recent in UTC</title>
+      <description>09:30 in -0500 equals 14:30 UTC</description>
+      <pubDate>Mon, 10 Jun 2026 09:30:00 -0500</pubDate>
+    </item>
+    <item>
+      <title>Older in UTC</title>
+      <description>12:00 UTC</description>
+      <pubDate>Mon, 10 Jun 2026 12:00:00 +0000</pubDate>
+    </item>
+  </channel>
+</rss>"""
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -127,6 +148,22 @@ class TestNewsCollectorHappyPath:
         assert result[0].title == "Bitcoin surges to new highs"
         assert result[1].title == "Solana ecosystem grows"
         assert result[2].title == "Ethereum upgrade complete"
+
+    @pytest.mark.asyncio
+    async def test_sorted_by_absolute_instant_across_timezones(self) -> None:
+        """Recency sort must use the absolute UTC instant, not the raw ISO string.
+
+        Guards against lexicographic ordering bugs with mixed timezone offsets.
+        """
+        client = _two_source_client(
+            _make_response(text=_RSS_MIXED_TZ),
+            _make_response(text=_RSS_EMPTY),
+        )
+        collector = NewsCollector(client=client)
+        result = await collector.collect()
+        assert len(result) == 2
+        assert result[0].title == "Most recent in UTC"
+        assert result[1].title == "Older in UTC"
 
     @pytest.mark.asyncio
     async def test_sentiment_polarity_is_none(self) -> None:

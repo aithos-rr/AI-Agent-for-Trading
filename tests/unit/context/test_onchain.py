@@ -274,6 +274,19 @@ class TestOnchainCollectorErrors:
             await collector.collect()
 
     @pytest.mark.asyncio
+    async def test_non_numeric_funding_raises_source_error(self) -> None:
+        # A non-numeric numeric field must surface as CollectorSourceError, not a
+        # raw decimal.InvalidOperation leaking out of the collector contract.
+        meta = _make_meta()
+        ctxs = _make_asset_ctxs()
+        ctxs[0]["funding"] = "N/A"
+        collector = OnchainCollector(
+            hl_client=_hl_client_from_mock(_mock_response(body=[meta, ctxs]))
+        )
+        with pytest.raises(CollectorSourceError, match="Malformed asset context"):
+            await collector.collect()
+
+    @pytest.mark.asyncio
     async def test_unexpected_meta_and_asset_ctxs_structure_raises_source_error(self) -> None:
         # Response with only 1 element (not the expected [meta, ctxs] pair) → line 82
         body: list[object] = [_make_meta()]

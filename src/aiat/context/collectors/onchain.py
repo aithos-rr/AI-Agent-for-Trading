@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 import httpx
 import structlog
@@ -167,7 +167,7 @@ class OnchainCollector(BaseCollector[list[OnChainSnapshot]]):
                 day_vlm = _to_decimal(ctx.get("dayNtlVlm", "0"))
                 liquidations_24h_usd = day_vlm * _LIQUIDATIONS_COEFF
 
-            except (KeyError, ValueError, TypeError) as exc:
+            except (KeyError, ValueError, TypeError, InvalidOperation) as exc:
                 raise CollectorSourceError(f"Malformed asset context for {symbol}: {exc}") from exc
 
             snapshots.append(

@@ -71,8 +71,17 @@ async def test_price_is_last_close() -> None:
     candles = _make_candles()
     collector = TechnicalCollector(symbol="BTC", client=_mock_client(candles))
     result = await collector.collect()
-    expected = Decimal(str(float(candles[-1]["c"])))  # type: ignore[arg-type]
+    expected = Decimal(str(candles[-1]["c"]))  # type: ignore[arg-type]
     assert result.price_usd == expected
+
+
+async def test_price_usd_preserves_full_precision() -> None:
+    """price_usd must come from the raw API string, not a lossy float round-trip (inv #12)."""
+    candles = _make_candles()
+    candles[-1]["c"] = "67123.123456789012"  # 17 sig digits > float64 precision
+    collector = TechnicalCollector(symbol="BTC", client=_mock_client(candles))
+    result = await collector.collect()
+    assert result.price_usd == Decimal("67123.123456789012")
 
 
 async def test_volume_24h_positive() -> None:
@@ -173,3 +182,16 @@ async def test_raises_source_error_on_insufficient_candles() -> None:
     collector = TechnicalCollector(symbol="BTC", client=_mock_client(_make_candles(n=49)))
     with pytest.raises(CollectorSourceError, match="Insufficient candles"):
         await collector.collect()
+
+
+def test_default_timeout_is_10() -> None:
+    # PRD §4.1: technical source timeout is 10s.
+    collector = TechnicalCollector(symbol="BTC", client=MagicMock(spec=httpx.AsyncClient))
+    assert collector.timeout_seconds == 10
+
+
+def test_custom_timeout() -> None:
+    collector = TechnicalCollector(
+        symbol="BTC", client=MagicMock(spec=httpx.AsyncClient), timeout_seconds=5
+    )
+    assert collector.timeout_seconds == 5

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 import httpx
 import pandas as pd
@@ -29,7 +29,7 @@ def _to_decimal(value: float) -> Decimal:
 class TechnicalCollector(BaseCollector[TechnicalIndicators]):
     """Fetches 15m OHLCV candles from Hyperliquid and computes technical indicators."""
 
-    timeout_seconds: int = 30
+    timeout_seconds: int = 10
     cache_ttl_seconds: int = 60
 
     def __init__(
@@ -37,10 +37,12 @@ class TechnicalCollector(BaseCollector[TechnicalIndicators]):
         symbol: str,
         client: httpx.AsyncClient,
         base_url: str = _HL_BASE_URL,
+        timeout_seconds: int = 10,
     ) -> None:
         self._symbol = symbol.upper()
         self._client = client
         self._base_url = base_url.rstrip("/")
+        self.timeout_seconds = timeout_seconds
 
     async def collect(self) -> TechnicalIndicators:
         """Fetch OHLCV and compute technical indicators.
@@ -105,16 +107,20 @@ class TechnicalCollector(BaseCollector[TechnicalIndicators]):
             raise CollectorSourceError(f"Unsupported symbol: {self._symbol}")
 
         try:
+            # price_usd is a pure passthrough of the raw last-close STRING (inv #12):
+            # keep it exact via Decimal(str), never via the lossy float DataFrame path.
+            close_raw = [str(c["c"]) for c in candles]
+            price_usd_exact = Decimal(close_raw[-1])
             df = pd.DataFrame(
                 {
                     "open": [float(str(c["o"])) for c in candles],
                     "high": [float(str(c["h"])) for c in candles],
                     "low": [float(str(c["l"])) for c in candles],
-                    "close": [float(str(c["c"])) for c in candles],
+                    "close": [float(x) for x in close_raw],
                     "volume": [float(str(c["v"])) for c in candles],
                 }
             )
-        except (KeyError, ValueError, TypeError) as exc:
+        except (KeyError, ValueError, TypeError, InvalidOperation) as exc:
             raise CollectorSourceError(f"Malformed candle data: {exc}") from exc
 
         if len(df) < 50:
@@ -155,7 +161,7 @@ class TechnicalCollector(BaseCollector[TechnicalIndicators]):
 
         return TechnicalIndicators(
             symbol=self._symbol,  # type: ignore[arg-type]
-            price_usd=_to_decimal(df["close"].iloc[-1]),
+            price_usd=price_usd_exact,
             rsi_14=_to_decimal(rsi_val),
             macd_signal_diff=_to_decimal(macd_h_val),
             ema_20=_to_decimal(ema20_val),
