@@ -705,3 +705,25 @@ VERIFY PASSED
 ```
 
 **Next**: M4-T06 — Coverage unit `execution/` (guardrails+sizing+resolver+hyperliquid mock).
+
+---
+
+## M4-T06 — Coverage unit `execution/` (guardrails+sizing+resolver)
+
+**Task**: Verify and complete unit test coverage for all `execution/` modules (guardrails, sizing, outcome_resolver, hyperliquid_client mock) to pass the 95% gate.
+
+**What changed**: No new files needed — coverage was already at 100% across all 5 execution modules as a result of M4-T01..T04 TDD implementation.
+
+- `execution/__init__.py`: 100%
+- `execution/guardrails.py`: 100% (42 stmts, 14 branches)
+- `execution/hyperliquid_client.py`: 100% (56 stmts, 10 branches)
+- `execution/outcome_resolver.py`: 100% (59 stmts)
+- `execution/sizing.py`: 100% (23 stmts, 2 branches)
+
+**Verify output**:
+```
+87 passed in 0.55s
+TOTAL: 180 stmts, 0 miss, 26 branches, 0 branch-partial → 100%
+```
+
+**Next**: M4-T07 — Integration test extension for PositionsRepository (🐘 Postgres required).

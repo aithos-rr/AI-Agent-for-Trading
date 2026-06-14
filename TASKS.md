@@ -870,7 +870,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when** 🐘: open→close→outcomes funziona; `opening_action_id` duplicato →
     IntegrityError.
 
-- [ ] **M4-T06** — Coverage unit `execution/` (guardrails+sizing+resolver)
+- [x] **M4-T06** — Coverage unit `execution/` (guardrails+sizing+resolver)
   - **what**: Completare gli unit test (guardrails, sizing, outcome_resolver,
     hyperliquid_client mock) per coprire i rami; preparare il gate 95% (M4-T09).
   - **prd**: §9.2
