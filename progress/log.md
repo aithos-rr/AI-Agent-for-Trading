@@ -228,3 +228,32 @@ Success: no issues found in 53 source files
 ```
 
 **Next**: M3-T05 — `context/collectors/onchain.py`
+
+---
+
+## 2026-06-14 — M3-T05 (OnchainCollector + HLPublicInfoClient)
+
+**Task**: M3-T05 — `context/collectors/onchain.py`
+
+**Changed**:
+- `src/aiat/context/collectors/onchain.py` — `HLPublicInfoClient` (read-only httpx client for HL public `/info` endpoint: `fetch_meta()` → `{"type":"meta"}` dict, `fetch_meta_and_asset_ctxs()` → `(meta, list[asset_ctx])`); `OnchainCollector[list[OnChainSnapshot]]` fetching `metaAndAssetCtxs` for BTC/ETH/SOL: `funding_rate_8h` from `ctx["funding"]`, `open_interest_usd` = `openInterest * markPx`, `long_short_ratio` from `impactPxs[0]/impactPxs[1]` (bid/ask impact ratio; falls back to `Decimal("1")` if absent), `liquidations_24h_usd` = `dayNtlVlm * 0.001` (HL has no public global liquidations endpoint; dayNtlVlm proxy documented).
+- `tests/unit/context/test_onchain.py` — 24 unit tests: happy path (3 snapshots, BTC/ETH/SOL order, all Decimal), field extraction (funding, OI, long_short_ratio, liquidations), edge cases (no impactPxs → ratio=1), errors (HTTP 500 → CollectorSourceError, ReadTimeout → CollectorTimeoutError, ConnectError → CollectorSourceError, missing symbol → CollectorSourceError, missing universe → CollectorSourceError, malformed ctx → CollectorSourceError), config (default/custom timeout, cache_ttl), HLPublicInfoClient URL routing (testnet/mainnet/custom).
+
+**Notes**:
+- HL public API has no global liquidations endpoint; `dayNtlVlm * 0.001` is a proxy approximation (documented in source docstring).
+- `long_short_ratio` derived from `impactPxs[0]/impactPxs[1]` (long impact price / short impact price) — ratio > 1 indicates long-side pressure.
+- `asyncio.wait_for` timeout raises `TimeoutError` (Python 3.11+ unified alias); `httpx.TimeoutException` handles network-level timeouts separately.
+
+**Verify output**:
+```
+uv run pytest tests/unit/context/test_onchain.py -q
+24 passed in 0.19s
+
+uv run mypy src
+Success: no issues found in 54 source files
+
+uv run ruff check src tests && uv run ruff format --check src tests
+All checks passed! / 84 files already formatted
+```
+
+**Next**: M3-T06 — `context/controlled_signals.py` + ADR [D4]

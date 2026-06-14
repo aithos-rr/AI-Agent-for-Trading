@@ -714,7 +714,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when**: il collector parsa RSS mockato in `NewsItem` e l'ADR D5 (count+sources)
     esiste ed è indicizzato.
 
-- [ ] **M3-T05** — `context/collectors/onchain.py`
+- [x] **M3-T05** — `context/collectors/onchain.py`
   - **what**: TDD (httpx mock). `OnchainCollector` (funding rate, OI, liquidations via HL
     info endpoint pubblico, read-only) → `list[OnChainSnapshot]`. Includere
     `HLPublicInfoClient` con `fetch_meta()` (usato da §10.1 O2).
