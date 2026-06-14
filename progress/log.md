@@ -673,3 +673,35 @@ VERIFY PASSED        (full task verify: pytest + ls ADR + grep README)
 ```
 
 **Next**: M4-T05 — `db/repositories/positions.py`: PositionsRepository (🐘 Postgres integration).
+
+---
+
+## M4-T05 — `db/repositories/positions.py`: `PositionsRepository`
+
+**Task**: TDD implementation of PositionsRepository (§7.6): `open_position` (positions + orders + fee_events), `close_position` (update position + create outcomes), `list_open_for_model`. Integration test on ephemeral Postgres.
+
+**What changed**:
+- Created `src/aiat/db/repositories/positions.py`:
+  - `PositionsRepository.__init__(session: AsyncSession)`: no internal commit; caller owns UoW
+  - `open_position(action_id, order_results, run_id) -> str`: reads DecisionAction, derives entry_price/size/leverage/SL-TP prices from action.stop_loss_pct/take_profit_pct; inserts Position, N Orders, M FeeEvents (one per order with fee_usd≠None); returns position_id
+  - `close_position(position_id, closure, closing_run_id) -> None`: updates Position closing fields; sums fee_events + funding_events from DB; reads opening DecisionAction for confidence/time_horizon; inserts Outcome row (tax_sim=pnl_net_fee_funding for now, populated in M5)
+  - `list_open_for_model(model_id) -> list[Position]`: filters closed_at IS NULL
+  - `_fee_type(order_kind)`: ENTRY→"taker_open", others→"taker_close"
+- Updated `src/aiat/db/repositories/__init__.py`: export PositionsRepository
+- Created `tests/integration/test_db_repositories_positions.py` (6 tests):
+  - test_open_position_creates_rows: verifies all Position fields (SL/TP computed correctly)
+  - test_open_position_orders_and_fees_created: 3 orders, 1 fee_event with fee_type="taker_open"
+  - test_close_position_updates_and_creates_outcome: verifies Position closing fields + Outcome PnL math
+  - test_close_position_unprofitable: was_profitable_net=False when net PnL ≤ 0
+  - test_duplicate_opening_action_raises_integrity_error: UNIQUE on opening_action_id → IntegrityError
+  - test_list_open_for_model_returns_open_only: returns 1 open, 0 after close
+
+**Verify output**:
+```
+6 passed in 6.31s   (pytest tests/integration/test_db_repositories_positions.py -v)
+All checks passed!  (ruff check src tests)
+Success: no issues found in 63 source files   (mypy src)
+VERIFY PASSED
+```
+
+**Next**: M4-T06 — Coverage unit `execution/` (guardrails+sizing+resolver+hyperliquid mock).

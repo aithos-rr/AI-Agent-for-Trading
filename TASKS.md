@@ -858,7 +858,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/unit/execution/test_outcome_resolver.py -q && ls docs/decisions/*-holdflat-outcome.md >/dev/null 2>&1 && grep -q holdflat-outcome docs/decisions/README.md`
   - **done-when**: la regola HOLD/FLAT è implementata e testata; ADR D2 esiste/indicizzato.
 
-- [ ] **M4-T05** 🐘 — `db/repositories/positions.py`: `PositionsRepository`
+- [x] **M4-T05** 🐘 — `db/repositories/positions.py`: `PositionsRepository`
   - **what**: `PositionsRepository` §7.6: `open_position` crea positions+orders+fee_events in
     1 txn; `close_position` → aggiorna position + crea outcomes (FK opening/closing_run_id);
     `opening_action_id` UNIQUE; `list_open_for_model`. No commit interno. Integration test
