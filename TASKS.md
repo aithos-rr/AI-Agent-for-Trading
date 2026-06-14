@@ -683,7 +683,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run python -c "from aiat.context.collectors.base import BaseCollector" && uv run mypy src`
   - **done-when**: l'ABC importa e mypy è clean.
 
-- [ ] **M3-T02** — `context/collectors/technical.py`
+- [x] **M3-T02** — `context/collectors/technical.py`
   - **what**: TDD (httpx mock). Indicatori tecnici (RSI, MACD, EMA20/50, Bollinger, ATR,
     volume) → `TechnicalIndicators`, porting da `legacy/v1/indicators.py` usando
     `pandas-ta`, Decimal in output (inv #12).

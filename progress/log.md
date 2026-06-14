@@ -134,3 +134,34 @@
 - `uv run ruff format --check src/aiat/context/collectors/base.py` → 1 file already formatted
 
 **Next**: M3-T02 — `context/collectors/technical.py` (TDD, httpx mock)
+
+---
+
+## 2026-06-14 — M3-T02 (TechnicalCollector)
+
+**Task**: M3-T02 — `context/collectors/technical.py`
+
+**Changed**:
+- `src/aiat/context/collectors/technical.py` — `TechnicalCollector[TechnicalIndicators]` fetches 200 15m OHLCV candles from Hyperliquid `/info` endpoint via httpx, computes RSI-14, MACD histogram, EMA20/50, Bollinger upper/lower, ATR-14, volume_24h_usd using pandas_ta; all outputs as `Decimal` (inv #12).
+- `tests/unit/context/test_technical.py` — 12 unit tests covering: happy path, all fields are Decimal, price=last close, volume positive, Bollinger upper > lower, EMA20 > EMA50 in rising market, symbol uppercased, HTTP 500 → CollectorSourceError, empty candles → CollectorSourceError, ReadTimeout → CollectorTimeoutError, ConnectError → CollectorSourceError, unsupported symbol → CollectorSourceError.
+- `pyproject.toml` — added `"pandas.*"` to mypy `ignore_missing_imports` overrides (pandas has no bundled stubs; already a project dependency).
+
+**Notes**:
+- pandas_ta registers `df.ta` via pandas extension accessor — must `import pandas_ta` explicitly (noqa: F401).
+- Bollinger column names from pandas_ta are dynamic (e.g. `BBU_20_2.0_2.0`); used `startswith("BBU_")` / `startswith("BBL_")` for robustness instead of hardcoded names.
+- `float(str(c["key"]))` pattern handles both string and numeric candle values while satisfying mypy strict on `dict[str, object]`.
+
+**Verify output**:
+```
+uv run pytest tests/unit/context/test_technical.py -q
+12 passed in 1.70s
+
+uv run ruff check src tests && uv run ruff format --check src tests
+All checks passed!
+78 files already formatted
+
+uv run mypy src
+Success: no issues found in 51 source files
+```
+
+**Next**: M3-T03 — `context/collectors/sentiment.py`

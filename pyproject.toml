@@ -61,6 +61,7 @@ strict = true
 module = [
     "apscheduler.*",
     "hyperliquid.*",
+    "pandas.*",
     "pandas_ta.*",
     "vcr.*",
     "pytest_postgresql.*",
