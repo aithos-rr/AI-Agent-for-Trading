@@ -879,7 +879,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/unit/execution -q`
   - **done-when**: tutti gli unit test `execution/` passano.
 
-- [ ] **M4-T07** 🐘 — `tests/integration/test_db_repositories_positions.py` (estensione)
+- [x] **M4-T07** 🐘 — `tests/integration/test_db_repositories_positions.py` (estensione)
   - **what**: Completare lo scenario integration: open → close → outcomes con Postgres
     effimero, incluse fee_events e FK run_id, e i casi di errore (CHECK
     chk_position_closed_consistency).

@@ -448,3 +448,105 @@ async def test_list_open_for_model_returns_open_only(db_session: AsyncSession) -
 
     open_after_close = await repo.list_open_for_model(ids.model_id)
     assert len(open_after_close) == 0
+
+
+@pytest.mark.asyncio
+async def test_fee_event_run_id_matches_opening_run(db_session: AsyncSession) -> None:
+    """fee_events.run_id, model_id, experiment_id all match the FK chain from open_position."""
+    from sqlalchemy import select
+
+    from aiat.db.models.fee_event import FeeEvent
+
+    ids = await _seed(db_session)
+    repo = PositionsRepository(db_session)
+    pos_id = await repo.open_position(
+        action_id=str(ids.action_id),
+        order_results=_make_order_results(fee_usd=Decimal("1.00")),
+        run_id=str(ids.opening_run_id),
+    )
+
+    fees = (
+        await db_session.execute(
+            select(FeeEvent).where(FeeEvent.position_id == uuid.UUID(pos_id))
+        )
+    ).scalars().all()
+    assert len(fees) == 1
+    assert fees[0].run_id == ids.opening_run_id
+    assert fees[0].model_id == ids.model_id
+    assert fees[0].experiment_id == ids.experiment_id
+
+
+@pytest.mark.asyncio
+async def test_close_position_with_funding_events(db_session: AsyncSession) -> None:
+    """sum_funding_usd from funding_events is included in pnl_net_fee_funding_usd."""
+    from sqlalchemy import select
+
+    from aiat.db.models.funding_event import FundingEvent
+
+    ids = await _seed(db_session)
+    repo = PositionsRepository(db_session)
+    pos_id = await repo.open_position(
+        action_id=str(ids.action_id),
+        order_results=_make_order_results(fee_usd=Decimal("0.50")),
+        run_id=str(ids.opening_run_id),
+    )
+
+    tick_at = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
+    funding = FundingEvent(
+        id=uuid.uuid4(),
+        position_id=uuid.UUID(pos_id),
+        experiment_id=ids.experiment_id,
+        model_id=ids.model_id,
+        funding_rate=Decimal("0.0001"),
+        funding_amount_usd=Decimal("2.00"),
+        funding_period_start=tick_at,
+        funding_period_end=tick_at + timedelta(hours=8),
+    )
+    db_session.add(funding)
+    await db_session.flush()
+
+    closure = PositionClosureInfo(
+        closed_at="2026-01-15T20:00:00+00:00",
+        exit_price=Decimal("110.00"),
+        close_reason=CloseReason.MODEL_CLOSE,
+        realized_pnl_usd=Decimal("10.00"),
+    )
+    await repo.close_position(
+        position_id=pos_id,
+        closure=closure,
+        closing_run_id=str(ids.closing_run_id),
+    )
+
+    outcome = (
+        await db_session.execute(
+            select(Outcome).where(Outcome.position_id == uuid.UUID(pos_id))
+        )
+    ).scalar_one()
+
+    assert outcome.sum_fees_usd == Decimal("0.50")
+    assert outcome.sum_funding_usd == Decimal("2.00")
+    # pnl_net_fee = 10.00 - 0.50 = 9.50
+    # pnl_net_fee_funding = 9.50 - 2.00 = 7.50
+    assert outcome.pnl_net_fee_usd == Decimal("9.50")
+    assert outcome.pnl_net_fee_funding_usd == Decimal("7.50")
+    assert outcome.was_profitable_net is True
+
+
+@pytest.mark.asyncio
+async def test_close_position_consistency_check_enforced(db_session: AsyncSession) -> None:
+    """chk_position_closed_consistency: only closed_at set → IntegrityError."""
+    ids = await _seed(db_session)
+    repo = PositionsRepository(db_session)
+    pos_id = await repo.open_position(
+        action_id=str(ids.action_id),
+        order_results=_make_order_results(),
+        run_id=str(ids.opening_run_id),
+    )
+
+    pos = await db_session.get(Position, uuid.UUID(pos_id))
+    assert pos is not None
+    # Partially close: set only closed_at; exit_price/realized_pnl_usd/close_reason stay NULL
+    pos.closed_at = datetime.now(UTC)
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()

@@ -727,3 +727,25 @@ TOTAL: 180 stmts, 0 miss, 26 branches, 0 branch-partial → 100%
 ```
 
 **Next**: M4-T07 — Integration test extension for PositionsRepository (🐘 Postgres required).
+
+---
+
+## M4-T07 — Integration test extension for PositionsRepository
+
+**Task**: Extend `tests/integration/test_db_repositories_positions.py` with the complete open→close→outcomes scenario including fee_event FK run_id verification, funding events in PnL, and `chk_position_closed_consistency` error case.
+
+**What changed**:
+- Extended `tests/integration/test_db_repositories_positions.py` (6 → 9 tests):
+  - `test_fee_event_run_id_matches_opening_run`: verifies `fee_events.run_id`, `model_id`, `experiment_id` FK chain correctness from `open_position`
+  - `test_close_position_with_funding_events`: inserts a `FundingEvent` manually, then `close_position` — verifies `sum_funding_usd=2.00`, `pnl_net_fee_usd=9.50`, `pnl_net_fee_funding_usd=7.50`
+  - `test_close_position_consistency_check_enforced`: sets only `closed_at` on a position (leaving `exit_price/realized_pnl_usd/close_reason` NULL) → verifies `IntegrityError` from `chk_position_closed_consistency`
+
+**Verify output**:
+```
+9 passed, 1 warning in 5.81s   (pytest tests/integration/test_db_repositories_positions.py -q)
+All checks passed!  (ruff check src tests)
+Success: no issues found in 63 source files   (mypy src)
+VERIFY PASSED
+```
+
+**Next**: M4-T08 HUMAN-GATED 🛑 (wallet testnet) — skip; M4-T09 — Coverage `execution/` ≥95%.
