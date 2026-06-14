@@ -749,3 +749,22 @@ VERIFY PASSED
 ```
 
 **Next**: M4-T08 HUMAN-GATED 🛑 (wallet testnet) — skip; M4-T09 — Coverage `execution/` ≥95%.
+
+---
+
+## 2026-06-14 — M4-T09
+
+**Task**: Coverage `execution/` ≥95% (gate CI core §9.1)
+
+**What changed**: Ran coverage gate — M4-T06 already achieved 100% on all 5 execution modules (guardrails, hyperliquid_client, outcome_resolver, sizing, __init__). No new files needed.
+
+**Verify output**:
+```
+87 passed in 0.66s
+TOTAL: 180 stmts, 0 miss, 26 branches, 0 branch-partial → 100%
+Required test coverage of 95% reached. Total coverage: 100.00%
+```
+
+**All non-human-gated M4 tasks complete**: M4-T01 through M4-T07 and M4-T09 ✅. M4-T08 is HUMAN-GATED 🛑 (wallet HL testnet reale — PRIMO STOP FISICO).
+
+MILESTONE_COMPLETE M4

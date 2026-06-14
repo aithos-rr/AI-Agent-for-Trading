@@ -907,7 +907,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when**: con wallet testnet reale, apre/chiude LONG BTC e `outcomes` registra il
     PnL netto corretto.
 
-- [ ] **M4-T09** — Coverage `execution/` ≥95%
+- [x] **M4-T09** — Coverage `execution/` ≥95%
   - **what**: Portare `execution/` a ≥95% (gate CI core §9.6) dai soli unit test.
   - **prd**: §9.1
   - **dep**: M4-T06
