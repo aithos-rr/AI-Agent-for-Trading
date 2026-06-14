@@ -847,7 +847,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/unit/execution/test_hyperliquid_client.py -q && uv run mypy src`
   - **done-when**: l'ABC + semantica side è implementata e testata con HL mockato.
 
-- [ ] **M4-T04** **[D2]** — `execution/outcome_resolver.py` + **ADR**
+- [x] **M4-T04** **[D2]** — `execution/outcome_resolver.py` + **ADR**
   - **what**: TDD. `OutcomeResolver` §4.2: risoluzione outcomes (pnl_net_fee,
     pnl_net_fee_funding, was_profitable_net, horizon_met). **Decidere la regola di labeling
     HOLD/FLAT (controfattuale)** e **creare ADR** (prossimo numero, slug `holdflat-outcome`)

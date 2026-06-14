@@ -642,3 +642,34 @@ All checks passed!   (ruff check src tests)
 ```
 
 **Next**: M4-T04 — `execution/outcome_resolver.py` + ADR [D2] (HOLD/FLAT labeling rule).
+
+---
+
+## M4-T04 — `execution/outcome_resolver.py` + ADR-0014 [D2]
+
+**Task**: TDD implementation of OutcomeResolver (§4.2) + close bounded deferral D2 (HOLD/FLAT outcome labeling rule).
+
+**D2 Decision**: HOLD/FLAT `was_profitable_net = True` iff `|Δprice%| ≤ fee_roundtrip_pct` (fee-hurdle counterfactual). All PnL fields = Decimal("0"); `holding_duration_min = time_horizon_min`; `horizon_met = True` (by convention — passive choice maintained for full horizon). Default `fee_roundtrip_pct = 0.002` (0.1% taker × 2 sides). Rationale: simplest rule consistent with RESEARCH §2.1 confidence definition; avoids simulating hypothetical positions with arbitrary size/leverage parameters.
+
+**What changed**:
+- Created `src/aiat/execution/outcome_resolver.py`:
+  - `PositionOutcomeInput(dataclass frozen)`: inputs for closed LONG/SHORT positions
+  - `HoldFlatOutcomeInput(dataclass frozen)`: inputs for HOLD/FLAT decisions with price data
+  - `OutcomeResult(dataclass frozen)`: computed outcome ready for OutcomesRepository
+  - `OutcomeResolver.resolve_position()`: computes pnl_net_fee, pnl_net_fee_funding, was_profitable_net (strict >0), horizon_met (≤ time_horizon)
+  - `OutcomeResolver.resolve_hold_flat()`: applies D2 fee-hurdle rule; all PnL=0; horizon_met=True
+- Created `tests/unit/execution/test_outcome_resolver.py` (24 tests):
+  - resolve_position: profitable, unprofitable, zero boundary, negative/positive funding, PnL consistency, tax_sim=0, horizon_met bounds, identity fields, large loss
+  - resolve_hold_flat: below/above/at threshold, price up/down, no change, all PnL=0, holding_duration=time_horizon, horizon_met=True, identity fields, absolute symmetry
+- Created `docs/decisions/0014-holdflat-outcome.md` (ADR for D2)
+- Updated `docs/decisions/README.md` (indexed ADR-0014)
+
+**Verify output**:
+```
+24 passed in 0.06s   (pytest tests/unit/execution/test_outcome_resolver.py -q)
+All checks passed!   (ruff check src tests)
+Success: no issues found in 62 source files   (mypy src)
+VERIFY PASSED        (full task verify: pytest + ls ADR + grep README)
+```
+
+**Next**: M4-T05 — `db/repositories/positions.py`: PositionsRepository (🐘 Postgres integration).
