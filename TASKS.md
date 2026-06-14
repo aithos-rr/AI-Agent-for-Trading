@@ -674,7 +674,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
 > (ADR). Parallelizzabile con M2 dopo M1. Lo smoke reale (M3-T11) è ⚠️ ZONA-GRIGIA (rete
 > bloccata). Fonte: §7.1, §7.2, §6.3, §12 M3.
 
-- [ ] **M3-T01** — `context/collectors/base.py`: `BaseCollector` ABC
+- [x] **M3-T01** — `context/collectors/base.py`: `BaseCollector` ABC
   - **what**: `BaseCollector(ABC, Generic[T])` §7.2: `timeout_seconds`, `cache_ttl_seconds`,
     `async def collect() -> T`, eccezioni `CollectorTimeoutError`/`CollectorSourceError`.
   - **prd**: §7.2

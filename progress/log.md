@@ -115,3 +115,22 @@
 **Next**: RALPH_BLOCKED — M2-T12 is the only remaining M2 task and is HUMAN-GATED. Proceed to M3 in parallel.
 
 ---
+
+---
+
+## 2026-06-14 — M3-T01 (BaseCollector ABC)
+
+**Task**: M3-T01 — `context/collectors/base.py`: `BaseCollector` ABC
+
+**Changed**:
+- `src/aiat/context/collectors/base.py` — `BaseCollector[T: BaseModel](ABC)` with `timeout_seconds`, `cache_ttl_seconds`, `collect() -> T`; `CollectorTimeoutError`; `CollectorSourceError`
+
+**Note**: PRD §7.2 shows `class BaseCollector(ABC, Generic[T])` but ruff UP046 enforces PEP 695 type parameter syntax for Python 3.12+ → used `class BaseCollector[T: BaseModel](ABC)` (bound retained, TypeVar dropped).
+
+**Verify output**:
+- `uv run python -c "from aiat.context.collectors.base import BaseCollector"` → ok
+- `uv run mypy src` → Success: no issues found in 50 source files
+- `uv run ruff check src/aiat/context/collectors/base.py` → All checks passed!
+- `uv run ruff format --check src/aiat/context/collectors/base.py` → 1 file already formatted
+
+**Next**: M3-T02 — `context/collectors/technical.py` (TDD, httpx mock)
