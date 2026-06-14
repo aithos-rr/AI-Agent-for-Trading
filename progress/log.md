@@ -433,3 +433,49 @@ uv run mypy src → Success: no issues found in 58 source files
 ```
 
 **Next**: M3-T11 HUMAN-GATED/⚠️, blocco qui (smoke reale richiede rete+DB reale).
+
+---
+
+## 2026-06-14 — M3 supervisor review (Opus) + gate esterno
+
+**Contesto**: review adversariale del diff M3 (5 dimensioni × reviewer + verifica
+scettica, 21 agent). 9 finding confermati. Triage e azioni dell'operatore (Opus):
+
+**Fix applicati (bug isolati con test, autonomi per CLAUDE.md):**
+- **F1 (#12)** `technical.py`: `price_usd` proveniva da `df["close"]` (float64) → round-trip
+  lossy stringa→float→Decimal. Ora `price_usd=Decimal(close_raw[-1])` dalla stringa API
+  grezza (esatto). Aggiunto `test_price_usd_preserves_full_precision` (17 cifre); corretto
+  `test_price_is_last_close` che mascherava il bug (asseriva contro il valore float-roundtripped).
+- **F3/F8** `news.py`: ordinamento per recency era lessicografico sulla stringa ISO →
+  errato con offset timezone misti. Ora `published_at` normalizzato a UTC in `_parse_rss`
+  e sort per `datetime.fromisoformat(...)`. Aggiunto `test_sorted_by_absolute_instant_across_timezones`.
+- **F6** `onchain.py`: `decimal.InvalidOperation` non catturato → rompeva il contratto
+  `CollectorSourceError`. Aggiunto a tupla except. Aggiunto `test_non_numeric_funding_raises_source_error`.
+- **F7** `technical.py`: timeout default 30s → **10s** (PRD §4.1) + parametro `timeout_seconds`
+  in `__init__` (coerenza con gli altri collector). Aggiunti `test_default_timeout_is_10`/`test_custom_timeout`.
+- **F9** `ADR-0011`: correggeva male §7.2 ("nessun bound") — §7.2 riga 1486 definisce
+  `TypeVar("T", bound=BaseModel)`. Riformulato come deviazione consapevole registrata.
+
+**Non modificato (by-design, PRD-compliant):**
+- **F2 (#13)** orchestrator commit non protetto: PRD §3.2.2 righe 421-422 accettano
+  esplicitamente "crash prima di scrivere row → agent leggono 'missed'"; tutti i path
+  gestiti scrivono già `fail_build`. Nessuna violazione → nessuna modifica.
+
+**Deferiti all'utente (semantica dati LLM → decisione + ADR; il smoke reale M3-T11 li rivela):**
+- **F4** `onchain.long_short_ratio` derivato da `impactPxs` (bid/ask) = rumore ~1.0; HL `/info`
+  non espone un long/short ratio globale. Serve: fonte corretta oppure placeholder documentato (ADR).
+- **F5** `onchain.funding_rate_8h`: HL ritorna il funding **orario**; salvato senza conversione
+  in un campo "8h". Il PRD riga 330 *assume* periodo 8h. Serve decidere: ×8 vs rinominare (ADR).
+
+**Verify output (gate esterno `tools/gate_check.sh M3`, nel container con Postgres):**
+```
+ruff / format / mypy --strict / lint-imports → clean
+pytest all tiers (unit+integration) → 293 passed, coverage globale 97.56% (soglia 80%)
+pytest core (domain+llm) → 98.86% (soglia 95%)
+pytest integration (Postgres effimero) → 35 passed
+GATE PASSED for M3
+```
+
+**Next**: M3 (parte loop) COMPLETA e validata. Resta solo **M3-T11 [HUMAN-GATED]** (smoke
+reale orchestrator: rete sbloccata + AIAT_DATABASE_URL su Postgres reale) + decisioni F4/F5.
+Handoff all'utente.
