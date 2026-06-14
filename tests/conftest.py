@@ -89,15 +89,27 @@ async def db_session(db_url: str) -> AsyncSession:  # type: ignore[misc]
 # VCR config for LLM integration tests (§9.4).
 # Tests use @pytest.mark.vcr to select their cassette.
 #
+# CRITICAL: pytest-recording resolves this via request.getfixturevalue("vcr_config"),
+# so it MUST be a pytest *fixture*. A plain module-level dict is silently ignored —
+# the plugin falls back to its own empty-dict default (pytest_recording/plugin.py),
+# which would drop record_mode/filter_headers/match_on/cassette_library_dir entirely
+# (verified: with a module global, the effective vcr_config is {} and record_mode
+# stays "none" even with VCR_RECORD_MODE=once set).
+#
 # record_mode is env-overridable so the same code records and replays (ADR-0008,
 # M2-T12): record real cassettes via OpenRouter with VCR_RECORD_MODE=once on a
 # network without firewall; default "none" replays in CI/devcontainer (no network,
 # no recording). filter_headers and match_on are kept fixed — never persist API
-# keys to cassettes, and match requests precisely.
-_record_mode = os.environ.get("VCR_RECORD_MODE", "none")
-vcr_config = {
-    "cassette_library_dir": "tests/cassettes",
-    "record_mode": _record_mode,
-    "filter_headers": ["authorization", "x-api-key"],
-    "match_on": ["method", "scheme", "host", "port", "path", "query", "body"],
-}
+# keys to cassettes, and match requests precisely (incl. body).
+@pytest.fixture
+def vcr_config() -> dict[str, object]:
+    return {
+        "cassette_library_dir": "tests/cassettes",
+        "record_mode": os.environ.get("VCR_RECORD_MODE", "none"),
+        "filter_headers": ["authorization", "x-api-key"],
+        "match_on": ["method", "scheme", "host", "port", "path", "query", "body"],
+        # Store decompressed response bodies (strip Content-Encoding: gzip) so
+        # cassettes are human-readable, git-diffable, and easy to hand-author for
+        # the synthetic error/fallback scenarios (M2-T12).
+        "decode_compressed_response": True,
+    }

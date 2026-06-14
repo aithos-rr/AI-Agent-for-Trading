@@ -1,0 +1,181 @@
+interactions:
+- request:
+    body: "{\"messages\":[{\"content\":\"You are a crypto perpetual-futures trading
+      agent. Produce trading actions for a portfolio spanning EXACTLY three symbols:
+      BTC, ETH and SOL.\\n\\nIllustrative market context: BTC trends mildly up (RSI
+      ~58); ETH consolidates near support; SOL is volatile after a rally. Account
+      equity is 10,000 USDC, no open positions.\\n\\nReturn ONE TradeDecision JSON
+      object obeying the schema EXACTLY. Hard rules the schema alone does not enforce:\\n-
+      'actions' MUST have EXACTLY 3 items, one each for BTC, ETH and SOL.\\n- 'size_pct'
+      is a FRACTION of equity in [0, 1] (0.10 == 10%), NOT a percent; use 0.05-0.20
+      for LONG/SHORT.\\n- 'leverage' is a multiplier (3 == 3x); use 1-5 for LONG/SHORT.\\n-
+      For every LONG/SHORT action BOTH 'stop_loss_pct' and 'take_profit_pct' are REQUIRED
+      and are FRACTIONS (0.03 == 3%); use ~0.02-0.05 SL and ~0.04-0.10 TP.\\n- Use
+      'entry_type'='market' for LONG/SHORT here and NEVER set 'limit_price'.\\n- 'confidence'
+      is a probability in [0, 1] (e.g. 0.65); 'time_horizon_min' is an integer in
+      [1, 1440] (e.g. 120).\\n- 'action_reasoning' must be a full sentence (>= 20
+      chars).\\n- To stay flat on a symbol use side 'HOLD' with size_pct=0, leverage=0,
+      entry_type='none' and NO stop_loss_pct/take_profit_pct/limit_price.\\n- 'portfolio_reasoning'
+      must be a substantive paragraph (>= 50 chars); 'risk_assessment' at least a
+      sentence or two (>= 30 chars).\\nOutput the JSON object DIRECTLY, with 'portfolio_reasoning',
+      'risk_assessment' and 'actions' as TOP-LEVEL keys. Do NOT wrap it inside any
+      outer key (no 'TradeDecision' wrapper) and do NOT use markdown code fences \u2014
+      JSON only.\",\"role\":\"user\"}],\"model\":\"openai/o3-mini\",\"max_completion_tokens\":4096,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"schema\":{\"$defs\":{\"ActionDecision\":{\"additionalProperties\":false,\"description\":\"Output
+      strutturato del modello per UN simbolo (action-level).\",\"properties\":{\"symbol\":{\"enum\":[\"BTC\",\"ETH\",\"SOL\"],\"title\":\"Symbol\",\"type\":\"string\"},\"side\":{\"$ref\":\"#/$defs/Side\"},\"leverage\":{\"anyOf\":[{\"maximum\":50.0,\"minimum\":0.0,\"type\":\"number\"},{\"pattern\":\"^(?!^[-+.]*$)[+-]?0*\\\\d*\\\\.?\\\\d{0,2}0*$\",\"type\":\"string\"}],\"title\":\"Leverage\"},\"size_pct\":{\"anyOf\":[{\"maximum\":1.0,\"minimum\":0.0,\"type\":\"number\"},{\"pattern\":\"^(?!^[-+.]*$)[+-]?0*\\\\d*\\\\.?\\\\d{0,4}0*$\",\"type\":\"string\"}],\"title\":\"Size
+      Pct\"},\"stop_loss_pct\":{\"anyOf\":[{\"exclusiveMinimum\":0.0,\"type\":\"number\"},{\"pattern\":\"^(?!^[-+.]*$)[+-]?0*\\\\d*\\\\.?\\\\d{0,4}0*$\",\"type\":\"string\"},{\"type\":\"null\"}],\"title\":\"Stop
+      Loss Pct\"},\"take_profit_pct\":{\"anyOf\":[{\"exclusiveMinimum\":0.0,\"type\":\"number\"},{\"pattern\":\"^(?!^[-+.]*$)[+-]?0*\\\\d*\\\\.?\\\\d{0,4}0*$\",\"type\":\"string\"},{\"type\":\"null\"}],\"title\":\"Take
+      Profit Pct\"},\"entry_type\":{\"$ref\":\"#/$defs/EntryType\"},\"limit_price\":{\"anyOf\":[{\"exclusiveMinimum\":0.0,\"type\":\"number\"},{\"pattern\":\"^(?!^[-+.]*$)[+-]?0*\\\\d*\\\\.?\\\\d{0,8}0*$\",\"type\":\"string\"},{\"type\":\"null\"}],\"title\":\"Limit
+      Price\"},\"confidence\":{\"anyOf\":[{\"maximum\":1.0,\"minimum\":0.0,\"type\":\"number\"},{\"pattern\":\"^(?!^[-+.]*$)[+-]?0*\\\\d*\\\\.?\\\\d{0,4}0*$\",\"type\":\"string\"}],\"description\":\"Estimated
+      probability \u2208 [0, 1] that this specific action will produce positive net
+      PnL (after fees and funding) within time_horizon_min. For HOLD/FLAT, probability
+      that this passive choice is preferable to the active alternatives at this moment.\",\"title\":\"Confidence\"},\"time_horizon_min\":{\"description\":\"Time
+      horizon in minutes within which the confidence is calibrated.\",\"exclusiveMinimum\":0,\"maximum\":1440,\"title\":\"Time
+      Horizon Min\",\"type\":\"integer\"},\"action_reasoning\":{\"maxLength\":2000,\"minLength\":20,\"title\":\"Action
+      Reasoning\",\"type\":\"string\"},\"action_key_signals\":{\"items\":{\"enum\":[\"technical.rsi_extreme\",\"technical.macd_cross\",\"technical.ema_alignment\",\"technical.bollinger_squeeze\",\"technical.atr_spike\",\"technical.support_resistance\",\"sentiment.news_polarity\",\"sentiment.fear_greed\",\"sentiment.market_panic\",\"onchain.funding_rate_extreme\",\"onchain.open_interest_shift\",\"onchain.liquidation_cascade\",\"market.volatility_regime\",\"market.volume_anomaly\",\"market.basis_perp_spot\",\"portfolio.exposure_high\",\"portfolio.unrealized_pnl\",\"portfolio.position_aging\"],\"type\":\"string\"},\"maxItems\":8,\"title\":\"Action
+      Key Signals\",\"type\":\"array\"}},\"required\":[\"symbol\",\"side\",\"leverage\",\"size_pct\",\"stop_loss_pct\",\"take_profit_pct\",\"entry_type\",\"limit_price\",\"confidence\",\"time_horizon_min\",\"action_reasoning\",\"action_key_signals\"],\"title\":\"ActionDecision\",\"type\":\"object\"},\"EntryType\":{\"enum\":[\"market\",\"limit\",\"none\"],\"title\":\"EntryType\",\"type\":\"string\"},\"Side\":{\"enum\":[\"LONG\",\"SHORT\",\"FLAT\",\"HOLD\"],\"title\":\"Side\",\"type\":\"string\"}},\"additionalProperties\":false,\"description\":\"Output
+      completo del modello per UN tick portfolio-level (RESEARCH \xA71.0).\",\"properties\":{\"portfolio_reasoning\":{\"maxLength\":4000,\"minLength\":50,\"title\":\"Portfolio
+      Reasoning\",\"type\":\"string\"},\"risk_assessment\":{\"maxLength\":2000,\"minLength\":30,\"title\":\"Risk
+      Assessment\",\"type\":\"string\"},\"portfolio_confidence\":{\"anyOf\":[{\"maximum\":1.0,\"minimum\":0.0,\"type\":\"number\"},{\"pattern\":\"^(?!^[-+.]*$)[+-]?0*\\\\d*\\\\.?\\\\d{0,4}0*$\",\"type\":\"string\"},{\"type\":\"null\"}],\"title\":\"Portfolio
+      Confidence\"},\"actions\":{\"description\":\"Exactly 3 actions, one per symbol
+      (BTC, ETH, SOL), in any order.\",\"items\":{\"$ref\":\"#/$defs/ActionDecision\"},\"maxItems\":3,\"minItems\":3,\"title\":\"Actions\",\"type\":\"array\"}},\"required\":[\"portfolio_reasoning\",\"risk_assessment\",\"portfolio_confidence\",\"actions\"],\"title\":\"TradeDecision\",\"type\":\"object\"},\"name\":\"TradeDecision\",\"strict\":true}},\"stream\":false,\"temperature\":0.7}"
+    headers:
+      Accept:
+      - application/json
+      Accept-Encoding:
+      - gzip, deflate, zstd
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '5500'
+      Content-Type:
+      - application/json
+      Host:
+      - openrouter.ai
+      User-Agent:
+      - AsyncOpenAI/Python 2.41.1
+      X-Stainless-Arch:
+      - x64
+      X-Stainless-Async:
+      - async:asyncio
+      X-Stainless-Helper-Method:
+      - chat.completions.parse
+      X-Stainless-Lang:
+      - python
+      X-Stainless-OS:
+      - Linux
+      X-Stainless-Package-Version:
+      - 2.41.1
+      X-Stainless-Raw-Response:
+      - 'true'
+      X-Stainless-Runtime:
+      - CPython
+      X-Stainless-Runtime-Version:
+      - 3.12.12
+      x-stainless-retry-count:
+      - '0'
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    body:
+      string: "\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n{\"id\":\"gen-1781406208-0w5R3kzLVF0kfILgGJvt\",\"object\":\"chat.completion\",\"created\":1781406208,\"model\":\"openai/o3-mini-2025-01-31\",\"provider\":\"OpenAI\",\"system_fingerprint\":null,\"service_tier\":\"default\",\"choices\":[{\"index\":0,\"logprobs\":null,\"finish_reason\":\"stop\",\"native_finish_reason\":\"completed\",\"message\":{\"role\":\"assistant\",\"content\":\"{\\n
+        \ \\\"portfolio_reasoning\\\": \\\"The portfolio has been designed to balance
+        potential upside with cautious risk management. BTC is expected to continue
+        its mild uptrend, while ETH is consolidating near a key support level indicating
+        a possible rebound, and SOL\u2019s recent volatile rally suggests a period
+        of uncertainty. Each position is sized appropriately to manage exposure and
+        leveraged within safe parameters to capitalize on market movements without
+        overextending risk.\\\",\\n  \\\"risk_assessment\\\": \\\"Risk management
+        strategies are in place to protect the account equity. The BTC and ETH trades
+        include well-defined stop loss and take profit levels to limit potential losses
+        and lock in gains. SOL is held flat due to high volatility post-rally, minimizing
+        the exposure to sudden market reversals. Overall, the positions reflect a
+        deliberate approach to balancing risk and reward under current market conditions.\\\",\\n
+        \ \\\"portfolio_confidence\\\": 0.70,\\n  \\\"actions\\\": [\\n    {\\n      \\\"symbol\\\":
+        \\\"BTC\\\",\\n      \\\"side\\\": \\\"LONG\\\",\\n      \\\"leverage\\\":
+        3,\\n      \\\"size_pct\\\": 0.10,\\n      \\\"stop_loss_pct\\\": 0.03,\\n
+        \     \\\"take_profit_pct\\\": 0.08,\\n      \\\"entry_type\\\": \\\"market\\\",\\n
+        \     \\\"limit_price\\\": null,\\n      \\\"confidence\\\": 0.65,\\n      \\\"time_horizon_min\\\":
+        60,\\n      \\\"action_reasoning\\\": \\\"BTC is trending mildly upward with
+        a favorable RSI and volume profile, making it a strategic long entry with
+        clear risk parameters.\\\",\\n      \\\"action_key_signals\\\": [\\n        \\\"technical.ema_alignment\\\",\\n
+        \       \\\"market.volume_anomaly\\\"\\n      ]\\n    },\\n    {\\n      \\\"symbol\\\":
+        \\\"ETH\\\",\\n      \\\"side\\\": \\\"LONG\\\",\\n      \\\"leverage\\\":
+        2,\\n      \\\"size_pct\\\": 0.15,\\n      \\\"stop_loss_pct\\\": 0.04,\\n
+        \     \\\"take_profit_pct\\\": 0.09,\\n      \\\"entry_type\\\": \\\"market\\\",\\n
+        \     \\\"limit_price\\\": null,\\n      \\\"confidence\\\": 0.70,\\n      \\\"time_horizon_min\\\":
+        120,\\n      \\\"action_reasoning\\\": \\\"ETH is consolidating near its support
+        level which offers a potential rebound opportunity, justifying a long position
+        with carefully set stop loss and take profit levels.\\\",\\n      \\\"action_key_signals\\\":
+        [\\n        \\\"technical.support_resistance\\\",\\n        \\\"onchain.open_interest_shift\\\"\\n
+        \     ]\\n    },\\n    {\\n      \\\"symbol\\\": \\\"SOL\\\",\\n      \\\"side\\\":
+        \\\"HOLD\\\",\\n      \\\"leverage\\\": 0,\\n      \\\"size_pct\\\": 0,\\n
+        \     \\\"entry_type\\\": \\\"none\\\",\\n      \\\"confidence\\\": 0.80,\\n
+        \     \\\"time_horizon_min\\\": 30,\\n      \\\"action_reasoning\\\": \\\"SOL
+        has shown high volatility after a significant rally, so it's prudent to remain
+        flat and avoid exposing the portfolio to further unpredictability.\\\",\\n
+        \     \\\"action_key_signals\\\": []\\n    }\\n  ]\\n}\",\"refusal\":null,\"reasoning\":\"**Evaluating
+        ETH Positioning**\\n\\nI see that ETH is consolidating near support, which
+        makes me think we could take a long position. If it bounces off that support,
+        it looks promising, but there's still some uncertainty. I\u2019ll choose to
+        go long with caution, setting a position of 0.15 size, 2x leverage, a stop
+        loss at 4%, and a take profit at 9%. My reasoning is that ETH\u2019s position
+        suggests a possible upward breakout due to its current pattern. \\n\\nNow,
+        regarding SOL, it seems volatile after a recent rally, indicating heightened
+        risk.**Deciding on SOL Positioning**\\n\\nI've been thinking about possibly
+        taking a short position on SOL due to expectations of a pullback, or I might
+        hold off altogether. Given the market's ambiguity and SOL's volatility, I
+        feel it's safer to hold rather than trade. My decision for holding will indicate
+        a size of 0, no leverage, and won\u2019t include stop-loss or take-profit
+        levels.\\n\\nFor action reasoning, I\u2019ll note that SOL's volatility after
+        its recent rally pushes me to avoid unnecessary risks. I\u2019ll set my portfolio
+        confidence at around 0.68.\",\"reasoning_details\":[{\"type\":\"reasoning.summary\",\"summary\":\"**Evaluating
+        ETH Positioning**\\n\\nI see that ETH is consolidating near support, which
+        makes me think we could take a long position. If it bounces off that support,
+        it looks promising, but there's still some uncertainty. I\u2019ll choose to
+        go long with caution, setting a position of 0.15 size, 2x leverage, a stop
+        loss at 4%, and a take profit at 9%. My reasoning is that ETH\u2019s position
+        suggests a possible upward breakout due to its current pattern. \\n\\nNow,
+        regarding SOL, it seems volatile after a recent rally, indicating heightened
+        risk.**Deciding on SOL Positioning**\\n\\nI've been thinking about possibly
+        taking a short position on SOL due to expectations of a pullback, or I might
+        hold off altogether. Given the market's ambiguity and SOL's volatility, I
+        feel it's safer to hold rather than trade. My decision for holding will indicate
+        a size of 0, no leverage, and won\u2019t include stop-loss or take-profit
+        levels.\\n\\nFor action reasoning, I\u2019ll note that SOL's volatility after
+        its recent rally pushes me to avoid unnecessary risks. I\u2019ll set my portfolio
+        confidence at around 0.68.\",\"format\":\"openai-responses-v1\",\"index\":0},{\"type\":\"reasoning.encrypted\",\"data\":\"gAAAAABqLhoIpJtm9vmvqaJuYhWRFI-TDncLIojTMsZq_lOeMs1uquSflyoXSxUJEgmN3AGgi59SaTe_sVXQgNhdLxweFdlwtRon3A-CuXMdG21Kwge6TpaCcnx2nGiRVeyzN60WYeVcRsaTWntg6QYnsOkuIMAaZjqLwSNfBAPepwN2SwNXWUIu7yBzBK7ZpzEnd3dchnBFCx15MtQ4yjldEGj7pK--0ITWAJ7XbNEO3eZqFKYAU54kOUPqf4XnkFo01fgaP8et2kFVe0ESLLGUMi9HD6EJnmRCLtoFv1WLUnrY0E5ytfFyxrAf46hqehEgBeV_szF9KI5vP8eN3ZT1ofEBkAiKV6P8QErjedgBfPBfEyc7PHmvc-BMThkf28fzU0ZftjpgsckXcffy0FkmnQFul7Px7rvUe5gcHmzF-HtU7Uul4gCGrd2AopNDTi8nogoWLwaDO1BLNKkTal36EfQOpeBCDw_QxCWo8IvLiVK7romHUIhVB6CaLbCxgi-sfQSrbWkQ9mQ7RNxwxYkrlNPCmUqpLA==\",\"format\":\"openai-responses-v1\",\"id\":\"rs_0c2ce90d385f61d4016a2e1a00fde08197bc6032642e9b9962\",\"index\":1}]}}],\"usage\":{\"prompt_tokens\":1118,\"completion_tokens\":3056,\"total_tokens\":4174,\"cost\":0.014113,\"is_byok\":false,\"prompt_tokens_details\":{\"cached_tokens\":1024,\"cache_write_tokens\":0,\"audio_tokens\":0,\"video_tokens\":0},\"cost_details\":{\"upstream_inference_cost\":0.014113,\"upstream_inference_prompt_cost\":0.0006666,\"upstream_inference_completions_cost\":0.0134464},\"completion_tokens_details\":{\"reasoning_tokens\":1216,\"image_tokens\":0,\"audio_tokens\":0}}}"
+    headers:
+      Access-Control-Allow-Origin:
+      - '*'
+      CF-RAY:
+      - a0b61a233a0cea52-FCO
+      Connection:
+      - keep-alive
+      Content-Type:
+      - application/json
+      Date:
+      - Sun, 14 Jun 2026 03:03:28 GMT
+      Permissions-Policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      Referrer-Policy:
+      - no-referrer, strict-origin-when-cross-origin
+      Server:
+      - cloudflare
+      Transfer-Encoding:
+      - chunked
+      X-Content-Type-Options:
+      - nosniff
+      X-Generation-Id:
+      - gen-1781406208-0w5R3kzLVF0kfILgGJvt
+      access-control-expose-headers:
+      - X-Generation-Id,cf-ray
+      content-length:
+      - '6674'
+    status:
+      code: 200
+      message: OK
+version: 1

@@ -1,0 +1,70 @@
+version: 1
+interactions:
+- request:
+    body: '{"messages": [{"content": "You are a crypto perpetual-futures trading agent. Produce trading actions for a portfolio spanning EXACTLY three symbols: BTC, ETH and SOL.\n\nIllustrative market context: BTC trends mildly up (RSI ~58); ETH consolidates near support; SOL is volatile after a rally. Account equity is 10,000 USDC, no open positions.\n\nReturn ONE TradeDecision JSON object obeying the schema EXACTLY. Hard rules the schema alone does not enforce:\n- ''actions'' MUST have EXACTLY 3 items, one each for BTC, ETH and SOL.\n- ''size_pct'' is a FRACTION of equity in [0, 1] (0.10 == 10%), NOT a percent; use 0.05-0.20 for LONG/SHORT.\n- ''leverage'' is a multiplier (3 == 3x); use 1-5 for LONG/SHORT.\n- For every LONG/SHORT action BOTH ''stop_loss_pct'' and ''take_profit_pct'' are REQUIRED and are FRACTIONS (0.03 == 3%); use ~0.02-0.05 SL and ~0.04-0.10 TP.\n- Use ''entry_type''=''market'' for LONG/SHORT here and NEVER set ''limit_price''.\n- ''confidence'' is a probability in [0, 1] (e.g. 0.65); ''time_horizon_min'' is an integer in [1, 1440] (e.g. 120).\n- ''action_reasoning'' must be a full sentence (>= 20 chars).\n- To stay flat on a symbol use side ''HOLD'' with size_pct=0, leverage=0, entry_type=''none'' and NO stop_loss_pct/take_profit_pct/limit_price.\n- ''portfolio_reasoning'' must be a substantive paragraph (>= 50 chars); ''risk_assessment'' at least a sentence or two (>= 30 chars).\nOutput the JSON object DIRECTLY, with ''portfolio_reasoning'', ''risk_assessment'' and ''actions'' as TOP-LEVEL keys. Do NOT wrap it inside any outer key (no ''TradeDecision'' wrapper) and do NOT use markdown code fences \u2014 JSON only.", "role": "user"}], "model": "anthropic/claude-sonnet-4.5", "max_completion_tokens": 4096, "response_format": {"type": "json_schema", "json_schema": {"schema": {"$defs": {"ActionDecision": {"additionalProperties": false, "description": "Output strutturato del modello per UN simbolo (action-level).", "properties": {"symbol": {"enum": ["BTC", "ETH", "SOL"], "title": "Symbol", "type": "string"}, "side": {"$ref": "#/$defs/Side"}, "leverage": {"anyOf": [{"maximum": 50.0, "minimum": 0.0, "type": "number"}, {"pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,2}0*$", "type": "string"}], "title": "Leverage"}, "size_pct": {"anyOf": [{"maximum": 1.0, "minimum": 0.0, "type": "number"}, {"pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,4}0*$", "type": "string"}], "title": "Size Pct"}, "stop_loss_pct": {"anyOf": [{"exclusiveMinimum": 0.0, "type": "number"}, {"pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,4}0*$", "type": "string"}, {"type": "null"}], "title": "Stop Loss Pct"}, "take_profit_pct": {"anyOf": [{"exclusiveMinimum": 0.0, "type": "number"}, {"pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,4}0*$", "type": "string"}, {"type": "null"}], "title": "Take Profit Pct"}, "entry_type": {"$ref": "#/$defs/EntryType"}, "limit_price": {"anyOf": [{"exclusiveMinimum": 0.0, "type": "number"}, {"pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,8}0*$", "type": "string"}, {"type": "null"}], "title": "Limit Price"}, "confidence": {"anyOf": [{"maximum": 1.0, "minimum": 0.0, "type": "number"}, {"pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,4}0*$", "type": "string"}], "description": "Estimated probability \u2208 [0, 1] that this specific action will produce positive net PnL (after fees and funding) within time_horizon_min. For HOLD/FLAT, probability that this passive choice is preferable to the active alternatives at this moment.", "title": "Confidence"}, "time_horizon_min": {"description": "Time horizon in minutes within which the confidence is calibrated.", "exclusiveMinimum": 0, "maximum": 1440, "title": "Time Horizon Min", "type": "integer"}, "action_reasoning": {"maxLength": 2000, "minLength": 20, "title": "Action Reasoning", "type": "string"}, "action_key_signals": {"items": {"enum": ["technical.rsi_extreme", "technical.macd_cross", "technical.ema_alignment", "technical.bollinger_squeeze", "technical.atr_spike", "technical.support_resistance", "sentiment.news_polarity", "sentiment.fear_greed", "sentiment.market_panic", "onchain.funding_rate_extreme", "onchain.open_interest_shift", "onchain.liquidation_cascade", "market.volatility_regime", "market.volume_anomaly", "market.basis_perp_spot", "portfolio.exposure_high", "portfolio.unrealized_pnl", "portfolio.position_aging"], "type": "string"}, "maxItems": 8, "title": "Action Key Signals", "type": "array"}}, "required": ["symbol", "side", "leverage", "size_pct", "stop_loss_pct", "take_profit_pct", "entry_type", "limit_price", "confidence", "time_horizon_min", "action_reasoning", "action_key_signals"], "title": "ActionDecision", "type": "object"}, "EntryType": {"enum": ["market", "limit", "none"], "title": "EntryType", "type": "string"}, "Side": {"enum": ["LONG", "SHORT", "FLAT", "HOLD"], "title": "Side", "type": "string"}}, "additionalProperties": false, "description": "Output completo del modello per UN tick portfolio-level (RESEARCH \u00a71.0).", "properties": {"portfolio_reasoning": {"maxLength": 4000, "minLength": 50, "title": "Portfolio Reasoning", "type": "string"}, "risk_assessment": {"maxLength": 2000, "minLength": 30, "title": "Risk Assessment", "type": "string"}, "portfolio_confidence": {"anyOf": [{"maximum": 1.0, "minimum": 0.0, "type": "number"}, {"pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d{0,4}0*$", "type": "string"}, {"type": "null"}], "title": "Portfolio Confidence"}, "actions": {"description": "Exactly 3 actions, one per symbol (BTC, ETH, SOL), in any order.", "items": {"$ref": "#/$defs/ActionDecision"}, "maxItems": 3, "minItems": 3, "title": "Actions", "type": "array"}}, "required": ["portfolio_reasoning", "risk_assessment", "portfolio_confidence", "actions"], "title": "TradeDecision", "type": "object"}, "name": "TradeDecision", "strict": true}}, "stream": false, "temperature": 1.0}'
+    headers:
+      Accept:
+      - application/json
+      Accept-Encoding:
+      - gzip, deflate, zstd
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '5499'
+      Content-Type:
+      - application/json
+      Host:
+      - openrouter.ai
+      User-Agent:
+      - AsyncOpenAI/Python 2.41.1
+      X-Stainless-Arch:
+      - x64
+      X-Stainless-Async:
+      - async:asyncio
+      X-Stainless-Helper-Method:
+      - chat.completions.parse
+      X-Stainless-Lang:
+      - python
+      X-Stainless-OS:
+      - Linux
+      X-Stainless-Package-Version:
+      - 2.41.1
+      X-Stainless-Raw-Response:
+      - 'true'
+      X-Stainless-Runtime:
+      - CPython
+      X-Stainless-Runtime-Version:
+      - 3.12.12
+      x-stainless-retry-count:
+      - '0'
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    body:
+      string: '{"id": "gen-1781406157-XXcx0eD9AAa6nZasVg6z", "object": "chat.completion", "created": 1781406157, "model": "anthropic/claude-sonnet-4.5", "provider": "Azure", "system_fingerprint": "fp_b08273328d", "service_tier": null, "choices": [{"index": 0, "logprobs": null, "finish_reason": "stop", "native_finish_reason": "stop", "message": {"role": "assistant", "content": "{\"portfolio_reasoning\":\"Given the current market conditions, BTC shows mild bullish momentum, ETH is holding near its support level, offering potential upside, while SOL''s recent volatility suggests caution. Diversifying across these assets with calculated risk can optimize returns while minimizing exposure to any single asset''s volatility.\",\"risk_assessment\":\"The portfolio leverages current trends with moderate exposure, balancing between potential gains from BTC and ETH while managing risks from SOL''s volatility.\",\"portfolio_confidence\":0.7,\"actions\":[{\"symbol\":\"BTC\",\"side\":\"LONG\",\"leverage\":3,\"size_pct\":0.15,\"stop_loss_pct\":0.03,\"take_profit_pct\":0.07,\"entry_type\":\"market\",\"limit_price\":null,\"confidence\":0.65,\"time_horizon_min\":240,\"action_reasoning\":\"BTC''s upward trend is supported by RSI, indicating room for further growth.\",\"action_key_signals\":[\"technical.rsi_extreme\",\"technical.support_resistance\",\"market.volume_anomaly\"]},{\"symbol\":\"ETH\",\"side\":\"LONG\",\"leverage\":2,\"size_pct\":0.1,\"stop_loss_pct\":0.02,\"take_profit_pct\":0.06,\"entry_type\":\"market\",\"limit_price\":null,\"confidence\":0.6,\"time_horizon_min\":180,\"action_reasoning\":\"ETH''s consolidation near support suggests a potential breakout with limited downside risk.\",\"action_key_signals\":[\"technical.support_resistance\",\"market.volatility_regime\",\"sentiment.fear_greed\"]},{\"symbol\":\"SOL\",\"side\":\"HOLD\",\"leverage\":0,\"size_pct\":0,\"entry_type\":\"none\",\"confidence\":0.5,\"time_horizon_min\":60,\"action_reasoning\":\"SOL''s recent volatility indicates uncertainty, advising caution and holding.\",\"action_key_signals\":[\"technical.bollinger_squeeze\",\"market.volume_anomaly\",\"onchain.liquidation_cascade\"]}]}", "refusal": null, "reasoning": null}}], "usage": {"prompt_tokens": 1127, "completion_tokens": 381, "total_tokens": 1508, "cost": 0.0066275, "is_byok": false, "prompt_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0, "audio_tokens": 0, "video_tokens": 0}, "cost_details": {"upstream_inference_cost": 0.0066275, "upstream_inference_prompt_cost": 0.0028175, "upstream_inference_completions_cost": 0.00381}, "completion_tokens_details": {"reasoning_tokens": 0, "image_tokens": 0, "audio_tokens": 0}}}'
+    headers:
+      Access-Control-Allow-Origin:
+      - '*'
+      CF-RAY:
+      - a0b618e1ba34ea52-FCO
+      Connection:
+      - keep-alive
+      Content-Type:
+      - application/json
+      Date:
+      - Sun, 14 Jun 2026 03:02:38 GMT
+      Permissions-Policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com" "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      Referrer-Policy:
+      - no-referrer, strict-origin-when-cross-origin
+      Server:
+      - cloudflare
+      X-Content-Type-Options:
+      - nosniff
+      X-Generation-Id:
+      - gen-1781406157-XXcx0eD9AAa6nZasVg6z
+      access-control-expose-headers:
+      - X-Generation-Id,cf-ray
+    status:
+      code: 200
+      message: OK

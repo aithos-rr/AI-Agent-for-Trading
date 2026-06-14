@@ -19,6 +19,16 @@ class StatsCallbackHandler(AsyncCallbackHandler):
     freetext fallback). `n_attempts` tracks how many LLM calls were made; `cost_usd`
     final = sum of all. This ensures the cost ledger reflects the REAL cost incurred
     to produce a decision, not just the cost of the last attempt.
+
+    KNOWN LIMITATION (M2-T12): a structured primary attempt that fails Pydantic
+    validation is NOT counted here. With `method="json_schema"` the OpenAI SDK
+    validates the response inside `_agenerate` (`beta.chat.completions.parse`), so
+    langchain fires `on_llm_error` — not `on_llm_end` — for that attempt, and
+    `on_llm_error` carries no token usage. Such a failed-but-billed primary is thus
+    absent from the ledger (only the successful freetext fallback is counted). This is
+    immaterial for the official experiment (the selected models honor strict
+    `json_schema`, so the structured primary does not fail and no fallback occurs).
+    See tests/integration/test_llm_providers.py::test_cost_aggregation_primary_plus_fallback.
     """
 
     def __init__(self, pricing: dict[str, Decimal]) -> None:

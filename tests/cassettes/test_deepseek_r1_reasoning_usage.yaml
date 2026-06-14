@@ -1,0 +1,479 @@
+interactions:
+- request:
+    body: "{\"messages\":[{\"content\":\"You are a crypto perpetual-futures trading
+      agent. Produce trading actions for a portfolio spanning EXACTLY three symbols:
+      BTC, ETH and SOL.\\n\\nIllustrative market context: BTC trends mildly up (RSI
+      ~58); ETH consolidates near support; SOL is volatile after a rally. Account
+      equity is 10,000 USDC, no open positions.\\n\\nReturn ONE TradeDecision JSON
+      object obeying the schema EXACTLY. Hard rules the schema alone does not enforce:\\n-
+      'actions' MUST have EXACTLY 3 items, one each for BTC, ETH and SOL.\\n- 'size_pct'
+      is a FRACTION of equity in [0, 1] (0.10 == 10%), NOT a percent; use 0.05-0.20
+      for LONG/SHORT.\\n- 'leverage' is a multiplier (3 == 3x); use 1-5 for LONG/SHORT.\\n-
+      For every LONG/SHORT action BOTH 'stop_loss_pct' and 'take_profit_pct' are REQUIRED
+      and are FRACTIONS (0.03 == 3%); use ~0.02-0.05 SL and ~0.04-0.10 TP.\\n- Use
+      'entry_type'='market' for LONG/SHORT here and NEVER set 'limit_price'.\\n- 'confidence'
+      is a probability in [0, 1] (e.g. 0.65); 'time_horizon_min' is an integer in
+      [1, 1440] (e.g. 120).\\n- 'action_reasoning' must be a full sentence (>= 20
+      chars).\\n- To stay flat on a symbol use side 'HOLD' with size_pct=0, leverage=0,
+      entry_type='none' and NO stop_loss_pct/take_profit_pct/limit_price.\\n- 'portfolio_reasoning'
+      must be a substantive paragraph (>= 50 chars); 'risk_assessment' at least a
+      sentence or two (>= 30 chars).\\nOutput the JSON object DIRECTLY, with 'portfolio_reasoning',
+      'risk_assessment' and 'actions' as TOP-LEVEL keys. Do NOT wrap it inside any
+      outer key (no 'TradeDecision' wrapper) and do NOT use markdown code fences \u2014
+      JSON only.\",\"role\":\"user\"}],\"model\":\"deepseek/deepseek-r1\",\"max_completion_tokens\":4096,\"response_format\":{\"type\":\"json_schema\",\"json_schema\":{\"schema\":{\"$defs\":{\"ActionDecision\":{\"additionalProperties\":false,\"description\":\"Output
+      strutturato del modello per UN simbolo (action-level).\",\"properties\":{\"symbol\":{\"enum\":[\"BTC\",\"ETH\",\"SOL\"],\"title\":\"Symbol\",\"type\":\"string\"},\"side\":{\"$ref\":\"#/$defs/Side\"},\"leverage\":{\"anyOf\":[{\"maximum\":50.0,\"minimum\":0.0,\"type\":\"number\"},{\"pattern\":\"^(?!^[-+.]*$)[+-]?0*\\\\d*\\\\.?\\\\d{0,2}0*$\",\"type\":\"string\"}],\"title\":\"Leverage\"},\"size_pct\":{\"anyOf\":[{\"maximum\":1.0,\"minimum\":0.0,\"type\":\"number\"},{\"pattern\":\"^(?!^[-+.]*$)[+-]?0*\\\\d*\\\\.?\\\\d{0,4}0*$\",\"type\":\"string\"}],\"title\":\"Size
+      Pct\"},\"stop_loss_pct\":{\"anyOf\":[{\"exclusiveMinimum\":0.0,\"type\":\"number\"},{\"pattern\":\"^(?!^[-+.]*$)[+-]?0*\\\\d*\\\\.?\\\\d{0,4}0*$\",\"type\":\"string\"},{\"type\":\"null\"}],\"title\":\"Stop
+      Loss Pct\"},\"take_profit_pct\":{\"anyOf\":[{\"exclusiveMinimum\":0.0,\"type\":\"number\"},{\"pattern\":\"^(?!^[-+.]*$)[+-]?0*\\\\d*\\\\.?\\\\d{0,4}0*$\",\"type\":\"string\"},{\"type\":\"null\"}],\"title\":\"Take
+      Profit Pct\"},\"entry_type\":{\"$ref\":\"#/$defs/EntryType\"},\"limit_price\":{\"anyOf\":[{\"exclusiveMinimum\":0.0,\"type\":\"number\"},{\"pattern\":\"^(?!^[-+.]*$)[+-]?0*\\\\d*\\\\.?\\\\d{0,8}0*$\",\"type\":\"string\"},{\"type\":\"null\"}],\"title\":\"Limit
+      Price\"},\"confidence\":{\"anyOf\":[{\"maximum\":1.0,\"minimum\":0.0,\"type\":\"number\"},{\"pattern\":\"^(?!^[-+.]*$)[+-]?0*\\\\d*\\\\.?\\\\d{0,4}0*$\",\"type\":\"string\"}],\"description\":\"Estimated
+      probability \u2208 [0, 1] that this specific action will produce positive net
+      PnL (after fees and funding) within time_horizon_min. For HOLD/FLAT, probability
+      that this passive choice is preferable to the active alternatives at this moment.\",\"title\":\"Confidence\"},\"time_horizon_min\":{\"description\":\"Time
+      horizon in minutes within which the confidence is calibrated.\",\"exclusiveMinimum\":0,\"maximum\":1440,\"title\":\"Time
+      Horizon Min\",\"type\":\"integer\"},\"action_reasoning\":{\"maxLength\":2000,\"minLength\":20,\"title\":\"Action
+      Reasoning\",\"type\":\"string\"},\"action_key_signals\":{\"items\":{\"enum\":[\"technical.rsi_extreme\",\"technical.macd_cross\",\"technical.ema_alignment\",\"technical.bollinger_squeeze\",\"technical.atr_spike\",\"technical.support_resistance\",\"sentiment.news_polarity\",\"sentiment.fear_greed\",\"sentiment.market_panic\",\"onchain.funding_rate_extreme\",\"onchain.open_interest_shift\",\"onchain.liquidation_cascade\",\"market.volatility_regime\",\"market.volume_anomaly\",\"market.basis_perp_spot\",\"portfolio.exposure_high\",\"portfolio.unrealized_pnl\",\"portfolio.position_aging\"],\"type\":\"string\"},\"maxItems\":8,\"title\":\"Action
+      Key Signals\",\"type\":\"array\"}},\"required\":[\"symbol\",\"side\",\"leverage\",\"size_pct\",\"stop_loss_pct\",\"take_profit_pct\",\"entry_type\",\"limit_price\",\"confidence\",\"time_horizon_min\",\"action_reasoning\",\"action_key_signals\"],\"title\":\"ActionDecision\",\"type\":\"object\"},\"EntryType\":{\"enum\":[\"market\",\"limit\",\"none\"],\"title\":\"EntryType\",\"type\":\"string\"},\"Side\":{\"enum\":[\"LONG\",\"SHORT\",\"FLAT\",\"HOLD\"],\"title\":\"Side\",\"type\":\"string\"}},\"additionalProperties\":false,\"description\":\"Output
+      completo del modello per UN tick portfolio-level (RESEARCH \xA71.0).\",\"properties\":{\"portfolio_reasoning\":{\"maxLength\":4000,\"minLength\":50,\"title\":\"Portfolio
+      Reasoning\",\"type\":\"string\"},\"risk_assessment\":{\"maxLength\":2000,\"minLength\":30,\"title\":\"Risk
+      Assessment\",\"type\":\"string\"},\"portfolio_confidence\":{\"anyOf\":[{\"maximum\":1.0,\"minimum\":0.0,\"type\":\"number\"},{\"pattern\":\"^(?!^[-+.]*$)[+-]?0*\\\\d*\\\\.?\\\\d{0,4}0*$\",\"type\":\"string\"},{\"type\":\"null\"}],\"title\":\"Portfolio
+      Confidence\"},\"actions\":{\"description\":\"Exactly 3 actions, one per symbol
+      (BTC, ETH, SOL), in any order.\",\"items\":{\"$ref\":\"#/$defs/ActionDecision\"},\"maxItems\":3,\"minItems\":3,\"title\":\"Actions\",\"type\":\"array\"}},\"required\":[\"portfolio_reasoning\",\"risk_assessment\",\"portfolio_confidence\",\"actions\"],\"title\":\"TradeDecision\",\"type\":\"object\"},\"name\":\"TradeDecision\",\"strict\":true}},\"stream\":false,\"temperature\":0.6}"
+    headers:
+      Accept:
+      - application/json
+      Accept-Encoding:
+      - gzip, deflate, zstd
+      Connection:
+      - keep-alive
+      Content-Length:
+      - '5506'
+      Content-Type:
+      - application/json
+      Host:
+      - openrouter.ai
+      User-Agent:
+      - AsyncOpenAI/Python 2.41.1
+      X-Stainless-Arch:
+      - x64
+      X-Stainless-Async:
+      - async:asyncio
+      X-Stainless-Helper-Method:
+      - chat.completions.parse
+      X-Stainless-Lang:
+      - python
+      X-Stainless-OS:
+      - Linux
+      X-Stainless-Package-Version:
+      - 2.41.1
+      X-Stainless-Raw-Response:
+      - 'true'
+      X-Stainless-Runtime:
+      - CPython
+      X-Stainless-Runtime-Version:
+      - 3.12.12
+      x-stainless-retry-count:
+      - '0'
+    method: POST
+    uri: https://openrouter.ai/api/v1/chat/completions
+  response:
+    body:
+      string: "\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n\n         \n\n         \n\n         \n\n
+        \        \n\n         \n\n         \n{\"id\":\"gen-1781406217-2g22M7DF1u8YLHagYbfc\",\"object\":\"chat.completion\",\"created\":1781406217,\"model\":\"deepseek/deepseek-r1\",\"provider\":\"Novita\",\"system_fingerprint\":null,\"service_tier\":null,\"choices\":[{\"index\":0,\"logprobs\":null,\"finish_reason\":\"stop\",\"native_finish_reason\":\"stop\",\"message\":{\"role\":\"assistant\",\"content\":\"{\\n
+        \ \\\"portfolio_reasoning\\\": \\\"Given BTC's mild uptrend (RSI ~58) and
+        ETH consolidating near support, we initiate long positions on both to capture
+        potential upside momentum. SOL's post-rally volatility presents unclear directional
+        opportunities, warranting a hold to avoid unnecessary risk exposure. This
+        strategy focuses on high-probability setups while maintaining portfolio diversification.\\\",\\n
+        \ \\\"risk_assessment\\\": \\\"Active positions carry defined risk via stop
+        losses (3% for BTC, 2% for ETH), limiting max portfolio loss to ~1.5% of equity.
+        ETH's tighter stop accounts for proximity to support. SOL's exclusion mitigates
+        volatility risks. Overall market conditions show moderate bullish bias but
+        require monitoring for trend reversals, particularly given SOL's volatility
+        spillover potential.\\\",\\n  \\\"portfolio_confidence\\\": 0.62,\\n  \\\"actions\\\":
+        [\\n    {\\n      \\\"symbol\\\": \\\"BTC\\\",\\n      \\\"side\\\": \\\"LONG\\\",\\n
+        \     \\\"leverage\\\": 3,\\n      \\\"size_pct\\\": 0.10,\\n      \\\"stop_loss_pct\\\":
+        0.03,\\n      \\\"take_profit_pct\\\": 0.06,\\n      \\\"entry_type\\\": \\\"market\\\",\\n
+        \     \\\"limit_price\\\": null,\\n      \\\"confidence\\\": 0.65,\\n      \\\"time_horizon_min\\\":
+        180,\\n      \\\"action_reasoning\\\": \\\"Mild uptrend with neutral RSI suggests
+        continued bullish momentum, entering long with 1:2 risk-reward ratio.\\\",\\n
+        \     \\\"action_key_signals\\\": [\\\"technical.ema_alignment\\\"]\\n    },\\n
+        \   {\\n      \\\"symbol\\\": \\\"ETH\\\",\\n      \\\"side\\\": \\\"LONG\\\",\\n
+        \     \\\"leverage\\\": 3,\\n      \\\"size_pct\\\": 0.10,\\n      \\\"stop_loss_pct\\\":
+        0.02,\\n      \\\"take_profit_pct\\\": 0.05,\\n      \\\"entry_type\\\": \\\"market\\\",\\n
+        \     \\\"limit_price\\\": null,\\n      \\\"confidence\\\": 0.60,\\n      \\\"time_horizon_min\\\":
+        180,\\n      \\\"action_reasoning\\\": \\\"Consolidation near support provides
+        favorable long entry with tight stop loss below support zone.\\\",\\n      \\\"action_key_signals\\\":
+        [\\\"technical.support_resistance\\\"]\\n    },\\n    {\\n      \\\"symbol\\\":
+        \\\"SOL\\\",\\n      \\\"side\\\": \\\"HOLD\\\",\\n      \\\"leverage\\\":
+        0,\\n      \\\"size_pct\\\": 0,\\n      \\\"stop_loss_pct\\\": null,\\n      \\\"take_profit_pct\\\":
+        null,\\n      \\\"entry_type\\\": \\\"none\\\",\\n      \\\"limit_price\\\":
+        null,\\n      \\\"confidence\\\": 0.55,\\n      \\\"time_horizon_min\\\":
+        180,\\n      \\\"action_reasoning\\\": \\\"High volatility after rally creates
+        unpredictable price action, making passive hold preferable to directional
+        exposure.\\\",\\n      \\\"action_key_signals\\\": [\\\"market.volatility_regime\\\"]\\n
+        \   }\\n  ]\\n}\",\"refusal\":null,\"reasoning\":\"We are given a market context:
+        BTC trends mildly up (RSI ~58); ETH consolidates near support; SOL is volatile
+        after a rally. Account equity is 10,000 USDC, no open positions.\\n\\nWe need
+        to output a TradeDecision JSON object with exactly three actions (one for
+        each symbol: BTC, ETH, SOL) and top-level keys: portfolio_reasoning, risk_assessment,
+        portfolio_confidence, and actions.\\n\\nRules:\\n- For each symbol, we must
+        decide on an action (LONG, SHORT, FLAT, or HOLD). Since we have no open positions,
+        FLAT and HOLD are equivalent? But note: the schema says for HOLD we set size_pct=0,
+        leverage=0, entry_type='none', and no stop/take profit (set to null). However,
+        in the required fields, stop_loss_pct and take_profit_pct are required for
+        every action but for HOLD/FLAT we set them to null? The schema says they can
+        be number, string, or null.\\n\\nLet's design actions:\\n\\n1. BTC: mildly
+        up (RSI 58 is neutral to slightly bullish). We might consider a long but with
+        caution because the trend is mild. Alternatively, we might hold given the
+        mildness? However, the RSI is not extreme so we can enter with a small size
+        and set stop loss and take profit.\\n\\n2. ETH: consolidating near support.
+        This suggests a potential bounce if support holds, so a long entry with a
+        tight stop below support. But if it breaks support, we might avoid. Since
+        we are trading futures, we can set a stop loss just below support.\\n\\n3.
+        SOL: volatile after a rally. This might indicate a pullback or continuation.
+        Volatility can be risky. We might avoid or trade with caution.\\n\\nGiven
+        the context, we might:\\n\\n- BTC: LONG with small size (e.g., 0.10 of equity)
+        and leverage 3, stop loss at 3% and take profit at 6% (so 1:2 risk-reward).\\n-
+        ETH: LONG near support with similar parameters but maybe a tighter stop (2%)
+        and take profit (5%) because of the support level.\\n- SOL: Since it's volatile
+        and after a rally, we might hold (i.e., no position) or if we see an opportunity,
+        we might use a smaller position. But the context doesn't give a clear direction.
+        Alternatively, we can hold on SOL.\\n\\nHowever, note the rule: we must have
+        exactly 3 actions, one per symbol. For SOL, we can set side='HOLD' and set
+        the other fields accordingly.\\n\\nAlternatively, we could take a short on
+        SOL because of the rally and volatility? But the context doesn't say it's
+        overbought. We have to be cautious.\\n\\nLet's decide:\\n\\nBTC: LONG, leverage=3,
+        size_pct=0.10, stop_loss_pct=0.03, take_profit_pct=0.06, entry_type='market',
+        limit_price=null, confidence=0.65, time_horizon_min=120 (2 hours). Reasoning:
+        Mild uptrend with neutral RSI provides a favorable risk-reward for a long
+        position with a 1:2 ratio.\\n\\nETH: LONG, leverage=3, size_pct=0.10, stop_loss_pct=0.02
+        (because support is near, so tighter stop), take_profit_pct=0.05, entry_type='market',
+        confidence=0.60 (because consolidation might break either way, but we are
+        betting on support holding), time_horizon_min=120.\\n\\nSOL: HOLD (because
+        of high volatility without a clear edge). So: side='HOLD', size_pct=0, leverage=0,
+        entry_type='none', stop_loss_pct=null, take_profit_pct=null, limit_price=null.
+        Confidence: we can set to 0.5 (since we are not acting) but note that confidence
+        is the probability that this passive choice is preferable. We set confidence=0.55
+        meaning we think holding is slightly better than trading SOL now. Time_horizon_min:
+        we set to 120 as well? Actually, for hold we can set a time horizon that we
+        think holding is good for. We'll set 120 too.\\n\\nBut note: the portfolio
+        must have exactly 3 actions, one for each symbol.\\n\\nNow, portfolio_reasoning:
+        We are taking two long positions (BTC and ETH) and holding SOL. The reasoning
+        should be that BTC shows a mild uptrend and ETH is at support, providing good
+        entry points. SOL is avoided due to high volatility without a clear signal.\\n\\nRisk
+        assessment: The main risk is that the market reverses. We have stop losses
+        in place for BTC and ETH. The portfolio is not overly concentrated (only 20%
+        of equity at risk). However, if both BTC and ETH trades hit stop loss, the
+        loss would be 0.10 * 0.03 (for BTC) and 0.10 * 0.02 (for ETH) of equity? Actually,
+        the loss in terms of equity: \\n- BTC: 0.10 * 0.03 = 0.003 (0.3% of equity)\\n-
+        ETH: 0.10 * 0.02 = 0.002 (0.2% of equity)\\nTotal max loss from these two
+        trades: 0.5% of equity. But note: the trades are leveraged, but the stop loss
+        is set as a percentage of the trade? Actually, the stop_loss_pct is the percentage
+        move against our position that triggers the stop. Since we are using leverage,
+        the loss in equity is: size_pct * leverage * stop_loss_pct? Actually, no:
+        the stop_loss_pct is the price movement percentage. The loss in equity is:
+        (entry_price - stop_price) * quantity / equity. But we set size_pct which
+        is the fraction of equity used as margin? Actually, in futures, the position
+        size is: (equity * size_pct) * leverage. Then, if the price moves by stop_loss_pct
+        against us, the loss is: (equity * size_pct) * leverage * stop_loss_pct. So:\\n\\nBTC:
+        loss = 10000 * 0.10 * 3 * 0.03 = 90 USDC (0.9% of equity)\\nETH: loss = 10000
+        * 0.10 * 3 * 0.02 = 60 USDC (0.6% of equity)\\nTotal max loss from both trades:
+        150 USDC (1.5% of equity). This is acceptable.\\n\\nPortfolio confidence:
+        We can set to 0.60, meaning we are 60% confident that the overall portfolio
+        decision (two longs and one hold) will be positive after accounting for fees
+        and funding.\\n\\nNow, for action_key_signals: We are required to provide
+        up to 8 key signals per action (as an array of strings). We have an enum of
+        possible signals. We can choose:\\n\\nFor BTC: \\n  - technical.rsi_extreme?
+        But RSI is 58, not extreme. So we skip that.\\n  - technical.macd_cross? Not
+        mentioned, but we can assume if the trend is up, maybe MACD crossed up? But
+        not given. We might skip.\\n  - technical.ema_alignment? Not mentioned.\\n
+        \ - technical.bollinger_squeeze? Not mentioned.\\n  - technical.atr_spike?
+        Not mentioned.\\n  - technical.support_resistance? Not mentioned for BTC.\\n
+        \ - sentiment? Not given.\\n  - market.volatility_regime? Not mentioned.\\n\\nAlternatively,
+        we can use:\\n  BTC: [\\\"technical.rsi_extreme\\\"] -> but it's not extreme?
+        Actually, RSI 58 is not extreme. We might use \\\"technical.rsi_extreme\\\"
+        only if above 70 or below 30. So we skip.\\n\\nWe might not have enough signals
+        from the context. But the problem says \\\"illustrative\\\", so we can make
+        up some? But we shouldn't. The context only provided RSI for BTC and that
+        it's trending mildly up. So we can use:\\n\\nBTC: [\\\"technical.rsi_extreme\\\"]
+        -> no, because not extreme. Alternatively, we can leave it out? But the array
+        is required. We must provide at least one? Actually, the schema says maxItems=8
+        and minItems? Not specified. But the required field, so we must have the array.
+        We can use:\\n\\n  BTC: [\\\"technical.macd_cross\\\"] -> if we assume the
+        mild uptrend is accompanied by a MACD crossover? But the context doesn't say.
+        Alternatively, we can use \\\"technical.ema_alignment\\\" if we assume the
+        EMAs are aligned bullishly? Since it's trending up.\\n\\nBut the context is
+        minimal. We can use:\\n\\nBTC: [\\\"technical.rsi_extreme\\\"] -> no, because
+        58 is not extreme. How about we don't use that? We can use \\\"technical.support_resistance\\\"
+        if we assume that the trend is breaking a resistance? But not stated.\\n\\nAlternatively,
+        we can use: \\\"technical.rsi_extreme\\\" is not appropriate. Let me check
+        the enum again: \\n  enum includes: \\n    technical.rsi_extreme -> no\\n
+        \   technical.macd_cross -> maybe? if we assume the trend started with a cross\\n
+        \   technical.ema_alignment -> if we assume the EMAs are in bullish order\\n\\nGiven
+        the lack of information, I'll use:\\n\\nBTC: [\\\"technical.ema_alignment\\\"]
+        -> because a mild uptrend often has EMAs aligned (shorter above longer).\\n\\nETH:
+        \\n  We are trading on support: so \\\"technical.support_resistance\\\" is
+        appropriate.\\n\\nSOL: \\n  For hold, we can use: \\\"market.volatility_regime\\\"
+        because the volatility is high.\\n\\nSo:\\n\\nBTC: [\\\"technical.ema_alignment\\\"]\\nETH:
+        [\\\"technical.support_resistance\\\"]\\nSOL: [\\\"market.volatility_regime\\\"]\\n\\nBut
+        note: for SOL we are holding, so we are providing the key signal that led
+        to the hold decision.\\n\\nNow, let's write the JSON.\\n\\nImportant: \\n
+        \ For BTC and ETH: entry_type='market', limit_price=null.\\n  For SOL: side='HOLD',
+        size_pct=0, leverage=0, entry_type='none', stop_loss_pct=null, take_profit_pct=null,
+        limit_price=null.\\n\\nAlso, for each action, we need action_reasoning (at
+        least 20 characters) and the key signals array.\\n\\nPortfolio_reasoning:
+        at least 50 characters, risk_assessment at least 30.\\n\\nLet me write:\\n\\nPortfolio_reasoning:
+        \\\"We initiate long positions on BTC and ETH to capitalize on the current
+        bullish technical structure. BTC is in a mild uptrend with RSI neutral, indicating
+        room for upside. ETH is consolidating near support, providing a favorable
+        entry with defined risk. We avoid SOL due to excessive volatility without
+        a clear directional edge after its recent rally.\\\"\\n\\nRisk_assessment:
+        \\\"The portfolio risk is controlled with stop losses on active positions.
+        Maximum potential loss from the two long positions is 1.5% of equity. The
+        overall market environment is moderately bullish, but we remain cautious of
+        potential reversals, especially given SOL's volatility which could spill over.\\\"\\n\\nPortfolio_confidence:
+        0.60\\n\\nNow, for the actions:\\n\\nBTC action:\\n  symbol: \\\"BTC\\\"\\n
+        \ side: \\\"LONG\\\"\\n  leverage: 3\\n  size_pct: 0.10\\n  stop_loss_pct:
+        0.03\\n  take_profit_pct: 0.06\\n  entry_type: \\\"market\\\"\\n  limit_price:
+        null\\n  confidence: 0.65\\n  time_horizon_min: 120\\n  action_reasoning:
+        \\\"BTC is in a mild uptrend with RSI neutral, providing a favorable risk-reward
+        for a long entry with a 1:2 reward-risk ratio.\\\"\\n  action_key_signals:
+        [\\\"technical.ema_alignment\\\"]\\n\\nETH action:\\n  symbol: \\\"ETH\\\"\\n
+        \ side: \\\"LONG\\\"\\n  leverage: 3\\n  size_pct: 0.10\\n  stop_loss_pct:
+        0.02\\n  take_profit_pct: 0.05\\n  entry_type: \\\"market\\\"\\n  limit_price:
+        null\\n  confidence: 0.60\\n  time_horizon_min: 120\\n  action_reasoning:
+        \\\"ETH is consolidating near a key support level, offering a long opportunity
+        with a tight stop loss below support and a conservative take profit.\\\"\\n
+        \ action_key_signals: [\\\"technical.support_resistance\\\"]\\n\\nSOL action:\\n
+        \ symbol: \\\"SOL\\\"\\n  side: \\\"HOLD\\\"\\n  leverage: 0\\n  size_pct:
+        0\\n  stop_loss_pct: null\\n  take_profit_pct: null\\n  entry_type: \\\"none\\\"\\n
+        \ limit_price: null\\n  confidence: 0.55\\n  time_horizon_min: 120\\n  action_reasoning:
+        \\\"SOL is experiencing high volatility after a rally, making directional
+        trades risky without a clear signal; holding avoids unnecessary exposure.\\\"\\n
+        \ action_key_signals: [\\\"market.volatility_regime\\\"]\\n\\nNow, we output
+        the JSON without any markdown and exactly as the schema.\\n\\nNote: the schema
+        requires the top-level keys: portfolio_reasoning, risk_assessment, portfolio_confidence,
+        and actions (which is an array of the three actions).\\n\\nLet's write the
+        JSON:\\n\",\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\"We
+        are given a market context: BTC trends mildly up (RSI ~58); ETH consolidates
+        near support; SOL is volatile after a rally. Account equity is 10,000 USDC,
+        no open positions.\\n\\nWe need to output a TradeDecision JSON object with
+        exactly three actions (one for each symbol: BTC, ETH, SOL) and top-level keys:
+        portfolio_reasoning, risk_assessment, portfolio_confidence, and actions.\\n\\nRules:\\n-
+        For each symbol, we must decide on an action (LONG, SHORT, FLAT, or HOLD).
+        Since we have no open positions, FLAT and HOLD are equivalent? But note: the
+        schema says for HOLD we set size_pct=0, leverage=0, entry_type='none', and
+        no stop/take profit (set to null). However, in the required fields, stop_loss_pct
+        and take_profit_pct are required for every action but for HOLD/FLAT we set
+        them to null? The schema says they can be number, string, or null.\\n\\nLet's
+        design actions:\\n\\n1. BTC: mildly up (RSI 58 is neutral to slightly bullish).
+        We might consider a long but with caution because the trend is mild. Alternatively,
+        we might hold given the mildness? However, the RSI is not extreme so we can
+        enter with a small size and set stop loss and take profit.\\n\\n2. ETH: consolidating
+        near support. This suggests a potential bounce if support holds, so a long
+        entry with a tight stop below support. But if it breaks support, we might
+        avoid. Since we are trading futures, we can set a stop loss just below support.\\n\\n3.
+        SOL: volatile after a rally. This might indicate a pullback or continuation.
+        Volatility can be risky. We might avoid or trade with caution.\\n\\nGiven
+        the context, we might:\\n\\n- BTC: LONG with small size (e.g., 0.10 of equity)
+        and leverage 3, stop loss at 3% and take profit at 6% (so 1:2 risk-reward).\\n-
+        ETH: LONG near support with similar parameters but maybe a tighter stop (2%)
+        and take profit (5%) because of the support level.\\n- SOL: Since it's volatile
+        and after a rally, we might hold (i.e., no position) or if we see an opportunity,
+        we might use a smaller position. But the context doesn't give a clear direction.
+        Alternatively, we can hold on SOL.\\n\\nHowever, note the rule: we must have
+        exactly 3 actions, one per symbol. For SOL, we can set side='HOLD' and set
+        the other fields accordingly.\\n\\nAlternatively, we could take a short on
+        SOL because of the rally and volatility? But the context doesn't say it's
+        overbought. We have to be cautious.\\n\\nLet's decide:\\n\\nBTC: LONG, leverage=3,
+        size_pct=0.10, stop_loss_pct=0.03, take_profit_pct=0.06, entry_type='market',
+        limit_price=null, confidence=0.65, time_horizon_min=120 (2 hours). Reasoning:
+        Mild uptrend with neutral RSI provides a favorable risk-reward for a long
+        position with a 1:2 ratio.\\n\\nETH: LONG, leverage=3, size_pct=0.10, stop_loss_pct=0.02
+        (because support is near, so tighter stop), take_profit_pct=0.05, entry_type='market',
+        confidence=0.60 (because consolidation might break either way, but we are
+        betting on support holding), time_horizon_min=120.\\n\\nSOL: HOLD (because
+        of high volatility without a clear edge). So: side='HOLD', size_pct=0, leverage=0,
+        entry_type='none', stop_loss_pct=null, take_profit_pct=null, limit_price=null.
+        Confidence: we can set to 0.5 (since we are not acting) but note that confidence
+        is the probability that this passive choice is preferable. We set confidence=0.55
+        meaning we think holding is slightly better than trading SOL now. Time_horizon_min:
+        we set to 120 as well? Actually, for hold we can set a time horizon that we
+        think holding is good for. We'll set 120 too.\\n\\nBut note: the portfolio
+        must have exactly 3 actions, one for each symbol.\\n\\nNow, portfolio_reasoning:
+        We are taking two long positions (BTC and ETH) and holding SOL. The reasoning
+        should be that BTC shows a mild uptrend and ETH is at support, providing good
+        entry points. SOL is avoided due to high volatility without a clear signal.\\n\\nRisk
+        assessment: The main risk is that the market reverses. We have stop losses
+        in place for BTC and ETH. The portfolio is not overly concentrated (only 20%
+        of equity at risk). However, if both BTC and ETH trades hit stop loss, the
+        loss would be 0.10 * 0.03 (for BTC) and 0.10 * 0.02 (for ETH) of equity? Actually,
+        the loss in terms of equity: \\n- BTC: 0.10 * 0.03 = 0.003 (0.3% of equity)\\n-
+        ETH: 0.10 * 0.02 = 0.002 (0.2% of equity)\\nTotal max loss from these two
+        trades: 0.5% of equity. But note: the trades are leveraged, but the stop loss
+        is set as a percentage of the trade? Actually, the stop_loss_pct is the percentage
+        move against our position that triggers the stop. Since we are using leverage,
+        the loss in equity is: size_pct * leverage * stop_loss_pct? Actually, no:
+        the stop_loss_pct is the price movement percentage. The loss in equity is:
+        (entry_price - stop_price) * quantity / equity. But we set size_pct which
+        is the fraction of equity used as margin? Actually, in futures, the position
+        size is: (equity * size_pct) * leverage. Then, if the price moves by stop_loss_pct
+        against us, the loss is: (equity * size_pct) * leverage * stop_loss_pct. So:\\n\\nBTC:
+        loss = 10000 * 0.10 * 3 * 0.03 = 90 USDC (0.9% of equity)\\nETH: loss = 10000
+        * 0.10 * 3 * 0.02 = 60 USDC (0.6% of equity)\\nTotal max loss from both trades:
+        150 USDC (1.5% of equity). This is acceptable.\\n\\nPortfolio confidence:
+        We can set to 0.60, meaning we are 60% confident that the overall portfolio
+        decision (two longs and one hold) will be positive after accounting for fees
+        and funding.\\n\\nNow, for action_key_signals: We are required to provide
+        up to 8 key signals per action (as an array of strings). We have an enum of
+        possible signals. We can choose:\\n\\nFor BTC: \\n  - technical.rsi_extreme?
+        But RSI is 58, not extreme. So we skip that.\\n  - technical.macd_cross? Not
+        mentioned, but we can assume if the trend is up, maybe MACD crossed up? But
+        not given. We might skip.\\n  - technical.ema_alignment? Not mentioned.\\n
+        \ - technical.bollinger_squeeze? Not mentioned.\\n  - technical.atr_spike?
+        Not mentioned.\\n  - technical.support_resistance? Not mentioned for BTC.\\n
+        \ - sentiment? Not given.\\n  - market.volatility_regime? Not mentioned.\\n\\nAlternatively,
+        we can use:\\n  BTC: [\\\"technical.rsi_extreme\\\"] -> but it's not extreme?
+        Actually, RSI 58 is not extreme. We might use \\\"technical.rsi_extreme\\\"
+        only if above 70 or below 30. So we skip.\\n\\nWe might not have enough signals
+        from the context. But the problem says \\\"illustrative\\\", so we can make
+        up some? But we shouldn't. The context only provided RSI for BTC and that
+        it's trending mildly up. So we can use:\\n\\nBTC: [\\\"technical.rsi_extreme\\\"]
+        -> no, because not extreme. Alternatively, we can leave it out? But the array
+        is required. We must provide at least one? Actually, the schema says maxItems=8
+        and minItems? Not specified. But the required field, so we must have the array.
+        We can use:\\n\\n  BTC: [\\\"technical.macd_cross\\\"] -> if we assume the
+        mild uptrend is accompanied by a MACD crossover? But the context doesn't say.
+        Alternatively, we can use \\\"technical.ema_alignment\\\" if we assume the
+        EMAs are aligned bullishly? Since it's trending up.\\n\\nBut the context is
+        minimal. We can use:\\n\\nBTC: [\\\"technical.rsi_extreme\\\"] -> no, because
+        58 is not extreme. How about we don't use that? We can use \\\"technical.support_resistance\\\"
+        if we assume that the trend is breaking a resistance? But not stated.\\n\\nAlternatively,
+        we can use: \\\"technical.rsi_extreme\\\" is not appropriate. Let me check
+        the enum again: \\n  enum includes: \\n    technical.rsi_extreme -> no\\n
+        \   technical.macd_cross -> maybe? if we assume the trend started with a cross\\n
+        \   technical.ema_alignment -> if we assume the EMAs are in bullish order\\n\\nGiven
+        the lack of information, I'll use:\\n\\nBTC: [\\\"technical.ema_alignment\\\"]
+        -> because a mild uptrend often has EMAs aligned (shorter above longer).\\n\\nETH:
+        \\n  We are trading on support: so \\\"technical.support_resistance\\\" is
+        appropriate.\\n\\nSOL: \\n  For hold, we can use: \\\"market.volatility_regime\\\"
+        because the volatility is high.\\n\\nSo:\\n\\nBTC: [\\\"technical.ema_alignment\\\"]\\nETH:
+        [\\\"technical.support_resistance\\\"]\\nSOL: [\\\"market.volatility_regime\\\"]\\n\\nBut
+        note: for SOL we are holding, so we are providing the key signal that led
+        to the hold decision.\\n\\nNow, let's write the JSON.\\n\\nImportant: \\n
+        \ For BTC and ETH: entry_type='market', limit_price=null.\\n  For SOL: side='HOLD',
+        size_pct=0, leverage=0, entry_type='none', stop_loss_pct=null, take_profit_pct=null,
+        limit_price=null.\\n\\nAlso, for each action, we need action_reasoning (at
+        least 20 characters) and the key signals array.\\n\\nPortfolio_reasoning:
+        at least 50 characters, risk_assessment at least 30.\\n\\nLet me write:\\n\\nPortfolio_reasoning:
+        \\\"We initiate long positions on BTC and ETH to capitalize on the current
+        bullish technical structure. BTC is in a mild uptrend with RSI neutral, indicating
+        room for upside. ETH is consolidating near support, providing a favorable
+        entry with defined risk. We avoid SOL due to excessive volatility without
+        a clear directional edge after its recent rally.\\\"\\n\\nRisk_assessment:
+        \\\"The portfolio risk is controlled with stop losses on active positions.
+        Maximum potential loss from the two long positions is 1.5% of equity. The
+        overall market environment is moderately bullish, but we remain cautious of
+        potential reversals, especially given SOL's volatility which could spill over.\\\"\\n\\nPortfolio_confidence:
+        0.60\\n\\nNow, for the actions:\\n\\nBTC action:\\n  symbol: \\\"BTC\\\"\\n
+        \ side: \\\"LONG\\\"\\n  leverage: 3\\n  size_pct: 0.10\\n  stop_loss_pct:
+        0.03\\n  take_profit_pct: 0.06\\n  entry_type: \\\"market\\\"\\n  limit_price:
+        null\\n  confidence: 0.65\\n  time_horizon_min: 120\\n  action_reasoning:
+        \\\"BTC is in a mild uptrend with RSI neutral, providing a favorable risk-reward
+        for a long entry with a 1:2 reward-risk ratio.\\\"\\n  action_key_signals:
+        [\\\"technical.ema_alignment\\\"]\\n\\nETH action:\\n  symbol: \\\"ETH\\\"\\n
+        \ side: \\\"LONG\\\"\\n  leverage: 3\\n  size_pct: 0.10\\n  stop_loss_pct:
+        0.02\\n  take_profit_pct: 0.05\\n  entry_type: \\\"market\\\"\\n  limit_price:
+        null\\n  confidence: 0.60\\n  time_horizon_min: 120\\n  action_reasoning:
+        \\\"ETH is consolidating near a key support level, offering a long opportunity
+        with a tight stop loss below support and a conservative take profit.\\\"\\n
+        \ action_key_signals: [\\\"technical.support_resistance\\\"]\\n\\nSOL action:\\n
+        \ symbol: \\\"SOL\\\"\\n  side: \\\"HOLD\\\"\\n  leverage: 0\\n  size_pct:
+        0\\n  stop_loss_pct: null\\n  take_profit_pct: null\\n  entry_type: \\\"none\\\"\\n
+        \ limit_price: null\\n  confidence: 0.55\\n  time_horizon_min: 120\\n  action_reasoning:
+        \\\"SOL is experiencing high volatility after a rally, making directional
+        trades risky without a clear signal; holding avoids unnecessary exposure.\\\"\\n
+        \ action_key_signals: [\\\"market.volatility_regime\\\"]\\n\\nNow, we output
+        the JSON without any markdown and exactly as the schema.\\n\\nNote: the schema
+        requires the top-level keys: portfolio_reasoning, risk_assessment, portfolio_confidence,
+        and actions (which is an array of the three actions).\\n\\nLet's write the
+        JSON:\\n\",\"format\":\"unknown\",\"index\":0}]}}],\"usage\":{\"prompt_tokens\":1737,\"completion_tokens\":3418,\"total_tokens\":5155,\"cost\":0.0097609,\"is_byok\":false,\"prompt_tokens_details\":{\"cached_tokens\":0,\"cache_write_tokens\":0,\"audio_tokens\":0,\"video_tokens\":0},\"cost_details\":{\"upstream_inference_cost\":0.0097609,\"upstream_inference_prompt_cost\":0.0012159,\"upstream_inference_completions_cost\":0.008545},\"completion_tokens_details\":{\"reasoning_tokens\":2830,\"image_tokens\":0,\"audio_tokens\":0}}}"
+    headers:
+      Access-Control-Allow-Origin:
+      - '*'
+      CF-RAY:
+      - a0b61a5dc976ea65-FCO
+      Connection:
+      - keep-alive
+      Content-Type:
+      - application/json
+      Date:
+      - Sun, 14 Jun 2026 03:03:39 GMT
+      Permissions-Policy:
+      - payment=(self "https://checkout.stripe.com" "https://connect-js.stripe.com"
+        "https://js.stripe.com" "https://*.js.stripe.com" "https://hooks.stripe.com")
+      Referrer-Policy:
+      - no-referrer, strict-origin-when-cross-origin
+      Server:
+      - cloudflare
+      Transfer-Encoding:
+      - chunked
+      X-Content-Type-Options:
+      - nosniff
+      X-Generation-Id:
+      - gen-1781406217-2g22M7DF1u8YLHagYbfc
+      access-control-expose-headers:
+      - X-Generation-Id,cf-ray
+      content-length:
+      - '28367'
+    status:
+      code: 200
+      message: OK
+version: 1
