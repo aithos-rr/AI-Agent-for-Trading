@@ -746,7 +746,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/unit/context/test_builder.py -q && uv run mypy src`
   - **done-when**: con collectors mockati produce un `ContextBundle` valido; test verde.
 
-- [ ] **M3-T08** 🐘 — `db/repositories/context_build.py`: `ContextBuildRepository`
+- [x] **M3-T08** 🐘 — `db/repositories/context_build.py`: `ContextBuildRepository`
   - **what**: `ContextBuildRepository` §7.6 (fix B.5): `start_build`, `complete_build`
     (persiste context_snapshots + aggiorna context_build_runs in 1 txn), `fail_build`,
     `get_snapshot_for_tick`. **No commit interno** (UoW dell'orchestrator). Integration test
