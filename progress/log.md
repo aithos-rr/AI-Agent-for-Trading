@@ -521,3 +521,28 @@ GATE PASSED for M3
 **Next**: i fix sono unit-testati con mock realistici. Validazione finale facoltativa:
 re-run `/smoke_m3.py` sul host (deve mostrare news non vuote + `premium`/`funding ×8`).
 Smoke end-to-end `python -m aiat` rimandato a M5-T07 (entrypoint). M3 pronto; M4 può partire.
+
+---
+
+## 2026-06-14 — M3-T11 re-run smoke (umano, host) — fix VALIDATI sul reale
+
+Re-run di `/smoke_m3.py` dopo i fix di ADR-0013. Esito su dato reale:
+- **News ✅ funziona**: CoinDesk segue il redirect 308 → 25 item → 10 reali ordinati per
+  recency (es. 2026-06-14T19:17Z, 18:30Z, 15:00Z). Il `follow_redirects` ha risolto.
+- **F5 ✅**: `funding_rate_8h = "0.0001000"` su tutti gli asset (= 0.0000125 orario ×8).
+- **F4 ✅**: campo `premium` reale e direzionale (BTC −0.00026, ETH −0.00058, SOL +0.00013).
+- **Technical/Sentiment ✅**: price esatto, F&G 18.
+
+**Limitazione nota → DECISIONE registrata**: **CryptoPanic resta non parsabile** anche con
+il fallback lenient (`Invalid XML line 90`, deterministico su entrambi i run — quell'URL non
+restituisce un RSS standard). Il fallback ha estratto 0 item → fonte scartata. Le news
+funzionano comunque (tolleranza fallimento parziale, ADR-0011), ma **di fatto su 1 sola fonte
+(CoinDesk)**, indebolendo la ratio "2 fonti anti-bias".
+
+**Decisione (raccomandazione accettata)**: si accetta CoinDesk-only **per ora** (M3 chiuso,
+M4 indipendente); **sostituire CryptoPanic con un feed RSS funzionante** (es. CoinTelegraph/
+Decrypt) come follow-up **prima di M7** (esperimento ufficiale) — richiederà aggiornamento di
+ADR-0011/0013 + costante `_RSS_SOURCES` + un re-run smoke di validazione. Tracciato anche in
+memoria di sessione (`m3-open-data-decisions`).
+
+**Next**: M3 concluso con rigore. Procedere a M4 (ExecutionLayer, chiude D2) via Ralph loop.
