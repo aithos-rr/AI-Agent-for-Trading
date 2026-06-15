@@ -1180,3 +1180,21 @@ Success: no issues found in 74 source files
 ```
 4 passed in 5.50s
 ```
+
+---
+
+## 2026-06-14 — M5-T09
+
+**Task**: `tests/e2e/test_isolation.py` (inv #1) — cross-model isolation  
+**Changed**:
+- Created `tests/e2e/_repository_spy.py`: `RepositorySpy` context-manager using SQLAlchemy `event.listen(session.sync_session, "before_flush", ...)` to intercept flushes and detect rows with wrong `model_id`. Raises `LeakDetected` on violation.
+- Created `tests/e2e/test_isolation.py`: 4 e2e tests marked `@pytest.mark.invariant("1")` using ephemeral Postgres:
+  - `test_model1_run_creates_only_model1_rows`: verifies no cross-model rows in DB.
+  - `test_two_models_produce_isolated_rows`: 2 agents share snapshot but produce separate run/decision rows.
+  - `test_spy_detects_cross_model_flush`: RepositorySpy raises LeakDetected when wrong model_id flushed.
+  - `test_spy_passes_for_correct_model`: RepositorySpy is silent for matching model_id.
+
+**Verify**:
+```
+4 passed in 4.93s
+```

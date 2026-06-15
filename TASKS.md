@@ -1044,7 +1044,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/e2e/test_decision_loop_smoke.py -q`
   - **done-when** 🐘: lo smoke e2e mockato è verde con i conteggi attesi.
 
-- [ ] **M5-T09** 🐘 — `tests/e2e/test_isolation.py` (inv #1)
+- [x] **M5-T09** 🐘 — `tests/e2e/test_isolation.py` (inv #1)
   - **what**: e2e §9.5 / inv #1: seed 2 model_id, lancia agent `model_1`, fallisce se legge
     rows `model_2`. **Doppia strategia**: `RepositorySpy` (primario, `LeakDetected`) +
     DB-level trap Postgres (secondario via `SET LOCAL aiat.expected_model_id`).
