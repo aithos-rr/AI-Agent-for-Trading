@@ -985,7 +985,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when**: validator coerenza api-key/provider attivo; `ContextOrchestratorSettings`
     rifiuta extra (least privilege); test verde.
 
-- [ ] **M5-T04** — `orchestration/lifecycle.py`: `startup_checks`
+- [x] **M5-T04** — `orchestration/lifecycle.py`: `startup_checks`
   - **what**: TDD (settings/DB mockati). Dispatcher `startup_checks` role-specific §10.1:
     check comuni (network testnet inv #9, db schema, active experiment) + agent A1-A10
     (incl. A9 memory off inv #5, A10 baseline fatal) + orchestrator O1-O4 (incl. O1 env-var

@@ -1029,3 +1029,37 @@ ruff clean, mypy clean (69 source files).
 Success: no issues found in 69 source files
 ```
 ruff clean, mypy clean (69 source files). All unit tests: 370 passed.
+
+---
+
+## 2026-06-14 — M5-T04: orchestration/lifecycle.py — startup_checks (§10.1)
+
+**Task**: `startup_checks` dispatcher + role-specific checks A1-A10 (agent) and O1-O4 (orchestrator).
+
+**What changed**:
+- Created `src/aiat/orchestration/lifecycle.py`:
+  - `EXPECTED_ALEMBIC_VERSION = "002"`, `EXPECTED_BASELINES` frozenset of 3 baselines
+  - `_db_session(settings)` — `@asynccontextmanager` helper wrapping `get_db_session` (adapts PRD pseudocode to actual `session.py` interface which takes URL string and returns `async_sessionmaker`, not an async CM directly)
+  - `startup_checks()` — dispatcher: common checks → isinstance dispatch to agent or orchestrator branch
+  - `_check_network_testnet` — invariant #9 (pure, testable)
+  - `_check_db_connectivity_and_schema` — alembic version check
+  - `_check_active_experiment` — experiment exists + not ended; SHA mismatch = warning only
+  - `_agent_startup_checks` — A1/A2/A3 (model/provider/wallet), A4 (pricing YAML), A5 (prompt template), A6 (`_check_hl_reachability`, uses MockHyperliquidClient placeholder until M6), A7 (`_check_llm_credentials`, uses `load_llm().invoke()` mock in tests), A8 (guardrail Decimal validity), A9 (memory off, invariant #5), A10 (baseline presence, fatal)
+  - `_orchestrator_startup_checks` — O1 (env-var leak detection via `os.environ`), delegates O2-O4 to `_check_orchestrator_sources`
+  - `_check_orchestrator_sources` — O2 (HL info endpoint), O3 (RSS via NewsCollector), O4 (F&G via SentimentCollector); all mockable in unit tests
+- Created `tests/unit/orchestration/test_lifecycle.py` (24 tests, TDD):
+  - `_check_network_testnet`: 3 tests (ok, rejects mainnet, rejects arbitrary)
+  - `_check_db_connectivity_and_schema`: 2 tests (ok, mismatch)
+  - `_check_active_experiment`: 4 tests (ok, not found, ended, sha-mismatch = warn not raise)
+  - `_agent_startup_checks`: 10 tests (A2 provider mismatch, A3 wallet mismatch, A5 template missing, A8 max_size=0, A8 leverage=0, A8 valid, A9 memory on, A9 memory off, A10 missing, A10 present)
+  - `_orchestrator_startup_checks`: 3 tests (O1 MODEL_ID leaked, O1 WALLET_PRIVATE_KEY leaked, O1 clean env)
+  - `startup_checks`: 2 dispatch tests (agent, orchestrator)
+- Design note: `_db_session` is a private helper so tests can patch it cleanly for each DB call (A1/A2/A3, A5, A10 each need a separate session). `_check_hl_reachability` and `_check_llm_credentials` are also separate private functions for the same reason.
+
+**Verify**:
+```
+24 passed in 0.35s
+Success: no issues found in 70 source files
+ruff clean, lint-imports clean
+394 passed, 2 warnings in 6.35s (all unit tests)
+```
