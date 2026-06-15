@@ -1216,3 +1216,22 @@ Success: no issues found in 74 source files
 ```
 4 passed in 6.02s
 ```
+
+---
+
+## 2026-06-14 — M5-T11
+
+**Task**: `tests/e2e/test_guardrail_e2e.py` — guardrail clamping e2e  
+**Changed**:
+- Created `tests/e2e/test_guardrail_e2e.py`: 4 e2e tests using ephemeral Postgres and real `Guardrails()` (no mock guardrails passed):
+  - `test_size_pct_clamped_to_max`: LLM proposes size_pct=0.99 → DB shows size_pct_executed=0.20, size_pct_clamped=True.
+  - `test_leverage_clamped_to_hard_cap`: LLM proposes leverage=30 → DB shows leverage_executed≤10, leverage_clamped=True.
+  - `test_both_flags_set_simultaneously`: both size_pct_clamped and leverage_clamped True in same DB row.
+  - `test_hold_actions_not_clamped`: ETH/SOL HOLD actions show size_pct_clamped=False, leverage_clamped=False, forced_hold=False.
+- LLM mock proposes LONG BTC with size_pct=0.99, leverage=30, confidence=0.95 + 2 HOLDs.
+- DecisionLoop uses real Guardrails() via default (guardrails=None).
+
+**Verify**:
+```
+4 passed in 5.99s
+```

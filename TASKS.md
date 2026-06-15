@@ -1066,7 +1066,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when** 🐘: i 4 agent condividono lo stesso context_snapshot/hash; portfolio
     diverge.
 
-- [ ] **M5-T11** 🐘 — `tests/e2e/test_guardrail_e2e.py`
+- [x] **M5-T11** 🐘 — `tests/e2e/test_guardrail_e2e.py`
   - **what**: e2e §9.5: LLM mock propone size_pct=0.99 / leverage=30 / confidence=0.95;
     verifica `size_pct_executed=0.20` (clamp), `leverage_executed≤10` (hard cap), flag
     `size_pct_clamped=true` e `leverage_clamped=true` persistiti.
