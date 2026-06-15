@@ -155,7 +155,9 @@ class PositionsRepository:
 
         Computes sum_fees_usd and sum_funding_usd from the DB, then persists
         an Outcome in the caller's transaction.  pnl_net_fee_funding_tax_sim_usd
-        is set equal to pnl_net_fee_funding_usd (tax-sim populated in M5).
+        is set to Decimal("0") — the tax-sim value is populated later by
+        scripts/compute_tax_sim.py (M5), never here (ADR-0014, matching
+        OutcomeResolver).
         """
         pos = await self._session.get(Position, uuid.UUID(position_id))
         if pos is None:
@@ -209,7 +211,9 @@ class PositionsRepository:
             sum_funding_usd=sum_funding_usd,
             pnl_net_fee_usd=pnl_net_fee_usd,
             pnl_net_fee_funding_usd=pnl_net_fee_funding_usd,
-            pnl_net_fee_funding_tax_sim_usd=pnl_net_fee_funding_usd,
+            # tax-sim value populated by scripts/compute_tax_sim.py in M5, never here
+            # (ADR-0014; consistent with OutcomeResolver which also writes Decimal("0")).
+            pnl_net_fee_funding_tax_sim_usd=Decimal("0"),
             was_profitable_net=pnl_net_fee_funding_usd > Decimal("0"),
             holding_duration_min=holding_duration_min,
             decision_action_confidence=opening_action.confidence,

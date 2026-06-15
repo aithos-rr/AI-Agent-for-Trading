@@ -853,3 +853,39 @@ la validità scientifica oggi; fix-now solo il vero disallineamento sizing.py↔
 appena intercettato al gate M4 è la prova del valore della verifica incrementale. I test reali
 (API/testnet/ENV) restano gate umani fuori dal container. M4-T08: 1 wallet testnet basta per
 lo smoke; servono 4 wallet (1/modello, isolamento inv #1/#13) solo per M6/M7.
+
+---
+
+## 2026-06-14 — AUDIT COMPLETO M0-M4 (richiesto dall'utente) → 1 fix isolato
+
+**Audit adversariale** (Workflow, 13 agent, 7 dimensioni: domain-schemas, db-models/migrations,
+llm-layer, context-layer, execution-postfix, cross-cutting inv #10/#11/#12/#14, scientific-validity)
+con verifica scettica vs PRD/ADR/RESEARCH. **6 findings → 1 confermato (fix), 5 respinti.**
+
+**CONFERMATO e CORRETTO (medium — non rischio tesi, ma incoerenza reale):**
+- `positions.py:212` `close_position` scriveva `pnl_net_fee_funding_tax_sim_usd =
+  pnl_net_fee_funding_usd`, mentre `OutcomeResolver` (resolve_position:115, resolve_hold_flat:153)
+  e ADR-0014 (r.55, "popolato da tax sim, mai dal resolver") impongono **`Decimal("0")`**. Due
+  writer della stessa colonna in disaccordo (stessa classe del bug funding-sign). **Fix**:
+  `= Decimal("0")` + docstring + assert nell'integration test. (NB: la colonna per-position è
+  "future work, non usata per tesi" — PRD §3.2.7 r.797; RQ1 post-tax usa l'aggregato
+  `tax_sim_periods`, non questa colonna → niente impatto su validità scientifica, solo coerenza.)
+  Mantenuto il write dell'outcome in close_position (mandato da PRD §9.3 + DoD M4).
+
+**RESPINTI (5, verificati a mano — rifiuti fondati):**
+- Pydantic "no strict=True" → falso difetto: il path reale usa `Decimal(str(value))`; strict=True
+  romperebbe il parsing JSON LLM (`model_validate(json.loads(...))`); "strict" nel PRD = filosofia
+  contratti tipati (extra='forbid'), non il flag. decimal_places fa da backstop.
+- status `partial` irraggiungibile nel context snapshot → enhancement, non difetto (ADR-0011 tollera
+  il degrado news; partial/success di inv #15 è per le `runs`, non `context_build_runs`; source_timestamps
+  persistiti = ricostruibile).
+- pubDate malformato → `datetime.now()` fallback → trade-off **esplicitamente accettato** in ADR-0011
+  (r.84-89) con test dedicato; l'hash è deterministico sul payload persistito (build once per tick).
+- close_position scrive `outcomes` = violazione bounded context → falso: PRD §9.3 r.2373 + DoD M4
+  r.3272/3275 lo **mandano** esplicitamente in M4.
+- tax-sim divergence "bias RQ1" → respinto come rischio-tesi (RQ1 usa l'aggregato, non la colonna
+  per-row); è la stessa cosa del fix sopra, confermata come incoerenza ma non come rischio scientifico.
+
+**Verify**: `./tools/gate_check.sh M4` → **GATE PASSED** (393/207/45, cov 96.97%/99.18%).
+**Esito**: M0-M4 confermati stabili e coerenti col PRD/ADR; nessun rischio di validità scientifica
+residuo trovato. Pronti per M5 quando l'utente dà il via (+ scaffolding M4-T08 a richiesta).

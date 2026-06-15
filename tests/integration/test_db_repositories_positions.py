@@ -386,6 +386,9 @@ async def test_close_position_updates_and_creates_outcome(db_session: AsyncSessi
     assert outcome.sum_fees_usd == Decimal("0.30")
     assert outcome.pnl_net_fee_usd == Decimal("4.70")
     assert outcome.pnl_net_fee_funding_usd == Decimal("4.70")
+    # tax-sim column is a placeholder populated by compute_tax_sim.py in M5 (ADR-0014);
+    # close_position must leave it 0, consistent with OutcomeResolver — never net PnL.
+    assert outcome.pnl_net_fee_funding_tax_sim_usd == Decimal("0")
     assert outcome.was_profitable_net is True
     assert outcome.decision_action_confidence == Decimal("0.7000")
     assert outcome.decision_action_time_horizon_min == 60
