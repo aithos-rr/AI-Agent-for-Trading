@@ -112,6 +112,7 @@ async def test_check_network_testnet_ok() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.invariant("9")
 async def test_check_network_testnet_rejects_mainnet() -> None:
     settings = MagicMock()
     settings.network = "mainnet"
@@ -334,6 +335,7 @@ async def test_agent_a9_memory_on_raises() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.invariant("5")
 async def test_agent_a9_memory_off_ok() -> None:
     settings = _agent(inject_decision_history=False)
     db = _full_db_mock(settings)

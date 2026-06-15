@@ -132,6 +132,7 @@ def test_limit_entry_without_limit_price_raises() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.invariant("6")
 def test_unknown_signal_raises() -> None:
     bad = {**HOLD_ACTION_BTC, "action_key_signals": ["rsi_is_overbought"]}
     with pytest.raises(ValidationError):
@@ -143,6 +144,7 @@ def test_unknown_signal_raises() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.invariant("7")
 def test_confidence_boundary_valid() -> None:
     low = ActionDecision(**{**HOLD_ACTION_BTC, "confidence": "0"})
     high = ActionDecision(**{**HOLD_ACTION_BTC, "confidence": "1"})

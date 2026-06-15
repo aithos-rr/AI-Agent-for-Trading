@@ -90,6 +90,7 @@ def test_upgrade_creates_20_tables(alembic_cfg: Config, migration_db_url: str) -
     assert len(tables) >= 20, f"Expected ≥20 tables, got {len(tables)}: {tables}"
 
 
+@pytest.mark.invariant("3")
 def test_denormalization_columns_present(alembic_cfg: Config, migration_db_url: str) -> None:
     """Tables that require inv #3 denormalization have experiment_id/model_id/run_id."""
     inspector, engine = get_inspector(migration_db_url)

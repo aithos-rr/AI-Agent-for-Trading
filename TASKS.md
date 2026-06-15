@@ -1076,7 +1076,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/e2e/test_guardrail_e2e.py -q`
   - **done-when** 🐘: i clamp sono applicati e i flag persistiti in decision_actions.
 
-- [ ] **M5-T12** 🐘 — Invariant coverage matrix §9.7
+- [x] **M5-T12** 🐘 — Invariant coverage matrix §9.7
   - **what**: Creare `tests/invariant_coverage.py` che aggrega/registra i test gating dei
     **15 invarianti** §9.7 con marker `@pytest.mark.invariant("N")`, e una meta-asserzione
     che `{1..15}` siano tutti coperti (nessuna cella vuota). Colmare i gap mancanti (es.

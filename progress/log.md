@@ -1235,3 +1235,32 @@ Success: no issues found in 74 source files
 ```
 4 passed in 5.99s
 ```
+
+---
+
+## 2026-06-14 — M5-T12
+
+**Task**: Invariant coverage matrix §9.7 — 15/15 markers present  
+**Changed**:
+- Created `tests/invariant_coverage.py`: 6 tests for invariants #2, #10, #11, #12, #14, #15:
+  - `test_run_logs_git_sha_and_hashes` (#2): Run model has git_commit_sha + prompt_template_hash.
+  - `test_ruff_t201_no_print_in_src` (#10): subprocess ruff --select T201 exits 0.
+  - `test_no_raw_sql_outside_repos` (#11): no execute(text(...)) outside db/repositories/.
+  - `test_no_float_in_money_fields` (#12): AST walker finds no float literals/Decimal(float) in domain/schemas.py.
+  - `test_import_linter_clean` (#14): subprocess lint-imports exits 0.
+  - `test_tick_coverage_schema` (#15): Run model has tick_id/model_id/experiment_id/status.
+- Added `@pytest.mark.invariant("N")` to 7 existing tests:
+  - `test_db_migrations.py::test_denormalization_columns_present` (#3)
+  - `test_db_repositories_decisions.py::test_persist_decision_creates_all_rows` (#4)
+  - `test_lifecycle.py::test_agent_a9_memory_off_ok` (#5)
+  - `test_schemas_trade_decision.py::test_unknown_signal_raises` (#6)
+  - `test_schemas_trade_decision.py::test_confidence_boundary_valid` (#7)
+  - `test_guardrails.py::TestCleanPassthrough::test_no_flags_on_valid_long` (#8)
+  - `test_lifecycle.py::test_check_network_testnet_rejects_mainnet` (#9)
+- Added `import pytest` to `test_guardrails.py`.
+
+**Verify**:
+```
+15/15 invariant markers present
+6 passed in 0.54s
+```

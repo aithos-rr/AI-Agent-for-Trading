@@ -239,6 +239,7 @@ def _make_guardrail_reports(
 
 
 @pytest.mark.asyncio
+@pytest.mark.invariant("4")
 async def test_persist_decision_creates_all_rows(db_session: AsyncSession) -> None:
     """persist_decision inserts 1 decision, 3 actions, 1 cost_event, 1 llm_invocation."""
     ids = await _seed(db_session)
