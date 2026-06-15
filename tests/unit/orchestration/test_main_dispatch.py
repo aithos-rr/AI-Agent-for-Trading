@@ -43,7 +43,8 @@ def _orchestrator_settings(**overrides: object) -> ContextOrchestratorSettings:
         "service_role": "context_orchestrator",
     }
     return ContextOrchestratorSettings(  # type: ignore[call-arg]
-        _env_file=None, **{**base, **overrides}  # type: ignore[arg-type]
+        _env_file=None,
+        **{**base, **overrides},  # type: ignore[arg-type]
     )
 
 
@@ -193,9 +194,7 @@ class TestMainDispatch:
         mock_scheduler = MagicMock()
         mock_scheduler.start = MagicMock()
 
-        async def _fake_build_agent(
-            s: object, tick_job: object = None
-        ) -> MagicMock:
+        async def _fake_build_agent(s: object, tick_job: object = None) -> MagicMock:
             captured_tick_job.append(tick_job)
             return mock_scheduler
 

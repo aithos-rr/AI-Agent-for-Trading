@@ -311,22 +311,12 @@ class DecisionLoop:
             has_entry = any(o.order_kind == OrderKind.ENTRY for o in order_results)
 
             if has_close and current_pos_summary is not None:
-                open_positions = await positions_repo.list_open_for_model(
-                    self._settings.model_id
-                )
-                open_pos = next(
-                    (p for p in open_positions if p.symbol == action.symbol), None
-                )
+                open_positions = await positions_repo.list_open_for_model(self._settings.model_id)
+                open_pos = next((p for p in open_positions if p.symbol == action.symbol), None)
                 if open_pos is not None:
-                    close_order = next(
-                        o for o in order_results if o.order_kind == OrderKind.CLOSE
-                    )
+                    close_order = next(o for o in order_results if o.order_kind == OrderKind.CLOSE)
                     if close_order.filled_price is not None:
-                        side_multiplier = (
-                            Decimal("1")
-                            if open_pos.side == "LONG"
-                            else Decimal("-1")
-                        )
+                        side_multiplier = Decimal("1") if open_pos.side == "LONG" else Decimal("-1")
                         realized_pnl = (
                             (close_order.filled_price - open_pos.entry_price)
                             * open_pos.size_units
@@ -338,14 +328,10 @@ class DecisionLoop:
                             close_reason=CloseReason.MODEL_CLOSE,
                             realized_pnl_usd=realized_pnl,
                         )
-                        await positions_repo.close_position(
-                            str(open_pos.id), closure_info, run_id
-                        )
+                        await positions_repo.close_position(str(open_pos.id), closure_info, run_id)
 
             if has_entry:
-                entry_orders = [
-                    o for o in order_results if o.order_kind != OrderKind.CLOSE
-                ]
+                entry_orders = [o for o in order_results if o.order_kind != OrderKind.CLOSE]
                 await positions_repo.open_position(str(db_action.id), entry_orders, run_id)
 
     async def _check_pending_closures(
@@ -360,13 +346,9 @@ class DecisionLoop:
         for position in open_positions:
             if position.hl_position_id is None:
                 continue
-            closure_info = await self._hl_client.check_position_closure(
-                position.hl_position_id
-            )
+            closure_info = await self._hl_client.check_position_closure(position.hl_position_id)
             if closure_info is not None:
-                await positions_repo.close_position(
-                    str(position.id), closure_info, run_id
-                )
+                await positions_repo.close_position(str(position.id), closure_info, run_id)
 
     async def _finalize_run(
         self,

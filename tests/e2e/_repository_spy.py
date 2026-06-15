@@ -65,9 +65,7 @@ class RepositorySpy:
         if isinstance(model_id, str) and model_id != self._expected_model_id:
             self._violations.append(model_id)
 
-    def _on_before_flush(
-        self, session: object, flush_context: object, instances: object
-    ) -> None:
+    def _on_before_flush(self, session: object, flush_context: object, instances: object) -> None:
         sync = session  # type: ignore[assignment]
         for obj in list(getattr(sync, "new", [])) + list(getattr(sync, "dirty", [])):  # type: ignore[attr-defined]
             self._check_instance(obj)

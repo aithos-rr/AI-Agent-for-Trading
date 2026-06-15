@@ -86,8 +86,7 @@ def _make_trade_decision(btc_action: ActionDecision | None = None) -> TradeDecis
             " for the next 15 minutes"
         ),
         risk_assessment=(
-            "Medium risk environment; volatility elevated but manageable"
-            " with current exposure"
+            "Medium risk environment; volatility elevated but manageable with current exposure"
         ),
         portfolio_confidence=Decimal("0.6"),
         actions=[btc, _make_hold_action("ETH"), _make_hold_action("SOL")],
@@ -373,16 +372,10 @@ class TestDecisionLoopRunOnce:
         session = _setup_session(snap, template)
 
         with (
-            patch(
-                "aiat.orchestration.decision_loop.SnapshotsRepository"
-            ) as MockSnapshotsRepo,
+            patch("aiat.orchestration.decision_loop.SnapshotsRepository") as MockSnapshotsRepo,
             patch("aiat.orchestration.decision_loop.RunsRepository") as MockRunsRepo,
-            patch(
-                "aiat.orchestration.decision_loop.DecisionsRepository"
-            ) as MockDecisionsRepo,
-            patch(
-                "aiat.orchestration.decision_loop.PositionsRepository"
-            ) as MockPositionsRepo,
+            patch("aiat.orchestration.decision_loop.DecisionsRepository") as MockDecisionsRepo,
+            patch("aiat.orchestration.decision_loop.PositionsRepository") as MockPositionsRepo,
         ):
             # SnapshotsRepository.get_context_snapshot returns snapshot then snapshot
             mock_sr = AsyncMock()
@@ -422,17 +415,12 @@ class TestDecisionLoopRunOnce:
         call_order: list[str] = []
 
         with (
-            patch(
-                "aiat.orchestration.decision_loop.SnapshotsRepository"
-            ) as MockSnapshotsRepo,
+            patch("aiat.orchestration.decision_loop.SnapshotsRepository") as MockSnapshotsRepo,
             patch("aiat.orchestration.decision_loop.RunsRepository") as MockRunsRepo,
-            patch(
-                "aiat.orchestration.decision_loop.DecisionsRepository"
-            ) as MockDecisionsRepo,
-            patch(
-                "aiat.orchestration.decision_loop.PositionsRepository"
-            ) as MockPositionsRepo,
+            patch("aiat.orchestration.decision_loop.DecisionsRepository") as MockDecisionsRepo,
+            patch("aiat.orchestration.decision_loop.PositionsRepository") as MockPositionsRepo,
         ):
+
             async def _get_snapshot(exp_id: str, tick: str) -> MagicMock:
                 call_order.append("get_context_snapshot")
                 return snap
@@ -528,16 +516,10 @@ class TestDecisionLoopRunOnce:
         session = _setup_session(None, _make_mock_template())
 
         with (
-            patch(
-                "aiat.orchestration.decision_loop.SnapshotsRepository"
-            ) as MockSnapshotsRepo,
+            patch("aiat.orchestration.decision_loop.SnapshotsRepository") as MockSnapshotsRepo,
             patch("aiat.orchestration.decision_loop.RunsRepository") as MockRunsRepo,
-            patch(
-                "aiat.orchestration.decision_loop.DecisionsRepository"
-            ) as MockDecisionsRepo,
-            patch(
-                "aiat.orchestration.decision_loop.PositionsRepository"
-            ),
+            patch("aiat.orchestration.decision_loop.DecisionsRepository") as MockDecisionsRepo,
+            patch("aiat.orchestration.decision_loop.PositionsRepository"),
             patch("aiat.orchestration.decision_loop.asyncio.sleep"),
         ):
             mock_sr = AsyncMock()
@@ -574,13 +556,9 @@ class TestDecisionLoopRunOnce:
         session = _setup_session(None, _make_mock_template())
 
         with (
-            patch(
-                "aiat.orchestration.decision_loop.SnapshotsRepository"
-            ) as MockSnapshotsRepo,
+            patch("aiat.orchestration.decision_loop.SnapshotsRepository") as MockSnapshotsRepo,
             patch("aiat.orchestration.decision_loop.RunsRepository") as MockRunsRepo,
-            patch(
-                "aiat.orchestration.decision_loop.PositionsRepository"
-            ),
+            patch("aiat.orchestration.decision_loop.PositionsRepository"),
             patch("aiat.orchestration.decision_loop.asyncio.sleep") as mock_sleep,
         ):
             mock_sr = AsyncMock()
@@ -615,16 +593,10 @@ class TestDecisionLoopRunOnce:
         received_prompt: list[str] = []
 
         with (
-            patch(
-                "aiat.orchestration.decision_loop.SnapshotsRepository"
-            ) as MockSnapshotsRepo,
+            patch("aiat.orchestration.decision_loop.SnapshotsRepository") as MockSnapshotsRepo,
             patch("aiat.orchestration.decision_loop.RunsRepository") as MockRunsRepo,
-            patch(
-                "aiat.orchestration.decision_loop.DecisionsRepository"
-            ) as MockDecisionsRepo,
-            patch(
-                "aiat.orchestration.decision_loop.PositionsRepository"
-            ) as MockPositionsRepo,
+            patch("aiat.orchestration.decision_loop.DecisionsRepository") as MockDecisionsRepo,
+            patch("aiat.orchestration.decision_loop.PositionsRepository") as MockPositionsRepo,
         ):
             mock_sr = AsyncMock()
             mock_sr.get_context_snapshot = AsyncMock(return_value=snap)
@@ -695,16 +667,10 @@ class TestDecisionLoopRunOnce:
         session = _setup_session(snap, _make_mock_template())
 
         with (
-            patch(
-                "aiat.orchestration.decision_loop.SnapshotsRepository"
-            ) as MockSnapshotsRepo,
+            patch("aiat.orchestration.decision_loop.SnapshotsRepository") as MockSnapshotsRepo,
             patch("aiat.orchestration.decision_loop.RunsRepository") as MockRunsRepo,
-            patch(
-                "aiat.orchestration.decision_loop.DecisionsRepository"
-            ) as MockDecisionsRepo,
-            patch(
-                "aiat.orchestration.decision_loop.PositionsRepository"
-            ) as MockPositionsRepo,
+            patch("aiat.orchestration.decision_loop.DecisionsRepository") as MockDecisionsRepo,
+            patch("aiat.orchestration.decision_loop.PositionsRepository") as MockPositionsRepo,
         ):
             mock_sr = AsyncMock()
             mock_sr.get_context_snapshot = AsyncMock(return_value=snap)
@@ -775,9 +741,7 @@ class TestDecisionLoopRunOnce:
 
         long_action = _make_long_action("BTC")
         decision = TradeDecision(
-            portfolio_reasoning=(
-                "Bull market detected; entering BTC long with SL/TP configured"
-            ),
+            portfolio_reasoning=("Bull market detected; entering BTC long with SL/TP configured"),
             risk_assessment=(
                 "Moderate risk; volatility is above average but trend is clearly bullish"
             ),
@@ -787,16 +751,10 @@ class TestDecisionLoopRunOnce:
         inv = _make_invocation_result(decision)
 
         with (
-            patch(
-                "aiat.orchestration.decision_loop.SnapshotsRepository"
-            ) as MockSnapshotsRepo,
+            patch("aiat.orchestration.decision_loop.SnapshotsRepository") as MockSnapshotsRepo,
             patch("aiat.orchestration.decision_loop.RunsRepository") as MockRunsRepo,
-            patch(
-                "aiat.orchestration.decision_loop.DecisionsRepository"
-            ) as MockDecisionsRepo,
-            patch(
-                "aiat.orchestration.decision_loop.PositionsRepository"
-            ) as MockPositionsRepo,
+            patch("aiat.orchestration.decision_loop.DecisionsRepository") as MockDecisionsRepo,
+            patch("aiat.orchestration.decision_loop.PositionsRepository") as MockPositionsRepo,
         ):
             mock_sr = AsyncMock()
             mock_sr.get_context_snapshot = AsyncMock(return_value=snap)
@@ -848,9 +806,7 @@ class TestDecisionLoopRunOnce:
             settings = _make_agent_settings()
             factory = _make_session_factory(session)
             hl_client = AsyncMock()
-            hl_client.fetch_portfolio_state = AsyncMock(
-                return_value=_make_portfolio_state()
-            )
+            hl_client.fetch_portfolio_state = AsyncMock(return_value=_make_portfolio_state())
             hl_client.execute_action = AsyncMock(return_value=[entry])
             hl_client.check_position_closure = AsyncMock(return_value=None)
             llm_client = AsyncMock()
@@ -879,16 +835,10 @@ class TestDecisionLoopRunOnce:
         session = _setup_session(snap, _make_mock_template())
 
         with (
-            patch(
-                "aiat.orchestration.decision_loop.SnapshotsRepository"
-            ) as MockSnapshotsRepo,
+            patch("aiat.orchestration.decision_loop.SnapshotsRepository") as MockSnapshotsRepo,
             patch("aiat.orchestration.decision_loop.RunsRepository") as MockRunsRepo,
-            patch(
-                "aiat.orchestration.decision_loop.DecisionsRepository"
-            ),
-            patch(
-                "aiat.orchestration.decision_loop.PositionsRepository"
-            ),
+            patch("aiat.orchestration.decision_loop.DecisionsRepository"),
+            patch("aiat.orchestration.decision_loop.PositionsRepository"),
         ):
             mock_sr = AsyncMock()
             mock_sr.get_context_snapshot = AsyncMock(return_value=snap)
@@ -973,16 +923,10 @@ class TestDecisionLoopRunOnce:
         session = _setup_session(snap, _make_mock_template())
 
         with (
-            patch(
-                "aiat.orchestration.decision_loop.SnapshotsRepository"
-            ) as MockSnapshotsRepo,
+            patch("aiat.orchestration.decision_loop.SnapshotsRepository") as MockSnapshotsRepo,
             patch("aiat.orchestration.decision_loop.RunsRepository") as MockRunsRepo,
-            patch(
-                "aiat.orchestration.decision_loop.DecisionsRepository"
-            ) as MockDecisionsRepo,
-            patch(
-                "aiat.orchestration.decision_loop.PositionsRepository"
-            ) as MockPositionsRepo,
+            patch("aiat.orchestration.decision_loop.DecisionsRepository") as MockDecisionsRepo,
+            patch("aiat.orchestration.decision_loop.PositionsRepository") as MockPositionsRepo,
         ):
             mock_sr = AsyncMock()
             mock_sr.get_context_snapshot = AsyncMock(return_value=snap)
@@ -1048,6 +992,7 @@ class TestDecisionLoopRunOnce:
             session_factory=AsyncMock(),
         )
         from aiat.execution.guardrails import Guardrails
+
         assert isinstance(loop._guardrails, Guardrails)
 
     @pytest.mark.asyncio
@@ -1062,13 +1007,9 @@ class TestDecisionLoopRunOnce:
         session.execute = AsyncMock(return_value=mock_result)
 
         with (
-            patch(
-                "aiat.orchestration.decision_loop.SnapshotsRepository"
-            ) as MockSnapshotsRepo,
+            patch("aiat.orchestration.decision_loop.SnapshotsRepository") as MockSnapshotsRepo,
             patch("aiat.orchestration.decision_loop.RunsRepository") as MockRunsRepo,
-            patch(
-                "aiat.orchestration.decision_loop.PositionsRepository"
-            ),
+            patch("aiat.orchestration.decision_loop.PositionsRepository"),
         ):
             mock_sr = AsyncMock()
             mock_sr.get_context_snapshot = AsyncMock(return_value=snap)
@@ -1100,16 +1041,10 @@ class TestDecisionLoopRunOnce:
         session = _setup_session(snap, _make_mock_template())
 
         with (
-            patch(
-                "aiat.orchestration.decision_loop.SnapshotsRepository"
-            ) as MockSnapshotsRepo,
+            patch("aiat.orchestration.decision_loop.SnapshotsRepository") as MockSnapshotsRepo,
             patch("aiat.orchestration.decision_loop.RunsRepository") as MockRunsRepo,
-            patch(
-                "aiat.orchestration.decision_loop.DecisionsRepository"
-            ) as MockDecisionsRepo,
-            patch(
-                "aiat.orchestration.decision_loop.PositionsRepository"
-            ) as MockPositionsRepo,
+            patch("aiat.orchestration.decision_loop.DecisionsRepository") as MockDecisionsRepo,
+            patch("aiat.orchestration.decision_loop.PositionsRepository") as MockPositionsRepo,
         ):
             mock_sr = AsyncMock()
             mock_sr.get_context_snapshot = AsyncMock(return_value=snap)

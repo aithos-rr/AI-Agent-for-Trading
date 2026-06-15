@@ -228,9 +228,7 @@ def _make_hold_invocation() -> LLMInvocationResult:
             "Market is consolidating — no strong signals justify new positions at this time."
             " Maintaining current allocation."
         ),
-        risk_assessment=(
-            "Low risk; no open positions. Market volatility is moderate."
-        ),
+        risk_assessment=("Low risk; no open positions. Market volatility is moderate."),
         portfolio_confidence=Decimal("0.6"),
         actions=[
             ActionDecision(
@@ -560,6 +558,7 @@ class TestDecisionLoopSmoke:
         )
         # Patch asyncio.sleep to skip retry delays
         from unittest.mock import patch
+
         with patch("aiat.orchestration.decision_loop.asyncio.sleep"):
             run_id = await loop.run_once(missing_tick_id, missing_tick_at)
 

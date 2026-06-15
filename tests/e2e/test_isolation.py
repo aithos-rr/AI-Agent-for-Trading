@@ -53,8 +53,7 @@ _TICK_AT = datetime(2026, 6, 14, 15, 0, tzinfo=UTC)
 _GIT_SHA = "iso-test-sha"
 _SCHEMA_VERSION = "v1"
 _PT_TEXT = (
-    "You are a trading agent (isolation-test template). "
-    "Make decisions based on market context."
+    "You are a trading agent (isolation-test template). Make decisions based on market context."
 )
 _PT_HASH = hashlib.sha256(_PT_TEXT.encode()).hexdigest()
 _PT_CONFIDENCE_DEF = "Probability that the action yields positive net PnL."
@@ -357,9 +356,7 @@ class TestCrossModelIsolation:
 
             # All decisions belong to model_1
             decisions = (
-                await session.scalars(
-                    select(Decision).where(Decision.run_id == uuid.UUID(run_id))
-                )
+                await session.scalars(select(Decision).where(Decision.run_id == uuid.UUID(run_id)))
             ).all()
             for d in decisions:
                 assert d.model_id == model_1
@@ -367,9 +364,7 @@ class TestCrossModelIsolation:
             # All decision_actions for this run
             actions = (
                 await session.scalars(
-                    select(DecisionAction).where(
-                        DecisionAction.run_id == uuid.UUID(run_id)
-                    )
+                    select(DecisionAction).where(DecisionAction.run_id == uuid.UUID(run_id))
                 )
             ).all()
             assert len(actions) == 3
@@ -426,9 +421,7 @@ class TestCrossModelIsolation:
                 str(r.id)
                 for r in (
                     await session.scalars(
-                        select(Run).where(
-                            Run.experiment_id == exp_id, Run.model_id == model_1
-                        )
+                        select(Run).where(Run.experiment_id == exp_id, Run.model_id == model_1)
                     )
                 ).all()
             )
@@ -436,9 +429,7 @@ class TestCrossModelIsolation:
                 str(r.id)
                 for r in (
                     await session.scalars(
-                        select(Run).where(
-                            Run.experiment_id == exp_id, Run.model_id == model_2
-                        )
+                        select(Run).where(Run.experiment_id == exp_id, Run.model_id == model_2)
                     )
                 ).all()
             )
@@ -454,9 +445,7 @@ class TestCrossModelIsolation:
             ):
                 decisions = (
                     await session.scalars(
-                        select(Decision).where(
-                            Decision.run_id == uuid.UUID(run_id_str)
-                        )
+                        select(Decision).where(Decision.run_id == uuid.UUID(run_id_str))
                     )
                 ).all()
                 for d in decisions:

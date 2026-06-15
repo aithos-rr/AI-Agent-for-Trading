@@ -1055,7 +1055,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when** 🐘: il test fallisce (correttamente) se un agent legge un altro model_id;
     passa con isolamento rispettato.
 
-- [ ] **M5-T10** 🐘 — `tests/e2e/test_context_parity.py` (inv #13)
+- [x] **M5-T10** 🐘 — `tests/e2e/test_context_parity.py` (inv #13)
   - **what**: e2e §9.5 / inv #13: orchestrator → 1 snapshot; 4 agent stesso tick_id;
     verifica `context_snapshot_id` identico sui 4 runs + `context_hash` byte-identico
     (market); `portfolio_state_hash` diverge correttamente (OK).

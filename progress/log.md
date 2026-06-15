@@ -1198,3 +1198,21 @@ Success: no issues found in 74 source files
 ```
 4 passed in 4.93s
 ```
+
+---
+
+## 2026-06-14 — M5-T10
+
+**Task**: `tests/e2e/test_context_parity.py` (inv #13) — market context parity  
+**Changed**:
+- Created `tests/e2e/test_context_parity.py`: 4 e2e tests marked `@pytest.mark.invariant("13")` using ephemeral Postgres and asyncio.gather for parallelism:
+  - `test_four_agents_share_context_snapshot_id`: 4 agents same tick_id → all 4 `Run.context_snapshot_id` identical.
+  - `test_context_hash_byte_identical_across_models`: single snapshot, single context_hash; all runs reference it.
+  - `test_portfolio_state_hash_diverges_across_models`: each agent gets distinct equity_usd → 4 distinct `portfolio_state_hash` values (market parity vs portfolio independence).
+  - `test_context_snapshot_written_by_orchestrator_only`: agent runs do not create any new `context_snapshot` rows (orchestrator-only write).
+- Seeded 4 models (`openai-gpt4o-parity`, `anthropic-claude3-parity`, `deepseek-v3-parity`, `qwen-72b-parity`) with distinct equities per test.
+
+**Verify**:
+```
+4 passed in 6.02s
+```
