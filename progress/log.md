@@ -1063,3 +1063,35 @@ Success: no issues found in 70 source files
 ruff clean, lint-imports clean
 394 passed, 2 warnings in 6.35s (all unit tests)
 ```
+
+---
+
+## M5-T05 — `orchestration/scheduler.py`: APScheduler (2026-06-14)
+
+**Task**: Build APScheduler factories `build_scheduler_for_orchestrator` and `build_scheduler_for_agent` with correct CronTrigger config (PRD §4.1).
+
+**What changed**:
+- Created `src/aiat/orchestration/scheduler.py`:
+  - `_JOB_DEFAULTS = {'coalesce': True, 'max_instances': 1, 'misfire_grace_time': 60}`
+  - `_CRON_MINUTE = "0,15,30,45"` (constant, both roles use the same quarter-hour marks)
+  - `_unbound_orchestrator_tick` / `_unbound_agent_tick` — RuntimeError placeholders when no `tick_job` is passed (production wiring happens in M5-T07 `__main__.py`)
+  - `build_scheduler_for_orchestrator(settings, tick_job=None)` → `AsyncIOScheduler` with `CronTrigger(minute='0,15,30,45', second=0)`
+  - `build_scheduler_for_agent(settings, tick_job=None)` → `AsyncIOScheduler` with `CronTrigger(minute='0,15,30,45', second=settings.agent_start_delay_seconds)` (default 30s)
+- Created `tests/unit/orchestration/test_scheduler.py` (19 tests, TDD):
+  - Constant validation: `_JOB_DEFAULTS` values
+  - Orchestrator: returns `AsyncIOScheduler`, 1 job, `CronTrigger` type, `_job_defaults` coalesce/max_instances/misfire_grace_time, trigger repr `"minute='0,15,30,45'"` + `"second='0'"`
+  - Agent: same defaults, trigger `"second='30'"`, respects custom delay (45s test), differs from orchestrator
+
+**Design notes**:
+- `tick_job` optional parameter enables TDD without `decision_loop.py` existing yet (M5-T06 will implement `run_once`). Production `__main__.py` (M5-T07) passes the bound callable.
+- APScheduler 3.x `job.coalesce` / `job.max_instances` are `__slots__` attributes only set when the scheduler runs jobs — tests check `scheduler._job_defaults` instead (correct for configuration testing).
+- Used `_env_file=None` pattern for `ContextOrchestratorSettings` fixtures (same pattern as `test_settings.py`) to prevent the dev `.env` (which has `AIAT_LLM_GATEWAY=openrouter`) from triggering `extra="forbid"` on the orchestrator model.
+- Trigger repr verified: `cron[minute='0,15,30,45', second='0']` (orchestrator) and `cron[minute='0,15,30,45', second='30']` (agent).
+
+**Verify**:
+```
+19 passed in 0.24s
+Success: no issues found in 71 source files
+ruff clean, lint-imports clean
+413 passed, 2 warnings in 8.20s (all unit tests)
+```

@@ -999,7 +999,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when**: `_check_network_testnet` rifiuta non-testnet; memory-off e
     baseline-missing sollevano `RuntimeError`; dispatch per ruolo corretto (mock); test verde.
 
-- [ ] **M5-T05** — `orchestration/scheduler.py`: APScheduler
+- [x] **M5-T05** — `orchestration/scheduler.py`: APScheduler
   - **what**: TDD. Config §4.1: `CronTrigger` minuti 0/15/30/45, `coalesce=True`,
     `max_instances=1`, `misfire_grace_time=60`; `build_scheduler_for_agent` (start_delay
     30s) e `build_scheduler_for_orchestrator`. Test sulla configurazione dei job (no run reale).
