@@ -942,7 +942,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
 > si crea `ledger.py` — §7.6 non definisce un LedgerRepository, i cost_events sono gestiti da
 > `DecisionsRepository` per inv #4). Split per restare in 1 context window.
 
-- [ ] **M5-T02a** 🐘 — `snapshots.py` + `runs.py`
+- [x] **M5-T02a** 🐘 — `snapshots.py` + `runs.py`
   - **what**: `SnapshotsRepository` (`persist_account_snapshot` con portfolio_state_hash,
     `get_context_snapshot`) + `RunsRepository` (`create_run`, `update_status`, `log_error`).
     No commit interno. Integration test ciascuno.

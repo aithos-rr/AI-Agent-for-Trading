@@ -919,3 +919,31 @@ residuo trovato. Pronti per M5 quando l'utente dà il via (+ scaffolding M4-T08 
 12 passed in 5.77s
 ```
 Full suite: `406 passed, 97% coverage`.
+
+---
+
+## 2026-06-14 — M5-T02a: SnapshotsRepository + RunsRepository
+
+**Task**: `db/repositories/snapshots.py` + `db/repositories/runs.py` — §7.6.
+
+**What changed**:
+- Created `src/aiat/db/repositories/snapshots.py` with `SnapshotsRepository`:
+  - `persist_account_snapshot(run_id, portfolio_state)`: fetches the Run row for experiment_id/model_id; computes portfolio_state_hash (SHA-256 of model_dump_json); computes total_position_value_usd as sum(current_price × size_units); inserts AccountSnapshot. No internal commit.
+  - `get_context_snapshot(experiment_id, tick_id)`: SELECT on context_snapshots; returns None if absent.
+- Created `src/aiat/db/repositories/runs.py` with `RunsRepository`:
+  - `create_run(...)`: inserts Run with status='running', run_started_at=now(), all required fields. Returns run_id str.
+  - `update_status(run_id, status, failure_stage)`: sets status + run_completed_at for terminal statuses; raises ValueError if run not found.
+  - `log_error(...)`: inserts Error row with all nullable FKs; no run required.
+- Updated `src/aiat/db/repositories/__init__.py` to export `DecisionsRepository`, `RunsRepository`, `SnapshotsRepository`.
+- Created `tests/integration/test_db_repositories_snapshots_runs.py` — 16 tests:
+  - AccountSnapshot: creates row, portfolio_state_hash, total_position_value_usd (BTC 51000×0.01=510), inherits experiment/model, run_id UNIQUE constraint, missing run raises ValueError
+  - get_context_snapshot: returns existing, None if tick missing, None if experiment mismatch
+  - create_run: creates row with running status, duplicate (exp,model,sched) → IntegrityError
+  - update_status: SUCCESS sets completed_at, FAILED sets failure_stage, unknown run raises ValueError
+  - log_error: inserts with nullable FKs, inserts with run FK linked
+
+**Verify**: `uv run pytest tests/integration/test_db_repositories_snapshots_runs.py -q`
+```
+16 passed in 6.06s
+```
+ruff clean, mypy clean (66 source files).
