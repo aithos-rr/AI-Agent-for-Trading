@@ -28,9 +28,10 @@ from aiat.db.models.decision import Decision
 from aiat.db.models.experiment import Experiment
 from aiat.db.models.llm_invocation import LLMInvocation
 from aiat.db.models.model import Model
+from aiat.db.models.position import Position
 from aiat.db.models.prompt_template import PromptTemplate
 from aiat.db.models.run import Run
-from aiat.domain.enums import EntryType, OrderKind, RunStatus, Side
+from aiat.domain.enums import EntryType, RunStatus, Side
 from aiat.domain.schemas import (
     ActionDecision,
     ContextBundle,
@@ -44,7 +45,8 @@ from aiat.domain.schemas import (
     TechnicalIndicators,
     TradeDecision,
 )
-from aiat.execution.hyperliquid_client import OrderResult
+from aiat.execution.hyperliquid_client import MockHyperliquidClient, OrderResult
+from aiat.execution.sizing import compute_position_sizing
 from aiat.orchestration.decision_loop import DecisionLoop
 
 # ---------------------------------------------------------------------------
@@ -485,7 +487,15 @@ class TestDecisionLoopSmoke:
         session_factory: async_sessionmaker[AsyncSession],
         seed_ids: dict[str, str],
     ) -> None:
-        """run_once with BTC=LONG creates a Position row and calls execute_action."""
+        """run_once with BTC=LONG persists a Position with ADR-0015 leveraged sizing.
+
+        Drives the LONG through the REAL MockHyperliquidClient (which converts
+        size_pct -> leveraged size_units via compute_position_sizing) and a real
+        PositionsRepository, then queries the persisted Position and asserts the
+        stored size_units / notional_value_usd / initial_margin_usd match the
+        leveraged sizing.  This MUST fail if size_pct were persisted as a raw
+        quantity instead of the converted leveraged size_units.
+        """
         settings = _make_agent_settings(seed_ids)
         invocation = _make_long_btc_invocation()
         inv_reports = [
@@ -502,20 +512,21 @@ class TestDecisionLoopSmoke:
         guardrails = MagicMock()
         guardrails.apply = MagicMock(return_value=(invocation.decision, inv_reports))
 
-        entry_result = OrderResult(
-            hl_order_id=str(uuid.uuid4()),
-            client_order_id=str(uuid.uuid4()),
-            order_kind=OrderKind.ENTRY,
-            status="filled",
-            requested_price=None,
-            filled_price=Decimal("65000"),
-            requested_size_units=Decimal("0.01"),
-            filled_size_units=Decimal("0.01"),
-            slippage_bps=Decimal("5"),
-            fee_usd=Decimal("1.00"),
-            raw_response={},
+        btc_action = next(a for a in invocation.decision.actions if a.symbol == "BTC")
+        # Real mock client: exercises the size_pct -> leveraged size_units conversion.
+        hl_client = MockHyperliquidClient()
+        equity_usd = (await hl_client.fetch_portfolio_state()).equity_usd
+        # entry_price the mock fills at (MockHyperliquidClient._open_orders).
+        entry_price = Decimal("100.00")
+        expected = compute_position_sizing(
+            equity_usd=equity_usd,
+            size_pct=btc_action.size_pct,
+            entry_price=entry_price,
+            leverage=btc_action.leverage,
+            side=btc_action.side,
+            stop_loss_pct=btc_action.stop_loss_pct,
+            take_profit_pct=btc_action.take_profit_pct,
         )
-        hl_client = _stub_hl_client(order_results=[entry_result])
 
         loop = DecisionLoop(
             settings=settings,
@@ -533,10 +544,30 @@ class TestDecisionLoopSmoke:
             assert run is not None
             assert run.status == RunStatus.SUCCESS.value
 
-        # execute_action was called once (only BTC is LONG)
-        hl_client.execute_action.assert_called_once()
-        assert hl_client.execute_action.call_args[0][0].symbol == "BTC"
-        assert hl_client.execute_action.call_args[0][0].side == Side.LONG
+            position = await session.scalar(
+                select(Position).where(Position.opening_run_id == uuid.UUID(run_id))
+            )
+            assert position is not None
+            assert position.symbol == "BTC"
+            assert position.side == Side.LONG.value
+            assert position.entry_price == entry_price
+            assert position.leverage == btc_action.leverage
+
+            # ADR-0015: stored size_units is the LEVERAGED executed quantity, not size_pct.
+            assert position.size_units == expected.size_units
+            assert position.size_units != btc_action.size_pct
+            # notional = size_units * entry_price; margin = notional / leverage.
+            assert position.notional_value_usd == position.size_units * entry_price
+            assert position.initial_margin_usd == position.notional_value_usd / btc_action.leverage
+            # Cross-check against the sizing value object directly.
+            assert position.notional_value_usd == expected.notional_value_usd
+            assert position.initial_margin_usd == expected.initial_margin_usd
+
+        # Exactly one Position persisted (only BTC is LONG; ETH/SOL are HOLD).
+        assert len(hl_client.executed_actions) == 1
+        executed_action, _, _ = hl_client.executed_actions[0]
+        assert executed_action.symbol == "BTC"
+        assert executed_action.side == Side.LONG
 
     @pytest.mark.asyncio
     async def test_missed_tick_returns_none(

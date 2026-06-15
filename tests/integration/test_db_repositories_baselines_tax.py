@@ -423,22 +423,44 @@ async def test_list_for_model_returns_periods_ordered(db_session: AsyncSession) 
 
 @pytest.mark.asyncio
 async def test_list_for_model_excludes_other_model(db_session: AsyncSession) -> None:
-    """list_for_model does not return periods belonging to a different model."""
+    """list_for_model returns only model A's periods, never model B's.
+
+    Two real models each persist a tax period for the same quarter. Querying for
+    model A must return exactly A's row and never B's — guaranteeing the test goes
+    RED if the `model_id` filter in the repository is dropped.
+    """
     exp_id = await _seed_experiment(db_session)
-    model_id = await _seed_model(db_session)
+    model_a = await _seed_model(db_session)
+    model_b = await _seed_model(db_session)
+    assert model_a != model_b  # sanity: two distinct models
     repo = TaxSimulationRepository(db_session)
 
-    await repo.compute_and_persist_period(
+    period_a_id = await repo.compute_and_persist_period(
         experiment_id=str(exp_id),
-        model_id=model_id,
+        model_id=model_a,
+        quarter_label="Q1-2026",
+        period_start=_PERIOD_START,
+        period_end=_PERIOD_END,
+        outcomes_in_period=[],
+    )
+    period_b_id = await repo.compute_and_persist_period(
+        experiment_id=str(exp_id),
+        model_id=model_b,
         quarter_label="Q1-2026",
         period_start=_PERIOD_START,
         period_end=_PERIOD_END,
         outcomes_in_period=[],
     )
 
-    periods = await repo.list_for_model("other-model-id")
-    assert periods == []
+    periods = await repo.list_for_model(model_a)
+
+    # Exactly model A's single period — B's row for the same quarter is excluded.
+    assert len(periods) == 1
+    assert periods[0].model_id == model_a
+    assert str(periods[0].id) == period_a_id
+    returned_ids = {str(p.id) for p in periods}
+    assert period_b_id not in returned_ids
+    assert all(p.model_id != model_b for p in periods)
 
 
 @pytest.mark.asyncio

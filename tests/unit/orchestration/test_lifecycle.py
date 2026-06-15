@@ -277,6 +277,7 @@ def _full_db_mock(settings: AgentSettings) -> object:
 
 
 @pytest.mark.asyncio
+@pytest.mark.invariant("8")
 async def test_agent_a8_max_size_pct_zero_raises() -> None:
     settings = _agent(max_size_pct=Decimal("0"))
     db = _full_db_mock(settings)
@@ -290,6 +291,7 @@ async def test_agent_a8_max_size_pct_zero_raises() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.invariant("8")
 async def test_agent_a8_hard_max_leverage_zero_raises() -> None:
     # Field ge=1 in settings, but we use MagicMock to bypass pydantic
     settings = _agent()
@@ -403,6 +405,18 @@ async def test_orchestrator_o1_leaked_wallet_key_raises(
     settings = _orchestrator()
     with pytest.raises(RuntimeError, match="Least privilege violation"):
         await _orchestrator_startup_checks(settings)
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_o1_leaked_openrouter_key_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AIAT_OPENROUTER_API_KEY is an agent LLM credential (ADR-0008): least privilege."""
+    monkeypatch.setenv("AIAT_OPENROUTER_API_KEY", "sk-or-secret")
+    settings = _orchestrator()
+    with patch("aiat.orchestration.lifecycle._check_orchestrator_sources", AsyncMock()):
+        with pytest.raises(RuntimeError, match="AIAT_OPENROUTER_API_KEY"):
+            await _orchestrator_startup_checks(settings)
 
 
 @pytest.mark.asyncio

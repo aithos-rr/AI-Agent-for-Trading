@@ -48,6 +48,10 @@ class RepositorySpy:
         event.listen(sync_session, "after_bulk_delete", self._on_bulk_delete)
         event.listen(sync_session, "before_flush", self._on_before_flush)
         event.listen(sync_session, "after_flush", self._on_after_flush)
+        # READ-path teeth (PRD §9.5 lines 2481-2483): every ORM instance loaded
+        # from a SELECT result is checked. A missing `WHERE model_id` filter on an
+        # agent read would surface a foreign-model row here, raising LeakDetected.
+        event.listen(sync_session, "loaded_as_persistent", self._on_loaded)
 
     def _remove_listeners(self) -> None:
         sync_session = self._session.sync_session
@@ -57,6 +61,8 @@ class RepositorySpy:
             event.remove(sync_session, "before_flush", self._on_before_flush)
         if event.contains(sync_session, "after_flush", self._on_after_flush):
             event.remove(sync_session, "after_flush", self._on_after_flush)
+        if event.contains(sync_session, "loaded_as_persistent", self._on_loaded):
+            event.remove(sync_session, "loaded_as_persistent", self._on_loaded)
 
     def _check_instance(self, obj: object) -> None:
         model_id = getattr(obj, "model_id", None)
@@ -72,6 +78,10 @@ class RepositorySpy:
 
     def _on_after_flush(self, session: object, flush_context: object) -> None:
         pass  # violations already caught in before_flush
+
+    def _on_loaded(self, session: object, instance: object) -> None:
+        # Fires once per ORM instance materialized from a SELECT result.
+        self._check_instance(instance)
 
     def _on_bulk_delete(self, delete_context: object) -> None:
         pass  # bulk deletes don't carry model_id directly; skip

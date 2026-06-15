@@ -8,18 +8,18 @@ Coverage map:
   #1  test_isolation.py
   #2  test_run_logs_git_sha_and_hashes  ← here
   #3  test_db_migrations.py::test_denormalization_columns_present
-  #4  test_db_repositories_decisions.py::test_persist_decision_creates_all_rows
+  #4  test_db_repositories_decisions.py::test_persist_decision_atomic_rollback
   #5  test_lifecycle.py::test_agent_a9_memory_off_ok
   #6  test_schemas_trade_decision.py::test_unknown_signal_raises
   #7  test_schemas_trade_decision.py::test_confidence_boundary_valid
-  #8  test_guardrails.py::TestCleanPassthrough::test_no_flags_on_valid_long
+  #8  test_lifecycle.py::test_agent_a8_max_size_pct_zero_raises (+ a8_hard_max_leverage_zero)
   #9  test_lifecycle.py::test_check_network_testnet_rejects_mainnet
   #10 test_ruff_t201_no_print_in_src     ← here
   #11 test_no_raw_sql_outside_repos      ← here
   #12 test_no_float_in_money_fields      ← here
   #13 test_context_parity.py
   #14 test_import_linter_clean           ← here
-  #15 test_tick_coverage_schema          ← here
+  #15 test_tick_coverage.py::test_tick_has_exactly_four_runs_with_status
 """
 
 from __future__ import annotations
@@ -187,10 +187,14 @@ def test_import_linter_clean() -> None:
 
 # ---------------------------------------------------------------------------
 # #15 — Tick coverage KPI: schema supports 4-run-per-tick query
+#
+# Supplementary unit test. The inv #15 gate is the KPI behaviour test in
+# tests/integration/test_tick_coverage.py (4 runs per tick, each with a
+# non-null status); this column-existence check is a non-tautological
+# precondition kept as a plain unit test (no invariant marker).
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.invariant("15")
 def test_tick_coverage_schema() -> None:
     """Run model must expose tick_id, model_id, experiment_id for tick KPI queries (inv #15)."""
     from aiat.db.models.run import Run

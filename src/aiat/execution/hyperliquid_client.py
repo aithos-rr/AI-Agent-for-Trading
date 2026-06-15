@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 from aiat.domain.enums import CloseReason, OrderKind, Side
 from aiat.domain.schemas import ActionDecision, OpenPositionSummary, PortfolioState
+from aiat.execution.sizing import compute_position_sizing
 
 
 class OrderResult(BaseModel):
@@ -156,15 +157,31 @@ class MockHyperliquidClient(HyperliquidClient):
         )
 
     def _open_orders(self, action: ActionDecision) -> list[OrderResult]:
+        # ADR-0015: persist the LEVERAGED executed quantity, not the raw size_pct.
+        # `_open_orders` is only reached for LONG/SHORT actions, where the
+        # ActionDecision validator guarantees SL/TP are present.
+        assert action.stop_loss_pct is not None
+        assert action.take_profit_pct is not None
+        entry_price = Decimal("100.00")
+        sizing = compute_position_sizing(
+            equity_usd=self._portfolio_state.equity_usd,
+            size_pct=action.size_pct,
+            entry_price=entry_price,
+            leverage=action.leverage,
+            side=action.side,
+            stop_loss_pct=action.stop_loss_pct,
+            take_profit_pct=action.take_profit_pct,
+        )
+        size_units = sizing.size_units
         entry = OrderResult(
             hl_order_id=str(uuid.uuid4()),
             client_order_id=str(uuid.uuid4()),
             order_kind=OrderKind.ENTRY,
             status="filled",
             requested_price=action.limit_price,
-            filled_price=Decimal("100.00"),
-            requested_size_units=action.size_pct,
-            filled_size_units=action.size_pct,
+            filled_price=entry_price,
+            requested_size_units=size_units,
+            filled_size_units=size_units,
             slippage_bps=Decimal("5"),
             fee_usd=Decimal("1.00"),
             raw_response={},
@@ -176,7 +193,7 @@ class MockHyperliquidClient(HyperliquidClient):
             status="triggered",
             requested_price=None,
             filled_price=None,
-            requested_size_units=action.size_pct,
+            requested_size_units=size_units,
             filled_size_units=None,
             slippage_bps=None,
             fee_usd=None,
@@ -189,7 +206,7 @@ class MockHyperliquidClient(HyperliquidClient):
             status="triggered",
             requested_price=None,
             filled_price=None,
-            requested_size_units=action.size_pct,
+            requested_size_units=size_units,
             filled_size_units=None,
             slippage_bps=None,
             fee_usd=None,

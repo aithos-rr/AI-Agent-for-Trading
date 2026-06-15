@@ -25,8 +25,10 @@ from aiat.db.models.cost_event import CostEvent
 from aiat.db.models.decision import Decision
 from aiat.db.models.experiment import Experiment
 from aiat.db.models.model import Model
+from aiat.db.models.position import Position
 from aiat.db.models.prompt_template import PromptTemplate
 from aiat.db.models.run import Run
+from aiat.db.repositories.positions import PositionsRepository
 from aiat.domain.enums import EntryType, Side
 from aiat.domain.schemas import (
     ActionDecision,
@@ -233,6 +235,128 @@ async def iso_seed(
                 build_duration_ms=30,
             )
         )
+        await session.flush()
+
+        # Seed an OPEN Position (closed_at NULL) per model so isolation reads have
+        # real foreign-model rows to exclude. Without model_2 positions, the
+        # list_open_for_model exclusion assertion would be tautological: a dropped
+        # `WHERE Position.model_id` filter would still pass. The positions live in a
+        # SEPARATE experiment (`pos_exp_id`) with their own tick/snapshot so the
+        # existing run-count assertions (scoped to `experiment_id`) stay unaffected;
+        # list_open_for_model filters by model_id only, so the read-path test still
+        # sees them. The RepositorySpy load listener gives these the read-path teeth
+        # (PRD §9.5 lines 2481-2483).
+        pos_exp_id = uuid.uuid4()
+        pos_snap_id = uuid.uuid4()
+        session.add(
+            Experiment(
+                id=pos_exp_id,
+                name=f"isolation-test-pos-{pos_exp_id.hex[:8]}",
+                started_at=datetime.now(UTC),
+                git_commit_sha=_GIT_SHA,
+                config_snapshot={},
+            )
+        )
+        await session.flush()
+        session.add(
+            ContextSnapshot(
+                id=pos_snap_id,
+                experiment_id=pos_exp_id,
+                tick_id=_TICK_ID,
+                tick_at=_TICK_AT,
+                context_hash=hashlib.sha256(b"isolation-test-pos").hexdigest(),
+                context_json=context_bundle.model_dump(mode="json"),
+                source_timestamps={},
+                build_duration_ms=30,
+            )
+        )
+        await session.flush()
+
+        position_ids: dict[str, str] = {}
+        for mid in (model_1_id, model_2_id):
+            run_id = uuid.uuid4()
+            decision_id = uuid.uuid4()
+            action_id = uuid.uuid4()
+            position_id = uuid.uuid4()
+            session.add(
+                Run(
+                    id=run_id,
+                    experiment_id=pos_exp_id,
+                    model_id=mid,
+                    tick_id=_TICK_ID,
+                    scheduled_for=_TICK_AT,
+                    run_started_at=_TICK_AT,
+                    status="success",
+                    prompt_template_hash=_PT_HASH,
+                    rendered_prompt_hash="seed-open-pos",
+                    context_snapshot_id=pos_snap_id,
+                    schema_version=_SCHEMA_VERSION,
+                    git_commit_sha=_GIT_SHA,
+                )
+            )
+            await session.flush()
+            session.add(
+                Decision(
+                    id=decision_id,
+                    run_id=run_id,
+                    experiment_id=pos_exp_id,
+                    model_id=mid,
+                    decided_at=_TICK_AT,
+                    portfolio_reasoning="Seeded open position for isolation read-path test.",
+                    risk_assessment="Seeded.",
+                    portfolio_confidence=Decimal("0.60"),
+                    latency_ms=1000,
+                    raw_payload={"seed": True},
+                )
+            )
+            await session.flush()
+            session.add(
+                DecisionAction(
+                    id=action_id,
+                    decision_id=decision_id,
+                    experiment_id=pos_exp_id,
+                    model_id=mid,
+                    run_id=run_id,
+                    symbol="BTC",
+                    confidence=Decimal("0.60"),
+                    time_horizon_min=60,
+                    action_reasoning="Seeded long.",
+                    action_key_signals=[],
+                    side_requested="LONG",
+                    leverage_requested=Decimal("2"),
+                    size_pct_requested=Decimal("0.10"),
+                    stop_loss_pct=Decimal("0.02"),
+                    take_profit_pct=Decimal("0.04"),
+                    entry_type="market",
+                    side_executed="LONG",
+                    leverage_executed=Decimal("2"),
+                    size_pct_executed=Decimal("0.10"),
+                )
+            )
+            await session.flush()
+            session.add(
+                Position(
+                    id=position_id,
+                    experiment_id=pos_exp_id,
+                    model_id=mid,
+                    opening_run_id=run_id,
+                    symbol="BTC",
+                    side="LONG",
+                    opening_action_id=action_id,
+                    opened_at=_TICK_AT,
+                    entry_price=Decimal("64000"),
+                    size_units=Decimal("0.01"),
+                    leverage=Decimal("2"),
+                    notional_value_usd=Decimal("640.00000000"),
+                    initial_margin_usd=Decimal("320.00000000"),
+                    stop_loss_price=Decimal("62720.00000000"),
+                    take_profit_price=Decimal("66560.00000000"),
+                    # closed_at left NULL → OPEN position
+                )
+            )
+            await session.flush()
+            position_ids[mid] = str(position_id)
+
         await session.commit()
 
     return {
@@ -241,6 +365,8 @@ async def iso_seed(
         "model_2_id": model_2_id,
         "snapshot_id": str(snap_id),
         "prompt_template_hash": _PT_HASH,
+        "model_1_open_position_id": position_ids[model_1_id],
+        "model_2_open_position_id": position_ids[model_2_id],
     }
 
 
@@ -525,3 +651,43 @@ class TestCrossModelIsolation:
                 await session.flush()
             # Roll back so we don't pollute other tests
             await session.rollback()
+
+    @pytest.mark.asyncio
+    @pytest.mark.invariant("1")
+    async def test_list_open_positions_excludes_other_model(
+        self,
+        iso_session_factory: async_sessionmaker[AsyncSession],
+        iso_seed: dict[str, str],
+    ) -> None:
+        """list_open_for_model(model_1) returns ONLY model_1's open position (inv #1).
+
+        Read-path teeth (PRD §9.5 lines 2481-2483): with the RepositorySpy load
+        listener active and expected_model_id=model_1, any model_2 row materialized
+        from the SELECT would raise LeakDetected. Two OPEN positions (one per model)
+        are seeded in the same DB; removing the `WHERE Position.model_id == model_id`
+        filter in PositionsRepository.list_open_for_model would load model_2's row and
+        turn this test RED (the spy raises on the foreign-model instance), so the
+        assertion is NOT tautological.
+        """
+        model_1 = iso_seed["model_1_id"]
+        model_2 = iso_seed["model_2_id"]
+        m1_pos_id = iso_seed["model_1_open_position_id"]
+        m2_pos_id = iso_seed["model_2_open_position_id"]
+
+        async with iso_session_factory() as session:
+            repo = PositionsRepository(session)
+            with RepositorySpy(session, expected_model_id=model_1):
+                open_positions = await repo.list_open_for_model(model_1)
+
+            returned_ids = {str(p.id) for p in open_positions}
+            returned_models = {p.model_id for p in open_positions}
+
+            # Only model_1's open position is returned.
+            assert returned_models == {model_1}, (
+                f"list_open_for_model({model_1!r}) leaked foreign model_ids: {returned_models}"
+            )
+            assert m1_pos_id in returned_ids
+            assert m2_pos_id not in returned_ids
+            # model_2's position is never present.
+            for p in open_positions:
+                assert p.model_id != model_2

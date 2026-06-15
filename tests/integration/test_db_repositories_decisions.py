@@ -464,6 +464,84 @@ async def test_persist_decision_rollback_on_duplicate_run_id(db_session: AsyncSe
 
 
 @pytest.mark.asyncio
+@pytest.mark.invariant("4")
+async def test_persist_decision_atomic_rollback(db_session: AsyncSession) -> None:
+    """Gating test for invariant #4 (PRD §9.7): a DB CHECK failure inside the unit
+    rolls back the WHOLE decision context — zero decisions, cost_events, llm_invocations.
+
+    We exercise the FULL persist_decision unit. The raw BTC action is mutated post-
+    construction (bypassing the Pydantic guard, which itself blocks HOLD-with-sizing)
+    so that side_requested='HOLD' while size_pct_requested>0 — a genuine violation of
+    the chk_hold_flat_no_sizing DDL CHECK (§9.3). persist_decision flushes the
+    `decisions` row first, then flushes the `decision_actions` rows: the CHECK fires
+    on the action flush, mid-unit, and must abort everything.
+
+    RED guard: if persist_decision were to sneak an internal commit after the
+    `decisions` flush (violating "no internal commit — caller owns the UoW"), the
+    decision row would survive the rollback below and select(Decision) would return a
+    row, turning this assertion RED. That is exactly the inv #4 regression we guard.
+    """
+    ids = await _seed(db_session)
+    invocation = _make_invocation()
+    post_actions, reports = _make_guardrail_reports(invocation)
+
+    # persist_decision maps side_requested/size_pct_requested from the RAW LLM action
+    # (invocation.decision.actions). Corrupt the BTC raw action so the persisted
+    # decision_actions row is HOLD with non-zero sizing — invalid per chk_hold_flat_no_sizing.
+    # object.__setattr__ bypasses ActionDecision.validate_side_consistency, which would
+    # otherwise reject this combination at construction time.
+    btc_raw = next(a for a in invocation.decision.actions if a.symbol == "BTC")
+    object.__setattr__(btc_raw, "side", Side.HOLD)  # size_pct_requested stays 0.2000 -> CHECK fail
+
+    repo = DecisionsRepository(db_session)
+    with pytest.raises(IntegrityError):
+        await repo.persist_decision(
+            run_id=str(ids.run_id),
+            experiment_id=str(ids.experiment_id),
+            model_id=ids.model_id,
+            invocation=invocation,
+            post_guardrail_actions=post_actions,
+            guardrail_reports=reports,
+        )
+
+    # The session is in a failed-transaction state after the IntegrityError; roll back
+    # so subsequent SELECTs are valid, then assert no orphans survived the aborted unit.
+    await db_session.rollback()
+
+    decisions = (
+        (await db_session.execute(select(Decision).where(Decision.run_id == ids.run_id)))
+        .scalars()
+        .all()
+    )
+    assert decisions == [], "decisions row must not survive a mid-unit CHECK failure (inv #4)"
+
+    cost_events = (
+        (await db_session.execute(select(CostEvent).where(CostEvent.run_id == ids.run_id)))
+        .scalars()
+        .all()
+    )
+    assert cost_events == [], "cost_events must not survive an aborted decision unit (inv #4)"
+
+    llm_invs = (
+        (await db_session.execute(select(LLMInvocation).where(LLMInvocation.run_id == ids.run_id)))
+        .scalars()
+        .all()
+    )
+    assert llm_invs == [], "llm_invocations must not survive an aborted decision unit (inv #4)"
+
+    actions = (
+        (
+            await db_session.execute(
+                select(DecisionAction).where(DecisionAction.run_id == ids.run_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert actions == [], "decision_actions must not survive an aborted decision unit (inv #4)"
+
+
+@pytest.mark.asyncio
 async def test_persist_decision_missing_run_raises_integrity_error(
     db_session: AsyncSession,
 ) -> None:

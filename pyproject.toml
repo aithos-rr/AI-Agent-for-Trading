@@ -92,3 +92,17 @@ forbidden_modules = [
     "aiat.execution",
     "aiat.orchestration",
 ]
+
+[[tool.importlinter.contracts]]
+# Invariant #13: the agent decision loop must not fetch external sources during a
+# run. It consumes the materialized context_snapshot only — it may not import the
+# collectors or the builder (those belong to the context-orchestrator service).
+# Scoped to decision_loop alone: lifecycle and context_orchestrator legitimately
+# import aiat.context.
+name = "decision_loop does not fetch external sources (inv #13)"
+type = "forbidden"
+source_modules = ["aiat.orchestration.decision_loop"]
+forbidden_modules = [
+    "aiat.context.collectors",
+    "aiat.context.builder",
+]

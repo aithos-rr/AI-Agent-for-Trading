@@ -1264,3 +1264,48 @@ Success: no issues found in 74 source files
 15/15 invariant markers present
 6 passed in 0.54s
 ```
+
+---
+
+## 2026-06-14 — GATE M5 (orchestratore Opus): gate + review adversariale + remediation
+
+**Loop M5**: 8 iterazioni Sonnet ma **ha BATCHATO** (~2 task/iter; 15 task in 8 iter — viola la
+regola 1-task/iter; iter 1 era conforme = M5-T01). Tutti i 15 task loop completi, M5-T14 lasciato
+`[ ]` (HUMAN-GATED). Dato il batching → verifica EXTRA-rigorosa (rischio test shallow).
+
+**External gate `./tools/gate_check.sh M5`**: PASSED da subito (ruff/format/mypy/lint-imports;
+550 passed cov 94.01%; core 99.19%; integration 97; e2e 16).
+
+**Review adversariale (Workflow, 7 dimensioni, focus TEST RIGOR)**: interrotta da session limit,
+poi **ripresa** (resumeFromRunId, cache hit sui completati). Esito completo: **20 findings → 14
+confermati (10 fix-now + 4 needs-user), 6 respinti**. Quasi tutti = test shallow/tautologici
+(conferma il rischio batching). Production logic sana (decision_loop/lifecycle/isolation verificati
+a mano da me).
+
+**Remediation (Workflow 8 agent file-disjoint, ognuno con i propri test):**
+- **[CRITICAL] ADR-0015 wiring** — `MockHyperliquidClient._open_orders` (unico client concreto,
+  usato da `__main__` + e2e) metteva `size_pct` grezzo in `size_units` (~errore 200× su
+  notional/PnL). **FIX**: ora converte via `compute_position_sizing` (equity da portfolio_state,
+  entry 100, leverage). ADR-0015 checkbox M5 spuntata. + smoke test ora asserisce
+  `size_units/notional` persistiti.
+- **[HIGH prod] lifecycle O1** — deny-list least-privilege ometteva `AIAT_OPENROUTER_API_KEY`
+  (+ `AIAT_LLM_PROVIDER`). **FIX**: aggiunti + regression test.
+- **Test teeth** (rischio batching): atomicity gating test `test_persist_decision_atomic_rollback`
+  (§9.7, mancava — RED-guard verificato: con commit interno il test va rosso) + CHECK §9.3;
+  isolation read-path (spy `loaded_as_persistent` load-listener + posizione model_2 seedata →
+  `list_open_for_model` con denti); parity per-model hash identity + `test_no_external_fetch`
+  + import-linter contract (decision_loop ⊄ context.collectors/builder, inv #13); outcomes/tax
+  cross-model a 2 modelli (non più tautologici); matrix re-points (#8 → lifecycle A8 cannot-disable;
+  #15 → nuovo `test_tick_coverage.py` KPI GROUP BY count==4).
+- **6 respinti** (verificati a mano): no-strict=True (romperebbe parsing JSON LLM), tax recompute
+  (fedele a §3.2.6 DDL), was_profitable_net senza CHECK (fedele §3.2.7 + un CHECK romperebbe
+  HOLD/FLAT ADR-0014), guardrail_e2e 2/4 (fedele spec §9.5; #8 g- ated altrove), inv#4 doc-comment
+  (testato realmente), logging JSON mock (#10 g-ato da T201).
+
+**Verify finale**: `./tools/gate_check.sh M5` → **GATE PASSED** — ruff/format/mypy --strict/
+lint-imports clean; **555 passed** (cov 94.03%, soglia 80%); core **207 passed** (99.20%, soglia
+95%); integration **99 passed**; **e2e 18 passed**. Diff produzione (hyperliquid_client, lifecycle)
+riletti a mano: corretti e minimali.
+
+**Next**: M5 (parte loop) PASSED, committato, pushato. **STOP fisici umani**: M4-T08 (wallet HL
+testnet) e M5-T14 (smoke locale multi-tick 4 tick). Il loop M5 ha completato tutto il completabile.

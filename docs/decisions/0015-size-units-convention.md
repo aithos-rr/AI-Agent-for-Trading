@@ -95,6 +95,9 @@ riga 2346 è da considerarsi superata da questo ADR; prevalgono §3.2.4 (DDL) e 
 - [x] `src/aiat/execution/sizing.py` corretto + docstring
 - [x] `tests/unit/execution/test_sizing.py` aggiornato
 - [x] Indicizzato in `docs/decisions/README.md`
-- [ ] M5: `MockHyperliquidClient` + client HL reale + `decision_loop` usano
-      `compute_position_sizing` per la conversione `size_pct → size_units`
+- [x] M5: `MockHyperliquidClient._open_orders` usa `compute_position_sizing` per la
+      conversione `size_pct → size_units` (equity da `portfolio_state`, mock entry
+      price `100.00`, leverage da action). Il client HL reale resta lavoro futuro a
+      M4-T08; il `decision_loop` non chiama direttamente `compute_position_sizing` (la
+      conversione avviene nel client).
 - [ ] (PRD non modificato: frozen; §9.2 r.2346 superata da questo ADR)

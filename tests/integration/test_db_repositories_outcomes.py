@@ -35,7 +35,6 @@ _TICK_ID = "2026-01-15T12:00:00"
 _SCHEMA_VERSION = "v2"
 _GIT_SHA = "abc1234"
 _PT_TEXT = "You are a trading agent."
-_PT_HASH = hashlib.sha256(_PT_TEXT.encode()).hexdigest()
 
 
 @dataclass
@@ -49,7 +48,12 @@ class SeedIds:
 
 
 async def _seed(session: AsyncSession) -> SeedIds:
-    """Insert minimum FK chain for outcomes tests."""
+    """Insert minimum FK chain for outcomes tests.
+
+    Each call creates an independent experiment/model/prompt-template chain, so
+    it can be invoked more than once per test (e.g. to seed a second model) without
+    colliding on the prompt_templates primary key or unique label.
+    """
     exp_id = uuid.uuid4()
     model_id = f"openai-gpt4o-{uuid.uuid4().hex[:8]}"
     snap_id = uuid.uuid4()
@@ -59,6 +63,11 @@ async def _seed(session: AsyncSession) -> SeedIds:
     action_id = uuid.uuid4()
     position_id = uuid.uuid4()
     tick_at = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
+
+    # Per-call prompt template: unique hash + label so repeated _seed() calls
+    # within a single test do not violate the PK / unique-label constraints.
+    pt_text = f"{_PT_TEXT} ({model_id})"
+    pt_hash = hashlib.sha256(pt_text.encode()).hexdigest()
 
     session.add(
         Experiment(
@@ -87,9 +96,9 @@ async def _seed(session: AsyncSession) -> SeedIds:
 
     session.add(
         PromptTemplate(
-            sha256_hash=_PT_HASH,
+            sha256_hash=pt_hash,
             label=f"test-pt-{uuid.uuid4().hex[:8]}",
-            template_text=_PT_TEXT,
+            template_text=pt_text,
             confidence_def="Probability that the action yields positive PnL.",
             controlled_signals=[],
         )
@@ -120,7 +129,7 @@ async def _seed(session: AsyncSession) -> SeedIds:
                 scheduled_for=tick_at + timedelta(minutes=sched_offset),
                 run_started_at=tick_at + timedelta(minutes=sched_offset),
                 status="success",
-                prompt_template_hash=_PT_HASH,
+                prompt_template_hash=pt_hash,
                 rendered_prompt_hash="aabbcc",
                 context_snapshot_id=snap_id,
                 schema_version=_SCHEMA_VERSION,
@@ -333,19 +342,34 @@ async def test_list_for_model_in_window_returns_outcomes(db_session: AsyncSessio
 
 @pytest.mark.asyncio
 async def test_list_for_model_in_window_excludes_other_model(db_session: AsyncSession) -> None:
-    """list_for_model_in_window does not return outcomes for a different model_id."""
-    ids = await _seed(db_session)
+    """list_for_model_in_window returns only model A's outcomes, never model B's.
+
+    Two real models each persist an outcome in the same time window. Querying for
+    model A must return exactly A's row and never B's id — guaranteeing the test
+    goes RED if the `model_id` filter in the repository is dropped.
+    """
+    ids_a = await _seed(db_session)
+    ids_b = await _seed(db_session)
+    assert ids_a.model_id != ids_b.model_id  # sanity: two distinct models
     repo = OutcomesRepository(db_session)
 
-    await repo.persist_outcome(**_outcome_kwargs(ids))  # type: ignore[arg-type]
+    outcome_a_id = await repo.persist_outcome(**_outcome_kwargs(ids_a))  # type: ignore[arg-type]
+    outcome_b_id = await repo.persist_outcome(**_outcome_kwargs(ids_b))  # type: ignore[arg-type]
 
     now = datetime.now(UTC)
     start = (now - timedelta(minutes=5)).isoformat()
     end = (now + timedelta(minutes=5)).isoformat()
 
-    outcomes = await repo.list_for_model_in_window("other-model-id", start, end)
+    outcomes = await repo.list_for_model_in_window(ids_a.model_id, start, end)
 
-    assert outcomes == []
+    # Exactly model A's single outcome — B's row in the same window is excluded.
+    assert len(outcomes) == 1
+    assert outcomes[0].model_id == ids_a.model_id
+    assert str(outcomes[0].id) == outcome_a_id
+    assert outcomes[0].position_id == ids_a.position_id
+    returned_ids = {str(o.id) for o in outcomes}
+    assert outcome_b_id not in returned_ids
+    assert all(o.model_id != ids_b.model_id for o in outcomes)
 
 
 @pytest.mark.asyncio

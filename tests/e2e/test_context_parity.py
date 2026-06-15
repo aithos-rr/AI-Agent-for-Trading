@@ -11,12 +11,15 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import NoReturn
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
+from pytest import MonkeyPatch
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -74,6 +77,25 @@ _EQUITIES = [
     Decimal("11000"),
     Decimal("11500"),
 ]
+
+# Section markers emitted by decision_loop._render_prompt. The market-context
+# portion lives between MARKET CONTEXT and PORTFOLIO STATE; the portfolio portion
+# (which legitimately diverges per model) starts at PORTFOLIO STATE.
+_MARKET_MARKER = "## MARKET CONTEXT"
+_PORTFOLIO_MARKER = "## PORTFOLIO STATE"
+
+
+def _market_context_portion(rendered_text: str) -> str:
+    """Slice the market-context section out of a rendered prompt.
+
+    Returns the substring from the MARKET CONTEXT marker up to (excluding) the
+    PORTFOLIO STATE marker. This is the part that inv #13 requires to be
+    byte-identical across all models for a given tick.
+    """
+    start = rendered_text.index(_MARKET_MARKER)
+    end = rendered_text.index(_PORTFOLIO_MARKER)
+    assert start < end, "Unexpected prompt layout: PORTFOLIO STATE before MARKET CONTEXT"
+    return rendered_text[start:end]
 
 
 # ---------------------------------------------------------------------------
@@ -389,7 +411,18 @@ class TestContextParity:
         parity_session_factory: async_sessionmaker[AsyncSession],
         parity_seed: dict[str, str],
     ) -> None:
-        """The context_hash of the shared snapshot is byte-identical for all 4 agents (inv #13)."""
+        """The rendered MARKET CONTEXT is byte-identical for all 4 agents (inv #13).
+
+        This compares the *per-model rendered content* (not merely the shared
+        snapshot row): each agent's run persists ``rendered_prompt_text``
+        (decision_loop.py via ``_render_prompt``). We slice the MARKET CONTEXT
+        portion out of every run and assert it is byte/hash-identical across all
+        models. This test can genuinely fail: if any agent's read path diverged
+        (different snapshot, stale context, per-model rewrite), the sliced market
+        portion would differ and the assertion would trip. The PORTFOLIO STATE
+        portion legitimately differs (distinct equity per wallet) and we assert
+        that too, to prove the slicing distinguishes the two regions.
+        """
         model_ids: list[str] = parity_seed["model_ids"]
         expected_context_hash = parity_seed["context_hash"]
         expected_snap_id = parity_seed["snapshot_id"]
@@ -412,15 +445,41 @@ class TestContextParity:
             assert snapshot is not None
             assert snapshot.context_hash == expected_context_hash
 
-            # Every run references that one snapshot — hash is inherently identical
-            run_snap_ids = set()
+            run_snap_ids: set[str] = set()
+            market_portions: list[str] = []
+            portfolio_portions: list[str] = []
             for run_id in run_ids:
                 run = await session.get(Run, uuid.UUID(run_id))  # type: ignore[arg-type]
                 assert run is not None
                 run_snap_ids.add(str(run.context_snapshot_id))
 
-            assert len(run_snap_ids) == 1, f"Runs reference different snapshots: {run_snap_ids}"
-            assert run_snap_ids == {expected_snap_id}
+                assert run.rendered_prompt_text is not None, (
+                    f"Run {run_id} has no rendered_prompt_text to compare"
+                )
+                rendered = run.rendered_prompt_text
+                market_portions.append(_market_context_portion(rendered))
+                portfolio_portions.append(rendered[rendered.index(_PORTFOLIO_MARKER) :])
+
+        # All runs still reference the one shared snapshot.
+        assert len(run_snap_ids) == 1, f"Runs reference different snapshots: {run_snap_ids}"
+        assert run_snap_ids == {expected_snap_id}
+
+        # (1) The rendered MARKET CONTEXT is byte-identical across all models.
+        assert len(set(market_portions)) == 1, (
+            "Rendered MARKET CONTEXT diverged across models — inv #13 violated"
+        )
+
+        # (2) ...and therefore its SHA-256 is identical across all models.
+        market_hashes = {hashlib.sha256(p.encode()).hexdigest() for p in market_portions}
+        assert len(market_hashes) == 1, (
+            f"MARKET CONTEXT hash diverged across models: {market_hashes}"
+        )
+
+        # (3) PORTFOLIO STATE legitimately differs (distinct equity per wallet),
+        #     proving the slice isolates the market region from the portfolio region.
+        assert len(set(portfolio_portions)) == len(model_ids), (
+            "Expected distinct PORTFOLIO STATE per model — slicing or fixtures are wrong"
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.invariant("13")
@@ -521,3 +580,57 @@ class TestContextParity:
         # The one pre-existing snapshot is still the only one
         snap_ids = {str(s.id) for s in all_snaps_after}
         assert expected_snap_id in snap_ids
+
+    @pytest.mark.asyncio
+    @pytest.mark.invariant("13")
+    async def test_no_external_fetch_during_run_once(
+        self,
+        parity_session_factory: async_sessionmaker[AsyncSession],
+        parity_seed: dict[str, str],
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        """No agent fetches external sources during run_once (inv #13).
+
+        The decision loop must consume the materialized context_snapshot only.
+        We booby-trap every collector class and the ContextBuilder so that
+        constructing OR calling any of them raises immediately, then run
+        run_once. A successful run proves the loop never touched the live
+        external-data path; if it ever regressed to fetching, one of these traps
+        would fire and the run would surface the AssertionError.
+        """
+        import aiat.context.builder as builder_mod
+        import aiat.context.collectors.news as news_mod
+        import aiat.context.collectors.onchain as onchain_mod
+        import aiat.context.collectors.sentiment as sentiment_mod
+        import aiat.context.collectors.technical as technical_mod
+
+        invoked: list[str] = []
+
+        def _trap(name: str) -> Callable[..., NoReturn]:
+            def _raise(*_a: object, **_kw: object) -> NoReturn:
+                invoked.append(name)
+                raise AssertionError(
+                    f"inv #13 violated: decision loop touched {name} during run_once"
+                )
+
+            return _raise
+
+        # Trap construction of each collector and the builder.
+        monkeypatch.setattr(
+            technical_mod.TechnicalCollector, "__init__", _trap("TechnicalCollector")
+        )
+        monkeypatch.setattr(
+            sentiment_mod.SentimentCollector, "__init__", _trap("SentimentCollector")
+        )
+        monkeypatch.setattr(onchain_mod.OnchainCollector, "__init__", _trap("OnchainCollector"))
+        monkeypatch.setattr(news_mod.NewsCollector, "__init__", _trap("NewsCollector"))
+        monkeypatch.setattr(builder_mod.ContextBuilder, "__init__", _trap("ContextBuilder"))
+
+        run_id = await _run_agent(
+            _make_settings(parity_seed, parity_seed["model_ids"][0]),
+            _EQUITIES[0],
+            parity_session_factory,
+        )
+
+        assert run_id is not None, "run_once returned None (missed tick), cannot assert no-fetch"
+        assert invoked == [], f"Decision loop fetched external sources during run_once: {invoked}"

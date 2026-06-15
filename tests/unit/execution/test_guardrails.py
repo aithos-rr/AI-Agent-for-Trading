@@ -2,8 +2,6 @@
 
 from decimal import Decimal
 
-import pytest
-
 from aiat.domain.enums import EntryType, Side
 from aiat.domain.schemas import ActionDecision, GuardrailReport, TradeDecision
 from aiat.execution.guardrails import Guardrails
@@ -109,7 +107,6 @@ def _report(reports: list[GuardrailReport], symbol: str) -> GuardrailReport:
 
 
 class TestCleanPassthrough:
-    @pytest.mark.invariant("8")
     def test_no_flags_on_valid_long(self) -> None:
         g = Guardrails()
         result, reports = g.apply(

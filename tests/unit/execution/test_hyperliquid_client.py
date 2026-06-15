@@ -13,6 +13,7 @@ from aiat.execution.hyperliquid_client import (
     OrderResult,
     PositionClosureInfo,
 )
+from aiat.execution.sizing import compute_position_sizing
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -309,12 +310,25 @@ class TestMockExecuteLongShortNoPosition:
         assert len(results) == 3
         assert results[0].order_kind == OrderKind.ENTRY
 
-    async def test_entry_order_size_matches_action_size_pct(self) -> None:
+    async def test_entry_order_size_is_leveraged_size_units(self) -> None:
+        # ADR-0015: the entry order persists the leveraged executed quantity,
+        # size_units = (equity * size_pct * leverage) / entry_price, NOT size_pct.
         action = _long_action()
         client = MockHyperliquidClient()
+        expected = compute_position_sizing(
+            equity_usd=Decimal("10000.00"),  # default mock equity
+            size_pct=action.size_pct,
+            entry_price=Decimal("100.00"),  # mock filled_price
+            leverage=action.leverage,
+            side=action.side,
+            stop_loss_pct=action.stop_loss_pct,  # type: ignore[arg-type]
+            take_profit_pct=action.take_profit_pct,  # type: ignore[arg-type]
+        ).size_units
         results = await client.execute_action(action, "run-3", None)
         entry = results[0]
-        assert entry.requested_size_units == action.size_pct
+        assert entry.requested_size_units == expected
+        assert entry.filled_size_units == expected
+        assert expected != action.size_pct
 
 
 # ---------------------------------------------------------------------------

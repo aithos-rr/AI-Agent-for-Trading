@@ -191,8 +191,10 @@ async def _orchestrator_startup_checks(
         "AIAT_ANTHROPIC_API_KEY",
         "AIAT_DEEPSEEK_API_KEY",
         "AIAT_QWEN_API_KEY",
+        "AIAT_OPENROUTER_API_KEY",
         "AIAT_HL_WALLET_PRIVATE_KEY",
         "AIAT_MODEL_ID",
+        "AIAT_LLM_PROVIDER",
     ]
     leaked = [v for v in suspicious_envs if os.environ.get(v)]
     if leaked:
