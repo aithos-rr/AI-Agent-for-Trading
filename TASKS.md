@@ -927,7 +927,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
 > **mockati** (LLM cassette + HL mock + Postgres effimero 🐘). Fonte: §4.1, §7.6, §10.1,
 > §10.3, §9.5, §9.7, §12 M5.
 
-- [ ] **M5-T01** 🐘 — `db/repositories/decisions.py`: `DecisionsRepository`
+- [x] **M5-T01** 🐘 — `db/repositories/decisions.py`: `DecisionsRepository`
   - **what**: `DecisionsRepository` §7.6 con **transazione atomica** (`persist_decision`:
     decisions + decision_actions(3) + cost_events + llm_invocations in 1 commit, inv #4;
     `flush()` per gli ID ma **no commit/rollback interno**, fix B.6). Integration test su

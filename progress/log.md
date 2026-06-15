@@ -889,3 +889,33 @@ con verifica scettica vs PRD/ADR/RESEARCH. **6 findings → 1 confermato (fix), 
 **Verify**: `./tools/gate_check.sh M4` → **GATE PASSED** (393/207/45, cov 96.97%/99.18%).
 **Esito**: M0-M4 confermati stabili e coerenti col PRD/ADR; nessun rischio di validità scientifica
 residuo trovato. Pronti per M5 quando l'utente dà il via (+ scaffolding M4-T08 a richiesta).
+
+---
+
+## 2026-06-14 — M5-T01: DecisionsRepository
+
+**Task**: `db/repositories/decisions.py` — `DecisionsRepository` §7.6 (inv #4).
+
+**What changed**:
+- Created `src/aiat/db/repositories/decisions.py` with `DecisionsRepository`:
+  - `persist_decision`: atomic INSERT decisions → decision_actions(3) → cost_events → llm_invocations with `flush()` for intermediate IDs; no internal commit.
+  - `get_by_run(run_id)` → `Decision | None`
+  - `get_action_history(model_id, symbol, since)` → `list[DecisionAction]` ordered by `created_at DESC`
+- `pricing_snapshot` Decimals converted to `str` for JSONB JSON-serializability.
+- `original_side` populated only when `forced_hold=True` (guards guardrail override audit trail).
+- Created `tests/integration/test_db_repositories_decisions.py` — 12 tests:
+  - Happy path: 4-row atomic create verified (decision + 3 actions + cost_event + llm_invocation)
+  - requested vs executed fields mapping
+  - forced_hold sets original_side correctly
+  - Rollback: duplicate run_id → IntegrityError (UNIQUE on decisions.run_id)
+  - FK violation: non-existent run_id → IntegrityError
+  - UNIQUE check: duplicate (decision_id, symbol) in decision_actions → IntegrityError
+  - cost_event.decision_id FK validity (inv #4 proven by SELECT)
+  - get_by_run happy path + unknown run returns None
+  - get_action_history: model/symbol filter, since filter, multi-run aggregation
+
+**Verify**: `uv run pytest tests/integration/test_db_repositories_decisions.py -v`
+```
+12 passed in 5.77s
+```
+Full suite: `406 passed, 97% coverage`.
