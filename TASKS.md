@@ -1021,7 +1021,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when**: con tutti i collaboratori mockati, un tick produce decision+actions+
     esecuzione+persist nell'ordine §4.1; test verde.
 
-- [ ] **M5-T07** — Completa `__main__.py`: dispatcher reale
+- [x] **M5-T07** — Completa `__main__.py`: dispatcher reale
   - **what**: TDD (mock). Completare `src/aiat/__main__.py` §11.2: `load_settings()` →
     `configure_logging` → `startup_checks` → `build_scheduler_for_agent` vs
     `build_scheduler_for_orchestrator` per ruolo → `scheduler.start()`. Test che mocka

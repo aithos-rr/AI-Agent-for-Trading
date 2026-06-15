@@ -1119,3 +1119,27 @@ Success: no issues found in 72 source files
 ruff clean
 428 passed, 2 warnings in 8.13s (all unit tests)
 ```
+
+---
+
+## 2026-06-14 — M5-T07
+
+**Task**: `__main__.py` — dispatcher reale (PRD §11.2)  
+**Changed**:
+- Rewrote `src/aiat/__main__.py`: full startup sequence via `_main()`: `load_settings()` → `configure_logging(settings)` → `await startup_checks(settings)` → role dispatch (`AgentSettings` → `build_scheduler_for_agent`, `ContextOrchestratorSettings` → `build_scheduler_for_orchestrator`) → `scheduler.start()` → `_run_forever()`.
+- Added `configure_logging()`: structlog JSON renderer with `merge_contextvars`, `add_log_level`, `TimeStamper`, `JSONRenderer`, `make_filtering_bound_logger`.
+- Added `_build_agent_tick_job(settings)`: builds `get_db_session` + `load_llm` + `MockHyperliquidClient` + `DecisionLoop`, returns `loop.run_once`.
+- Added `_run_forever()`: blocks on `asyncio.Event().wait()`.
+- Created `tests/unit/orchestration/test_main_dispatch.py`: 9 tests covering agent dispatch, orchestrator dispatch, startup_checks-before-scheduler ordering, tick_job forwarding, startup failure propagation, asyncio.run call, and `_build_agent_tick_job` DI construction.
+
+**Design notes**:
+- `ContextOrchestratorSettings` fixtures in tests require `_env_file=None` to prevent `.env` vars (`AIAT_LLM_GATEWAY=openrouter`) from triggering `extra="forbid"`.
+- `MockHyperliquidClient` used as placeholder until real HL client is implemented (M4-T08 HUMAN-GATED).
+
+**Verify**:
+```
+9 passed in 2.51s
+Success: no issues found in 72 source files
+ruff clean
+437 passed, 2 warnings in 9.07s (all unit tests)
+```

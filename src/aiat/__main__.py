@@ -1,20 +1,91 @@
-"""Entrypoint dispatcher — reads AIAT_SERVICE_ROLE and logs the active role."""
+"""Entrypoint dispatcher — reads AIAT_SERVICE_ROLE and starts the correct service (PRD §11.2)."""
 
-import os
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Callable
+from typing import Any
 
 import structlog
 
-logger: structlog.BoundLogger = structlog.get_logger()
+from aiat.config.settings import AgentSettings, ContextOrchestratorSettings, load_settings
+from aiat.db.session import get_db_session
+from aiat.execution.hyperliquid_client import MockHyperliquidClient
+from aiat.llm.factory import load_llm
+from aiat.orchestration.decision_loop import DecisionLoop
+from aiat.orchestration.lifecycle import startup_checks
+from aiat.orchestration.scheduler import build_scheduler_for_agent, build_scheduler_for_orchestrator
+
+logger = structlog.get_logger(__name__)
 
 
-def _load_settings_stub() -> str:
-    """Return the service role from env; full implementation deferred to M5-T07."""
-    return os.environ.get("AIAT_SERVICE_ROLE", "")
+def configure_logging(settings: AgentSettings | ContextOrchestratorSettings) -> None:
+    """Configure structlog JSON renderer for the service role (PRD §10.2)."""
+    numeric_level = getattr(logging, settings.log_level)
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.stdlib.add_log_level,
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.JSONRenderer(),
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(numeric_level),
+        logger_factory=structlog.PrintLoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+    logging.basicConfig(level=numeric_level)
+
+
+async def _build_agent_tick_job(
+    settings: AgentSettings,
+) -> Callable[..., Any]:
+    """Build the per-tick callable for an agent service.
+
+    Returns:
+        The bound `DecisionLoop.run_once` method ready for APScheduler.
+    """
+    session_factory = get_db_session(settings.database_url.get_secret_value())
+    llm_client = load_llm(settings)
+    hl_client = MockHyperliquidClient()
+    loop = DecisionLoop(
+        settings=settings,
+        llm_client=llm_client,
+        hl_client=hl_client,
+        session_factory=session_factory,
+    )
+    return loop.run_once
+
+
+async def _run_forever() -> None:
+    """Block until the process is killed (SIGTERM/SIGINT handled by asyncio)."""
+    await asyncio.Event().wait()
+
+
+async def _main() -> None:
+    """Full startup sequence: settings → logging → checks → scheduler → run."""
+    settings = load_settings()
+    configure_logging(settings)
+    log = structlog.get_logger()
+    log.info("startup", service_role=settings.service_role)
+
+    await startup_checks(settings)
+
+    if isinstance(settings, AgentSettings):
+        tick_job = await _build_agent_tick_job(settings)
+        scheduler = await build_scheduler_for_agent(settings, tick_job=tick_job)
+    else:
+        scheduler = await build_scheduler_for_orchestrator(settings)
+
+    scheduler.start()
+    log.info("scheduler_started", service_role=settings.service_role)
+    await _run_forever()
 
 
 def main() -> None:
-    role = _load_settings_stub()
-    logger.info("startup", service_role=role)
+    """Entrypoint: blocks until process exits."""
+    asyncio.run(_main())
 
 
 if __name__ == "__main__":
