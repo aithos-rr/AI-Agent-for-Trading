@@ -61,11 +61,11 @@ class TestConfigureLogging:
         configure_logging(settings)  # should not raise
 
     def test_configure_logging_calls_structlog_configure(self) -> None:
-        """configure_logging must call structlog.configure."""
+        """configure_logging must call structlog.configure (via logging_config module)."""
         import aiat.__main__ as main_mod
 
         settings = _agent_settings()
-        with patch("aiat.__main__.structlog") as mock_structlog:
+        with patch("aiat.observability.logging_config.structlog") as mock_structlog:
             mock_structlog.PrintLoggerFactory = MagicMock()
             mock_structlog.configure = MagicMock()
             mock_structlog.contextvars = MagicMock()

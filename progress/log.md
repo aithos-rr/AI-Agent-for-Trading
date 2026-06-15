@@ -1143,3 +1143,22 @@ Success: no issues found in 72 source files
 ruff clean
 437 passed, 2 warnings in 9.07s (all unit tests)
 ```
+
+---
+
+## 2026-06-14 — M5-T13
+
+**Task**: `observability/logging_config.py` + `metrics.py` (PRD §11.3)  
+**Changed**:
+- Created `src/aiat/observability/logging_config.py`: `configure_logging(level: LogLevel)` public API — structlog JSON renderer with `merge_contextvars`, `add_log_level`, `TimeStamper`, `StackInfoRenderer`, `JSONRenderer`, `make_filtering_bound_logger`, `PrintLoggerFactory`.
+- Created `src/aiat/observability/metrics.py`: minimal stub functions `record_tick_duration_ms` and `record_llm_cost` (no-op via structlog.info; placeholder for future Prometheus/OTEL).
+- Updated `src/aiat/__main__.py`: `configure_logging(settings)` now delegates to `logging_config.configure_logging(settings.log_level)` instead of inline implementation.
+- Updated `test_main_dispatch.py`: patched `aiat.observability.logging_config.structlog` (not `aiat.__main__.structlog`) to match new delegation.
+
+**Verify**:
+```
+configure_logging('INFO') importable + runs clean
+ruff clean
+Success: no issues found in 74 source files
+437 passed, 2 warnings in 8.28s (all unit tests)
+```

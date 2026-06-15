@@ -1088,7 +1088,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when**: tutti i 15 invarianti hanno ≥1 test marcato `invariant`; nessuna cella
     vuota. (Esecuzione piena dei gating e2e/integration richiede Postgres 🐘.)
 
-- [ ] **M5-T13** — `observability/logging_config.py` + `metrics.py`
+- [x] **M5-T13** — `observability/logging_config.py` + `metrics.py`
   - **what**: `configure_logging(level)` structlog JSON (inv #10), `metrics.py` minimale.
     Nessun `print` nel runtime (ruff T201 già attivo). (`logging_config.py` è in omit di
     `.coveragerc`.)

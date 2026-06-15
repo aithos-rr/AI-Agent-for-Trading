@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -13,6 +12,7 @@ from aiat.config.settings import AgentSettings, ContextOrchestratorSettings, loa
 from aiat.db.session import get_db_session
 from aiat.execution.hyperliquid_client import MockHyperliquidClient
 from aiat.llm.factory import load_llm
+from aiat.observability.logging_config import configure_logging as _configure_logging_impl
 from aiat.orchestration.decision_loop import DecisionLoop
 from aiat.orchestration.lifecycle import startup_checks
 from aiat.orchestration.scheduler import build_scheduler_for_agent, build_scheduler_for_orchestrator
@@ -21,21 +21,8 @@ logger = structlog.get_logger(__name__)
 
 
 def configure_logging(settings: AgentSettings | ContextOrchestratorSettings) -> None:
-    """Configure structlog JSON renderer for the service role (PRD §10.2)."""
-    numeric_level = getattr(logging, settings.log_level)
-    structlog.configure(
-        processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.stdlib.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.StackInfoRenderer(),
-            structlog.processors.JSONRenderer(),
-        ],
-        wrapper_class=structlog.make_filtering_bound_logger(numeric_level),
-        logger_factory=structlog.PrintLoggerFactory(),
-        cache_logger_on_first_use=True,
-    )
-    logging.basicConfig(level=numeric_level)
+    """Configure structlog JSON renderer for the service role (delegates to logging_config)."""
+    _configure_logging_impl(settings.log_level)
 
 
 async def _build_agent_tick_job(
