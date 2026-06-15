@@ -1033,7 +1033,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when**: il dispatcher seleziona lo scheduler corretto per agent vs orchestrator
     (mockato); test verde.
 
-- [ ] **M5-T08** 🐘 — `tests/e2e/test_decision_loop_smoke.py`
+- [x] **M5-T08** 🐘 — `tests/e2e/test_decision_loop_smoke.py`
   - **what**: e2e §9.5: `run_once` con LLM cassette (o stub) + HL mock + Postgres effimero;
     verifica `runs.status='success'`, 1 decision, 3 decision_actions, 1 cost_event, 1
     llm_invocation, account_snapshot con portfolio_state_hash; se action BTC=LONG → 3 orders

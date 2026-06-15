@@ -1162,3 +1162,21 @@ ruff clean
 Success: no issues found in 74 source files
 437 passed, 2 warnings in 8.28s (all unit tests)
 ```
+
+---
+
+## 2026-06-14 — M5-T08
+
+**Task**: `tests/e2e/test_decision_loop_smoke.py` — e2e §9.5  
+**Changed**:
+- Created `tests/e2e/test_decision_loop_smoke.py`: 4 e2e tests using ephemeral Postgres (pytest-postgresql), stubbed LLM + MockHyperliquidClient:
+  - `test_hold_all_creates_expected_rows`: verifies `runs.status=success`, 1 decision, 3 decision_actions, 1 cost_event, 1 llm_invocation, 1 account_snapshot.
+  - `test_long_btc_creates_position`: verifies `execute_action` called once for BTC LONG.
+  - `test_missed_tick_returns_none`: missing context_snapshot → returns None, no run row.
+  - `test_run_has_correct_metadata`: verifies experiment_id, model_id, tick_id, schema_version, git_sha, prompt_template_hash, context_snapshot_id on the run row.
+- Used `pg_insert(...).on_conflict_do_nothing()` for PromptTemplate (hash-keyed, shared across function-scoped test instances).
+
+**Verify**:
+```
+4 passed in 5.50s
+```
