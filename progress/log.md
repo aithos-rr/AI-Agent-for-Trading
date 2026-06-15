@@ -947,3 +947,31 @@ Full suite: `406 passed, 97% coverage`.
 16 passed in 6.06s
 ```
 ruff clean, mypy clean (66 source files).
+
+---
+
+## 2026-06-14 — M5-T02b: OutcomesRepository
+
+**Task**: `db/repositories/outcomes.py` — §7.6.
+
+**What changed**:
+- Created `src/aiat/db/repositories/outcomes.py` with `OutcomesRepository`:
+  - `persist_outcome(...)`: inserts an Outcome row with all §3.2.7 fields. No internal commit. Returns outcome_id str UUID.
+  - `list_for_model_in_window(model_id, start, end)`: returns Outcomes by model_id within a created_at time window, ordered ascending.
+- Updated `src/aiat/db/repositories/__init__.py` to export `OutcomesRepository`.
+- Created `tests/integration/test_db_repositories_outcomes.py` — 9 tests:
+  - persist_outcome: success, correct field values
+  - duplicate position_id → IntegrityError (UNIQUE constraint)
+  - confidence out of range → IntegrityError (CHECK)
+  - sum_fees_usd < 0 → IntegrityError (CHECK)
+  - time_horizon_min=0 → IntegrityError (CHECK)
+  - list_for_model_in_window: returns outcome in window
+  - list_for_model_in_window: excludes other model_id
+  - list_for_model_in_window: excludes outcomes outside window
+  - list_for_model_in_window: ordering (ascending)
+
+**Verify**: `uv run pytest tests/integration/test_db_repositories_outcomes.py -q`
+```
+9 passed in 5.80s
+```
+ruff clean, mypy clean (67 source files).

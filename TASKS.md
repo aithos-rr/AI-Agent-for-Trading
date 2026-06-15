@@ -952,7 +952,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/integration/test_db_repositories_snapshots_runs.py -q`
   - **done-when** 🐘: account/context snapshot + lifecycle run verdi su Postgres effimero.
 
-- [ ] **M5-T02b** 🐘 — `outcomes.py`
+- [x] **M5-T02b** 🐘 — `outcomes.py`
   - **what**: `OutcomesRepository` §7.6 (`persist_outcome`, `list_for_model_in_window`).
     Integration test.
   - **prd**: §7.6
