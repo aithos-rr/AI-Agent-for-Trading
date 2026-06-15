@@ -74,14 +74,21 @@ _DECISION_PROMPT = (
 # as-is. If a future test uses _or_settings to drive real OpenRouter calls, apply
 # the same os.environ.get("AIAT_OPENROUTER_API_KEY", "test-or-key") pattern here.
 _OPENROUTER_SETTINGS_BASE = {
+    "experiment_id": "exp-test",
+    "git_commit_sha": "abc123",
+    "database_url": "postgresql+asyncpg://test:test@localhost/test",
+    "model_id": "model-test",
+    "prompt_template_hash": "deadbeef",
+    "hl_wallet_private_key": "0x" + "0" * 64,
+    "hl_wallet_address": "0x" + "0" * 40,
     "llm_gateway": "openrouter",
     "openrouter_api_key": "test-or-key",
     "temperature": Decimal("0.7"),
     "max_tokens": 4096,
-    "openai_api_key": "",
-    "anthropic_api_key": "",
-    "deepseek_api_key": "",
-    "qwen_api_key": "",
+    "openai_api_key": None,
+    "anthropic_api_key": None,
+    "deepseek_api_key": None,
+    "qwen_api_key": None,
 }
 
 

@@ -1001,3 +1001,31 @@ ruff clean, mypy clean (67 source files).
 15 passed in 6.06s
 ```
 ruff clean, mypy clean (69 source files).
+
+---
+
+## 2026-06-14 — M5-T03: config/settings.py — Settings per ruolo (least privilege)
+
+**Task**: Full `BaseAIATSettings` / `AgentSettings` / `ContextOrchestratorSettings` + `load_settings()` — PRD §10.3, fix B.13.
+
+**What changed**:
+- Replaced stub `settings.py` (BaseModel-only) with full pydantic-settings implementation:
+  - `BaseAIATSettings(BaseSettings)`: common fields (`experiment_id`, `git_commit_sha`, `database_url` SecretStr, `network` locked to "testnet", `log_level`, `service_role`); `env_prefix="AIAT_"`, `extra="forbid"`
+  - `AgentSettings(BaseAIATSettings)`: full agent fields (model_id, prompt_template_hash, llm_provider Literal, model_name_api, temperature/top_p/max_tokens/seed optional, all 4 LLM API keys as `SecretStr | None`, `llm_gateway`+`openrouter_api_key` (ADR-0008), `hl_wallet_private_key`+`hl_wallet_address`, guardrail Decimal defaults, inject_decision_history=False); `validate_api_key_matches_provider` validator (skips check for openrouter gateway; validates provider key presence for direct mode)
+  - `ContextOrchestratorSettings(BaseAIATSettings)`: lean class — no LLM keys, no wallet; `extra="forbid"` rejects any agent-specific extras
+  - `load_settings()`: dispatches on AIAT_SERVICE_ROLE env var
+- Updated `src/aiat/llm/factory.py`: handles `SecretStr | None` (`.get_secret_value()` after assert-not-None) and `Decimal | None`/`int | None` for temperature/max_tokens (fallback defaults)
+- Updated `tests/unit/llm/test_factory.py`: `_base_settings` helper now includes all required fields; `test_load_llm_unknown_provider_raises` uses `MagicMock(spec=AgentSettings)` with all accessed attrs to test defensive `case _:` branch
+- Updated `tests/integration/test_llm_providers.py`: `_OPENROUTER_SETTINGS_BASE` includes all required fields
+- Created `tests/unit/config/__init__.py` and `tests/unit/config/test_settings.py` (22 tests)
+
+**Notes**:
+- `.env` has `AIAT_LLM_GATEWAY=openrouter` — `ContextOrchestratorSettings` (extra="forbid") rejects these agent-specific vars if loaded from .env; tests use `_env_file=None` kwarg (pydantic-settings v2 per-instantiation override) to simulate clean orchestrator environment
+- `load_settings` dispatch tests use `unittest.mock.patch` to avoid .env interference
+
+**Verify**: `uv run pytest tests/unit/config/test_settings.py -q && uv run mypy src`
+```
+22 passed in 0.25s
+Success: no issues found in 69 source files
+```
+ruff clean, mypy clean (69 source files). All unit tests: 370 passed.

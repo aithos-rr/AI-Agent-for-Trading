@@ -972,7 +972,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/integration/test_db_repositories_baselines_tax.py -q`
   - **done-when** 🐘: baseline configs/equity + tax_sim_periods verdi su Postgres effimero.
 
-- [ ] **M5-T03** — `config/settings.py`: Settings per ruolo (least privilege)
+- [x] **M5-T03** — `config/settings.py`: Settings per ruolo (least privilege)
   - **what**: TDD. `BaseAIATSettings` + `AgentSettings` + `ContextOrchestratorSettings`
     (§10.3, fix B.13): `env_prefix="AIAT_"`, discriminator `service_role`,
     `validate_api_key_matches_provider`, `SecretStr` per chiavi, default guardrail Decimal,

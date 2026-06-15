@@ -1,7 +1,7 @@
 """Tests for load_llm factory — dual-mode dispatch (PRD §8.1 + ADR-0008)."""
 
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -19,9 +19,20 @@ _MOCK_PRICING = {
     "reasoning": Decimal("0.00"),
 }
 
+_REQUIRED_FIELDS: dict[str, object] = {
+    "experiment_id": "exp-test",
+    "git_commit_sha": "abc123",
+    "database_url": "postgresql+asyncpg://test:test@localhost/test",
+    "model_id": "model-test",
+    "prompt_template_hash": "deadbeef",
+    "hl_wallet_private_key": "0x" + "0" * 64,
+    "hl_wallet_address": "0x" + "0" * 40,
+}
+
 
 def _base_settings(**kwargs: object) -> AgentSettings:
     defaults: dict[str, object] = {
+        **_REQUIRED_FIELDS,
         "llm_provider": "openai",
         "model_name_api": "gpt-4o",
         "openai_api_key": "test-key",
@@ -30,6 +41,7 @@ def _base_settings(**kwargs: object) -> AgentSettings:
         "qwen_api_key": "test-key",
         "openrouter_api_key": "test-key",
         "temperature": Decimal("0.7"),
+        "llm_gateway": "direct",  # explicit — overrides any .env value
     }
     defaults.update(kwargs)
     return AgentSettings(**defaults)  # type: ignore[arg-type]
@@ -104,15 +116,24 @@ def test_load_llm_openrouter_uses_openrouter_base_url() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Unknown provider raises
+# Unknown provider — defensive branch (tested via mock to bypass Literal type)
 # ---------------------------------------------------------------------------
 
 
 def test_load_llm_unknown_provider_raises() -> None:
-    settings = _base_settings(llm_provider="unknown_provider", model_name_api="gpt-4o")
+    # Use MagicMock to bypass AgentSettings' Literal validation — tests the
+    # factory's defensive `case _: raise ValueError` branch at runtime.
+    settings = MagicMock(spec=AgentSettings)
+    settings.llm_gateway = "direct"
+    settings.llm_provider = "unknown_provider"
+    settings.model_name_api = "gpt-4o"
+    settings.temperature = Decimal("0.7")
+    settings.max_tokens = 4096
+    settings.top_p = None
+    settings.seed = None
     with patch("aiat.llm.factory.load_pricing_for_model", return_value=_MOCK_PRICING):
         with pytest.raises(ValueError, match="Unknown LLM provider"):
-            load_llm(settings)
+            load_llm(settings)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -122,15 +143,18 @@ def test_load_llm_unknown_provider_raises() -> None:
 
 def test_all_four_direct_providers_and_openrouter() -> None:
     """Verify all 5 dispatch paths return valid clients."""
-    base = _base_settings(model_name_api="any-model")
-
     with patch("aiat.llm.factory.load_pricing_for_model", return_value=_MOCK_PRICING):
-        openai_c = load_llm(AgentSettings(**{**base.model_dump(), "llm_provider": "openai"}))
-        anthropic_c = load_llm(AgentSettings(**{**base.model_dump(), "llm_provider": "anthropic"}))
-        deepseek_c = load_llm(AgentSettings(**{**base.model_dump(), "llm_provider": "deepseek"}))
-        qwen_c = load_llm(AgentSettings(**{**base.model_dump(), "llm_provider": "qwen"}))
-        or_settings = {**base.model_dump(), "llm_gateway": "openrouter", "llm_provider": "openai"}
-        or_c = load_llm(AgentSettings(**or_settings))
+        openai_c = load_llm(_base_settings(llm_provider="openai", model_name_api="any-model"))
+        anthropic_c = load_llm(_base_settings(llm_provider="anthropic", model_name_api="any-model"))
+        deepseek_c = load_llm(_base_settings(llm_provider="deepseek", model_name_api="any-model"))
+        qwen_c = load_llm(_base_settings(llm_provider="qwen", model_name_api="any-model"))
+        or_c = load_llm(
+            _base_settings(
+                llm_gateway="openrouter",
+                llm_provider="openai",
+                model_name_api="openai/gpt-4o",
+            )
+        )
 
     assert isinstance(openai_c, OpenAIClient)
     assert isinstance(anthropic_c, AnthropicClient)
