@@ -1010,7 +1010,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when**: i job hanno trigger/coalesce/max_instances/grace corretti; agent ha
     start_delay 30s; test verde.
 
-- [ ] **M5-T06** — `orchestration/decision_loop.py`: 1 tick completo
+- [x] **M5-T06** — `orchestration/decision_loop.py`: 1 tick completo
   - **what**: TDD (componenti mockati). `run_once(tick_id)` §4.1: read context_snapshot →
     render prompt → invoke LLM → guardrails → execute → persist atomico (DecisionsRepository).
     Budget hard timeout 180s, **no fallback a tick precedente** (§2.1). Aggiorna runs.status.

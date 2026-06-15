@@ -1095,3 +1095,27 @@ Success: no issues found in 71 source files
 ruff clean, lint-imports clean
 413 passed, 2 warnings in 8.20s (all unit tests)
 ```
+
+---
+
+## 2026-06-14 — M5-T06
+
+**Task**: `orchestration/decision_loop.py` — 10-step decision loop (PRD §4.1)  
+**Changed**:
+- Created `src/aiat/orchestration/decision_loop.py`: `DecisionLoop` class with `run_once(tick_id, scheduled_for)` executing the full PRD §4.1 10-step sequence. Key internals: `_render_prompt` (template + market context + portfolio + confidence_def → sha256 hash), `_wait_for_context_snapshot` (3 retries × 5s), `_execute_actions` (HOLD skipped; LONG/SHORT/FLAT executed via HL client + positions persisted), `_check_pending_closures` (SL/TP triggers), `_finalize_run` (fresh session for timeout/error handlers).
+- Used mutable `list[str | None]` holder pattern so `_execute_tick` can propagate `run_id` to the timeout handler immediately after `create_run`, before the LLM call that may block.
+- Created `tests/unit/orchestration/test_decision_loop.py`: 15 unit tests covering happy path, missed tick (with retry count verification), timeout (run_id propagated via holder), guardrail params, LONG execution, step ordering (context → portfolio → run → LLM → persist → success), and `RuntimeError` on missing prompt template.
+
+**Design notes**:
+- PRD §4.1 lists `create_run` as step 1, but `Run.context_snapshot_id` is NOT NULL FK — reordered to: context_snapshot first (step 3), portfolio (step 2), render prompt (step 4), create run (step 1 — last before LLM).
+- The `nonlocal run_id` pattern from the summary was insufficient since `run_id` was local to `_execute_tick`. Fixed by `_run_id_holder: list[str | None]` shared between `run_once` and `_execute_tick`.
+- Invariant #4 satisfied: `cost_events` persisted inside `persist_decision` atomic transaction (same commit).
+- Invariant #13 satisfied: missed tick returns `None` and logs error, never uses stale snapshot.
+
+**Verify**:
+```
+15 passed in 1.65s
+Success: no issues found in 72 source files
+ruff clean
+428 passed, 2 warnings in 8.13s (all unit tests)
+```
