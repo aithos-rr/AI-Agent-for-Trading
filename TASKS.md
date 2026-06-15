@@ -961,7 +961,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/integration/test_db_repositories_outcomes.py -q`
   - **done-when** 🐘: persist/list outcomes verde su Postgres effimero.
 
-- [ ] **M5-T02c** 🐘 — `baselines.py` + `tax_simulation.py`
+- [x] **M5-T02c** 🐘 — `baselines.py` + `tax_simulation.py`
   - **what**: `BaselineRepository` (`register_baseline_config` con config_hash,
     `get_baseline_config`, `persist_equity_snapshot`, `list_equity_history`) +
     `TaxSimulationRepository` (`compute_and_persist_period` con compensazione algebrica

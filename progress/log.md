@@ -975,3 +975,29 @@ ruff clean, mypy clean (66 source files).
 9 passed in 5.80s
 ```
 ruff clean, mypy clean (67 source files).
+
+---
+
+## 2026-06-14 — M5-T02c: BaselineRepository + TaxSimulationRepository
+
+**Task**: `db/repositories/baselines.py` + `db/repositories/tax_simulation.py` — §7.6.
+
+**What changed**:
+- Created `src/aiat/db/repositories/baselines.py` with `BaselineRepository`:
+  - `register_baseline_config(experiment_id, baseline_name, config_json)`: inserts BaselineConfig with SHA-256 of canonical JSON as config_hash. Returns baseline_config_id str UUID.
+  - `get_baseline_config(experiment_id, baseline_name)`: SELECT by (experiment_id, baseline_name); returns None if absent.
+  - `persist_equity_snapshot(baseline_config_id, tick_id, tick_at, equity_usd, pnl_usd_cumulative, raw_state)`: looks up BaselineConfig to derive experiment_id + baseline_name, then inserts BaselineEquitySnapshot. Raises ValueError if config not found.
+  - `list_equity_history(experiment_id, baseline_name)`: returns snapshots ordered by tick_at ASC.
+- Created `src/aiat/db/repositories/tax_simulation.py` with `TaxSimulationRepository`:
+  - `compute_and_persist_period(...)`: aggregates Outcome objects → total_pnl_gross, total_fees, total_funding; applies §4.3 algebraic compensation (taxable_base = max(0, net)); persists TaxSimPeriod. Returns period_id.
+  - `list_for_model(model_id)`: returns periods ordered by period_start ASC.
+- Updated `src/aiat/db/repositories/__init__.py` to export both new repositories.
+- Created `tests/integration/test_db_repositories_baselines_tax.py` — 15 tests:
+  - BaselineRepository (9): register success+hash determinism, get found+not_found, duplicate raises, invalid name raises, persist_equity_snapshot success+invalid_config_raises, list_equity_history ordered
+  - TaxSimulationRepository (6): compute with profit (correct aggregation), compute with net loss (taxable_base clamped to 0), empty outcomes (all zeros), list_for_model ordered, list excludes other model, duplicate quarter raises
+
+**Verify**: `uv run pytest tests/integration/test_db_repositories_baselines_tax.py -q`
+```
+15 passed in 6.06s
+```
+ruff clean, mypy clean (69 source files).
