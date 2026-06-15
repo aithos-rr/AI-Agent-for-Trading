@@ -153,13 +153,9 @@ class DecisionsRepository:
                 "provider": invocation.provider_snapshot,
                 "model_name_api": invocation.model_name_api_snapshot,
                 "temperature": (
-                    str(invocation.temperature)
-                    if invocation.temperature is not None
-                    else None
+                    str(invocation.temperature) if invocation.temperature is not None else None
                 ),
-                "top_p": (
-                    str(invocation.top_p) if invocation.top_p is not None else None
-                ),
+                "top_p": (str(invocation.top_p) if invocation.top_p is not None else None),
                 "max_tokens": invocation.max_tokens,
                 "seed": invocation.seed,
                 "fallback_used": invocation.fallback_used,

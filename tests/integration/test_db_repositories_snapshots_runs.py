@@ -419,9 +419,7 @@ async def test_log_error_with_run_fk(db_session: AsyncSession) -> None:
         context={"symbol": "BTC"},
     )
 
-    result = await db_session.execute(
-        select(Error).where(Error.run_id == run_id)
-    )
+    result = await db_session.execute(select(Error).where(Error.run_id == run_id))
     row = result.scalar_one_or_none()
     assert row is not None
     assert row.error_kind == "ExecutionRejectedError"

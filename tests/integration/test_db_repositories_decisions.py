@@ -298,11 +298,7 @@ async def test_persist_decision_creates_all_rows(db_session: AsyncSession) -> No
 
     # 1 llm_invocation
     llm_invs = (
-        (
-            await db_session.execute(
-                select(LLMInvocation).where(LLMInvocation.run_id == ids.run_id)
-            )
-        )
+        (await db_session.execute(select(LLMInvocation).where(LLMInvocation.run_id == ids.run_id)))
         .scalars()
         .all()
     )
