@@ -206,6 +206,9 @@ def _open_ready_sdk() -> tuple[MagicMock, MagicMock]:
     info = MagicMock()
     info.user_state.return_value = _user_state()
     info.all_mids.return_value = dict(_MIDS)
+    # szDecimals lookup (ADR-0017): every symbol → asset 0 → 5 decimals (BTC perp).
+    info.name_to_asset.return_value = 0
+    info.asset_to_sz_decimals = {0: 5}
     exchange = MagicMock()
     exchange.update_leverage.return_value = {"status": "ok"}
     exchange.market_open.return_value = _filled_resp(total_sz="30.0", avg_px="101.0")
@@ -870,3 +873,67 @@ class TestOrderResultDownstreamShape:
         client = _client(exchange=MagicMock(), info=info)
         closure = await client.check_position_closure("BTC")
         assert isinstance(closure, PositionClosureInfo)
+
+
+# ---------------------------------------------------------------------------
+# Size quantization to szDecimals (ADR-0017) — the float_to_wire bug from M4-T08
+# ---------------------------------------------------------------------------
+
+
+class TestSizeQuantization:
+    def _client_with_szdec(self, sz_decimals: int) -> RealHyperliquidClient:
+        info = MagicMock()
+        info.name_to_asset.return_value = 0
+        info.asset_to_sz_decimals = {0: sz_decimals}
+        return _client(exchange=MagicMock(), info=info)
+
+    def test_quantizes_to_sz_decimals_round_down(self) -> None:
+        # The exact size that crashed the SDK on the first real testnet run.
+        client = self._client_with_szdec(5)
+        assert client._quantize_size("BTC", Decimal("0.0012814444551819603")) == Decimal("0.00128")
+
+    def test_round_down_never_rounds_up(self) -> None:
+        # 0.129 → 0.12 (ROUND_DOWN), never 0.13 — preserves max_size_pct (inv #8).
+        client = self._client_with_szdec(2)
+        assert client._quantize_size("BTC", Decimal("0.129")) == Decimal("0.12")
+
+    def test_already_valid_size_unchanged(self) -> None:
+        client = self._client_with_szdec(5)
+        assert client._quantize_size("BTC", Decimal("30")) == Decimal("30")
+
+    def test_unknown_symbol_raises(self) -> None:
+        info = MagicMock()
+        info.name_to_asset.side_effect = KeyError("DOGE")
+        client = _client(exchange=MagicMock(), info=info)
+        with pytest.raises(ExecutionRejectedError, match="szDecimals"):
+            client._quantize_size("DOGE", Decimal("1"))
+
+    async def test_open_size_quantizing_to_zero_raises(self) -> None:
+        # szDecimals=0 (integer sizes) + tiny notional ⇒ size_units < 1 ⇒ 0 ⇒ reject,
+        # never submit a 0-unit order.
+        info = MagicMock()
+        info.user_state.return_value = _user_state(account_value="100.0")
+        info.all_mids.return_value = {"BTC": "1000.0"}  # high price ⇒ tiny size_units
+        info.name_to_asset.return_value = 0
+        info.asset_to_sz_decimals = {0: 0}
+        exchange = MagicMock()
+        exchange.update_leverage.return_value = {"status": "ok"}
+        client = _client(exchange=exchange, info=info)
+        with pytest.raises(ExecutionRejectedError, match="quantizes to 0"):
+            await client.execute_action(_long_action("BTC"), "run-z", None)
+        exchange.market_open.assert_not_called()
+        exchange.update_leverage.assert_not_called()  # guard fires before leverage set
+
+    async def test_entry_submits_quantized_size_to_sdk(self) -> None:
+        # End-to-end through execute_action: the size sent to market_open is quantized,
+        # and the entry OrderResult.requested_size_units carries the quantized value.
+        exchange, info = _open_ready_sdk()
+        info.asset_to_sz_decimals = {0: 3}  # 3 decimals
+        info.user_state.return_value = _user_state(account_value="10000.0")
+        info.all_mids.return_value = {"BTC": "100.0"}
+        # equity 10000 * size_pct 0.10 * leverage 3 / 100 = 30.000 → quantizes cleanly
+        client = _client(exchange=exchange, info=info)
+        results = await client.execute_action(_long_action("BTC"), "run-q", None)
+        submitted = exchange.market_open.call_args.args[2]
+        assert submitted == 30.0
+        assert results[0].requested_size_units == Decimal("30.000")

@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any, Literal
 
 import structlog
@@ -524,6 +524,27 @@ class RealHyperliquidClient(HyperliquidClient):
             raw_response=resp,
         )
 
+    def _sz_decimals(self, symbol: str) -> int:
+        """Read the asset's size precision (szDecimals) live from the venue (ADR-0017)."""
+        try:
+            return int(self._info.asset_to_sz_decimals[self._info.name_to_asset(symbol)])
+        except KeyError as exc:
+            raise ExecutionRejectedError(
+                f"cannot resolve szDecimals for {symbol}: {exc!r}"
+            ) from exc
+
+    def _quantize_size(self, symbol: str, size: Decimal) -> Decimal:
+        """Quantize an order size to the asset's szDecimals with ROUND_DOWN (ADR-0017).
+
+        Hyperliquid rejects sizes carrying more decimals than the asset's szDecimals
+        ("float_to_wire causes rounding"). Quantizing stays in Decimal (inv #12); the
+        float() conversion happens only at the SDK call. ROUND_DOWN guarantees the
+        executed notional never exceeds the requested one (preserves the size guardrail,
+        inv #8).
+        """
+        quantum = Decimal(1).scaleb(-self._sz_decimals(symbol))
+        return size.quantize(quantum, rounding=ROUND_DOWN)
+
     async def _open_orders(self, action: ActionDecision) -> list[OrderResult]:
         """Open a LONG/SHORT position: leverage + market entry + SL/TP triggers."""
         # The ActionDecision validator guarantees SL/TP for LONG/SHORT (mirrors Mock).
@@ -547,14 +568,23 @@ class RealHyperliquidClient(HyperliquidClient):
             stop_loss_pct=action.stop_loss_pct,
             take_profit_pct=action.take_profit_pct,
         )
-        size_units = sizing.size_units
+        # ADR-0017: quantize to the asset's szDecimals (ROUND_DOWN) at the SDK boundary,
+        # else Hyperliquid rejects the order ("float_to_wire causes rounding").
+        size_units = self._quantize_size(action.symbol, sizing.size_units)
+        if size_units <= 0:
+            raise ExecutionRejectedError(
+                f"size for {action.symbol} quantizes to 0 at szDecimals="
+                f"{self._sz_decimals(action.symbol)} "
+                f"(theoretical size_units={sizing.size_units}); notional too small "
+                "for one size step"
+            )
         is_buy = action.side == Side.LONG
 
         # Set leverage for this coin (cross margin). ASSUMPTION (validate M4-T08):
         # cross margin + integer leverage (HL only accepts int leverage per coin).
         await self._call(self._exchange.update_leverage, int(action.leverage), action.symbol, True)
 
-        # Market entry — submit the leveraged size; float() only at the SDK boundary.
+        # Market entry — submit the quantized leveraged size; float() only at the boundary.
         entry_resp = await self._call(
             self._exchange.market_open, action.symbol, is_buy, float(size_units)
         )
@@ -617,6 +647,10 @@ class RealHyperliquidClient(HyperliquidClient):
         tpsl: Literal["sl", "tp"],
     ) -> OrderResult:
         """Place a reduce-only stop-loss/take-profit trigger order."""
+        # ADR-0017: quantize at the SDK boundary. The fill size from HL is already
+        # szDecimals-valid, so this is idempotent in practice, but keeps every
+        # size→SDK path uniform.
+        size_units = self._quantize_size(symbol, size_units)
         order_type = {
             "trigger": {
                 "triggerPx": float(trigger_price),
