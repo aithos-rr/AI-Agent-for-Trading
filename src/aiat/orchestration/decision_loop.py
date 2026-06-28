@@ -344,11 +344,9 @@ class DecisionLoop:
         open_positions = await positions_repo.list_open_for_model(self._settings.model_id)
 
         for position in open_positions:
-            # Position identity = coin symbol (ADR-0016). Hyperliquid exposes no stable
-            # position id, and v2 holds at most one position per symbol per wallet, so the
-            # symbol uniquely identifies the position. The positions.hl_position_id column
-            # is vestigial (never populated) — keying closure detection off it skipped this
-            # loop entirely (always None). Use the symbol, matching RealHyperliquidClient.
+            # Position identity = coin symbol (ADR-0016, confirmed by M4-T08 against the
+            # real SDK). Hyperliquid exposes no stable position id, and v2 holds at most one
+            # position per symbol per wallet, so the symbol uniquely identifies the position.
             closure_info = await self._hl_client.check_position_closure(position.symbol)
             if closure_info is not None:
                 await positions_repo.close_position(str(position.id), closure_info, run_id)

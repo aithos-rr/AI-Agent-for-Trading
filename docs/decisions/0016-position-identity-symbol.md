@@ -61,12 +61,14 @@ Giustificazione:
 Questa è la **stessa convenzione** già adottata da `RealHyperliquidClient` — l'ADR la
 ratifica end-to-end e la usa per chiudere la divergenza fra loop e client.
 
-### `positions.hl_position_id` → vestigiale
+### `positions.hl_position_id` → RIMOSSA
 
-La colonna `positions.hl_position_id` (`db/models/position.py` riga 49, nullable) è
-**deprecata/vestigiale**: residuo dell'assunzione errata. **Non va popolata
-artificialmente** e non è usata da nessun percorso operativo. **Non viene rimossa ora**
-(eviterebbe una migration non necessaria); resta come colonna inutilizzata, documentata qui.
+La colonna `positions.hl_position_id` (nullable, mai popolata con un id reale) era residuo
+dell'assunzione errata. **RIMOSSA**: M4-T08 ha confermato sul campo l'identità = symbol
+contro l'SDK reale (`check_position_closure` rileva le chiusure via symbol), quindi la colonna
+non ha più ragion d'essere. Droppata nella **migrazione `003_drop_hl_position_id`**. Se un
+venue futuro fornisse un id posizione stabile, riaggiungerla è una migrazione banale
+(`add_column`, String nullable).
 
 ## Conseguenze
 
@@ -77,12 +79,9 @@ artificialmente** e non è usata da nessun percorso operativo. **Non viene rimos
   (passa `position.symbol`).
 
 ### Negative / Note
-- Colonna DB `hl_position_id` inutilizzata (debito documentale, non funzionale). È nullable e
-  a costo zero: una migration per droppare una colonna inutile non si giustifica, e l'identità
-  = symbol va ancora validata su testnet. **La colonna resta come opzionalità in attesa della
-  validazione testnet (M4-T08)**: se M4-T08 conferma che `symbol` è identità sufficiente, la
-  colonna potrà essere rimossa in un cleanup post-M4 non prioritario; se invece emerge un uso
-  reale, viene ripopolata. Nessun task pianificato finché M4-T08 non si chiude.
+- Colonna DB `hl_position_id` **rimossa** (migrazione `003`) dopo che M4-T08 ha confermato
+  l'identità = symbol contro l'SDK reale. Costo della rimozione: una migrazione banale e
+  reversibile; nessun dato perso (la colonna non era mai stata popolata).
 - **Da validare su testnet reale (M4-T08)**: questa convenzione è legata all'**assunzione
   #2 del `RealHyperliquidClient`** (`hl_position_id` := coin symbol) e all'attribuzione di
   `close_reason` da `user_fills`. Entrambe vanno verificate contro le shape reali dei fill
@@ -103,5 +102,6 @@ guardia `hl_position_id`) e passa con il fix. (Verificato fail-con-bug / pass-co
 - [x] `src/aiat/orchestration/decision_loop.py::_check_pending_closures` usa `position.symbol`
 - [x] Test con denti aggiunto (`test_check_pending_closures_detects_closure_by_symbol`)
 - [x] Indicizzato in `docs/decisions/README.md`
+- [x] Identità=symbol validata su testnet reale (M4-T08, 2026-06-28)
+- [x] Colonna `positions.hl_position_id` rimossa (migrazione `003_drop_hl_position_id`)
 - [ ] (PRD non modificato: frozen; §4.1 step 9 resta valido, qui solo l'identità è ratificata)
-- [ ] Validazione testnet reale dell'identità=symbol + `close_reason` → M4-T08

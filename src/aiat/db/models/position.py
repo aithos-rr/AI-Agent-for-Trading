@@ -46,7 +46,6 @@ class Position(TimestampMixin, Base):
     exit_price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
     close_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     realized_pnl_usd: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
-    hl_position_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
     __table_args__ = (
         CheckConstraint("side IN ('LONG','SHORT')", name="chk_position_side"),

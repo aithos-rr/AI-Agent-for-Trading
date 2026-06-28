@@ -1111,15 +1111,13 @@ class TestDecisionLoopRunOnce:
         """TEETH (ADR-0016): an open position whose SYMBOL has a registered closure must
         be detected and closed.
 
-        Regression guard for the M5 bug where _check_pending_closures keyed off
-        position.hl_position_id (always None) and therefore skipped closure detection
-        entirely. We use a REAL MockHyperliquidClient keyed by the argument passed, so the
-        test is sensitive to symbol-vs-hl_position_id: with the bug it would look up
-        closed_positions[None] (or `continue` on the None guard) and never close — this
-        assertion would fail. With the fix it looks up closed_positions["BTC"] and closes.
+        Regression guard for the M5 bug where _check_pending_closures keyed closure
+        detection off a position id (always None) instead of the coin symbol. We use a
+        REAL MockHyperliquidClient keyed by the argument passed, so the test is sensitive
+        to which value is passed: only resolving by symbol looks up closed_positions["BTC"]
+        and closes; anything else would never close and this assertion would fail.
         """
-        # Open position: hl_position_id is None (it is vestigial, never populated).
-        open_position = SimpleNamespace(id=uuid.uuid4(), symbol="BTC", hl_position_id=None)
+        open_position = SimpleNamespace(id=uuid.uuid4(), symbol="BTC")
         closure = PositionClosureInfo(
             closed_at="2026-06-14T15:00:00+00:00",
             exit_price=Decimal("105"),

@@ -19,7 +19,7 @@ from aiat.db.session import get_db_session
 
 logger = structlog.get_logger(__name__)
 
-EXPECTED_ALEMBIC_VERSION = "002"
+EXPECTED_ALEMBIC_VERSION = "003"
 EXPECTED_BASELINES: frozenset[str] = frozenset({"buy_and_hold", "cash", "naive_momentum_ema_20_50"})
 
 
