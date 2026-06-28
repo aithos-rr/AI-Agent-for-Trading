@@ -45,6 +45,7 @@ e l'originale viene marcato `superseded by ADR-YYYY`.
 | 0013 | [onchain-semantics-and-news-robustness](0013-onchain-semantics-and-news-robustness.md) — funding ×8, premium al posto di long_short_ratio, news follow_redirects + parser tollerante | accepted | 2026-06-14 | M3 | none |
 | 0014 | [holdflat-outcome](0014-holdflat-outcome.md) — HOLD/FLAT outcome labeling: fee-hurdle counterfactual, was_profitable_net=True iff \|Δprice%\| ≤ fee_roundtrip% | accepted | 2026-06-14 | M4 | D2 |
 | 0015 | [size-units-convention](0015-size-units-convention.md) — `size_units` = quantità leveraged eseguita (devia da §9.2 r.2346; reconcilia sizing.py con positions.py) | accepted | 2026-06-14 | M4 | none |
+| 0016 | [position-identity-symbol](0016-position-identity-symbol.md) — identità posizione = coin symbol; fix bug rilevazione chiusure SL/TP (decision_loop usava hl_position_id=None); `hl_position_id` vestigiale | accepted | 2026-06-28 | M4/M5 | none |
 
 ## Template
 

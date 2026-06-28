@@ -6,12 +6,13 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from aiat.config.settings import AgentSettings
-from aiat.domain.enums import EntryType, OrderKind, RunStatus, Side
+from aiat.domain.enums import CloseReason, EntryType, OrderKind, RunStatus, Side
 from aiat.domain.schemas import (
     ActionDecision,
     ContextBundle,
@@ -26,7 +27,11 @@ from aiat.domain.schemas import (
     TechnicalIndicators,
     TradeDecision,
 )
-from aiat.execution.hyperliquid_client import OrderResult
+from aiat.execution.hyperliquid_client import (
+    MockHyperliquidClient,
+    OrderResult,
+    PositionClosureInfo,
+)
 from aiat.orchestration.decision_loop import DecisionLoop, _render_prompt
 
 # ---------------------------------------------------------------------------
@@ -1100,3 +1105,46 @@ class TestDecisionLoopRunOnce:
         # list_open_for_model is called for _execute_actions (step 8) and for
         # _check_pending_closures (step 9)
         assert mock_pr.list_open_for_model.call_count >= 1
+
+    @pytest.mark.asyncio
+    async def test_check_pending_closures_detects_closure_by_symbol(self) -> None:
+        """TEETH (ADR-0016): an open position whose SYMBOL has a registered closure must
+        be detected and closed.
+
+        Regression guard for the M5 bug where _check_pending_closures keyed off
+        position.hl_position_id (always None) and therefore skipped closure detection
+        entirely. We use a REAL MockHyperliquidClient keyed by the argument passed, so the
+        test is sensitive to symbol-vs-hl_position_id: with the bug it would look up
+        closed_positions[None] (or `continue` on the None guard) and never close — this
+        assertion would fail. With the fix it looks up closed_positions["BTC"] and closes.
+        """
+        # Open position: hl_position_id is None (it is vestigial, never populated).
+        open_position = SimpleNamespace(id=uuid.uuid4(), symbol="BTC", hl_position_id=None)
+        closure = PositionClosureInfo(
+            closed_at="2026-06-14T15:00:00+00:00",
+            exit_price=Decimal("105"),
+            close_reason=CloseReason.STOP_LOSS,
+            realized_pnl_usd=Decimal("-50"),
+        )
+        hl_client = MockHyperliquidClient(closed_positions={"BTC": closure})
+
+        with patch("aiat.orchestration.decision_loop.PositionsRepository") as MockPositionsRepo:
+            mock_pr = AsyncMock()
+            mock_pr.list_open_for_model = AsyncMock(return_value=[open_position])
+            mock_pr.close_position = AsyncMock()
+            MockPositionsRepo.return_value = mock_pr
+
+            loop = DecisionLoop(
+                settings=_make_agent_settings(),
+                llm_client=AsyncMock(),
+                hl_client=hl_client,
+                session_factory=_make_session_factory(AsyncMock()),
+                guardrails=MagicMock(),
+            )
+            await loop._check_pending_closures(AsyncMock(), RUN_ID)
+
+        mock_pr.close_position.assert_awaited_once()
+        call_args = mock_pr.close_position.call_args.args
+        assert call_args[0] == str(open_position.id)
+        assert call_args[1] is closure
+        assert call_args[2] == RUN_ID
