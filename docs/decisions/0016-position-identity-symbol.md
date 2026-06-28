@@ -77,8 +77,12 @@ artificialmente** e non è usata da nessun percorso operativo. **Non viene rimos
   (passa `position.symbol`).
 
 ### Negative / Note
-- Colonna DB `hl_position_id` inutilizzata (debito documentale, non funzionale). Eventuale
-  rimozione = migration futura, fuori scope.
+- Colonna DB `hl_position_id` inutilizzata (debito documentale, non funzionale). È nullable e
+  a costo zero: una migration per droppare una colonna inutile non si giustifica, e l'identità
+  = symbol va ancora validata su testnet. **La colonna resta come opzionalità in attesa della
+  validazione testnet (M4-T08)**: se M4-T08 conferma che `symbol` è identità sufficiente, la
+  colonna potrà essere rimossa in un cleanup post-M4 non prioritario; se invece emerge un uso
+  reale, viene ripopolata. Nessun task pianificato finché M4-T08 non si chiude.
 - **Da validare su testnet reale (M4-T08)**: questa convenzione è legata all'**assunzione
   #2 del `RealHyperliquidClient`** (`hl_position_id` := coin symbol) e all'attribuzione di
   `close_reason` da `user_fills`. Entrambe vanno verificate contro le shape reali dei fill
