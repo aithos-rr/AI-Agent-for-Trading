@@ -10,7 +10,7 @@ import structlog
 
 from aiat.config.settings import AgentSettings, ContextOrchestratorSettings, load_settings
 from aiat.db.session import get_db_session
-from aiat.execution.hyperliquid_client import MockHyperliquidClient
+from aiat.execution.hyperliquid_client import build_hl_client
 from aiat.llm.factory import load_llm
 from aiat.observability.logging_config import configure_logging as _configure_logging_impl
 from aiat.orchestration.decision_loop import DecisionLoop
@@ -35,7 +35,7 @@ async def _build_agent_tick_job(
     """
     session_factory = get_db_session(settings.database_url.get_secret_value())
     llm_client = load_llm(settings)
-    hl_client = MockHyperliquidClient()
+    hl_client = build_hl_client(settings)
     loop = DecisionLoop(
         settings=settings,
         llm_client=llm_client,

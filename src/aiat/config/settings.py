@@ -72,6 +72,11 @@ class AgentSettings(BaseAIATSettings):
     hl_wallet_private_key: SecretStr
     hl_wallet_address: str
 
+    # Hyperliquid client implementation selector (M4-T08 wiring).
+    # Defaults to 'mock' so existing tests and un-provisioned deploys stay green;
+    # set AIAT_HL_CLIENT_IMPL=real to trade on testnet via the live SDK client.
+    hl_client_impl: Literal["mock", "real"] = "mock"
+
     # Guardrails (Strategia C+, PRE_PRD §13.3 — always active, invariant #8)
     max_size_pct: Decimal = Field(default=Decimal("0.20"), ge=0, le=1)
     hard_max_leverage: Decimal = Field(default=Decimal("10"), ge=1)

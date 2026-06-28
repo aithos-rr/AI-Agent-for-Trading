@@ -262,7 +262,7 @@ class TestMainDispatch:
         with (
             patch("aiat.__main__.get_db_session", return_value=MagicMock()),
             patch("aiat.__main__.load_llm", return_value=MagicMock()),
-            patch("aiat.__main__.MockHyperliquidClient", return_value=MagicMock()),
+            patch("aiat.__main__.build_hl_client", return_value=MagicMock()),
             patch("aiat.__main__.DecisionLoop") as MockLoop,
         ):
             mock_loop_instance = MagicMock()

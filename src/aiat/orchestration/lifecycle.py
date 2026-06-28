@@ -153,12 +153,14 @@ async def _agent_startup_checks(settings: AgentSettings) -> None:
 async def _check_hl_reachability(settings: AgentSettings) -> None:
     """[A6] HL testnet reachable and wallet has positive equity.
 
-    Uses MockHyperliquidClient as placeholder until real client available (M6).
-    In unit tests, patch this function via ``unittest.mock.patch``.
+    Resolves the configured client (mock or real testnet SDK) via
+    ``build_hl_client``; with ``AIAT_HL_CLIENT_IMPL=real`` this genuinely probes the
+    funded testnet wallet. In unit tests, patch this function via
+    ``unittest.mock.patch``.
     """
-    from aiat.execution.hyperliquid_client import MockHyperliquidClient
+    from aiat.execution.hyperliquid_client import build_hl_client
 
-    hl = MockHyperliquidClient()
+    hl = build_hl_client(settings)
     state = await hl.fetch_portfolio_state()
     if state.equity_usd <= 0:
         raise RuntimeError(f"Wallet equity=0 for '{settings.model_id}'. Fund testnet wallet first.")
