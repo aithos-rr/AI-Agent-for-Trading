@@ -1353,3 +1353,39 @@ Verificato in-container (non spunto su claim): record_mode=none, 14 cassette ope
 15/15. Le cassette dei provider **DIRETTI** per l'esperimento restano a **M6** (ADR-0008).
 
 Human-gate ancora aperti: **M3-T11** (smoke orchestrator reale), **M5-T14** (smoke multi-tick).
+
+---
+
+## M3-T11 DIAGNOSI (2026-06-28) — NON eseguibile finché manca il wiring orchestrator
+
+**NON spuntato.** Preparando lo smoke M3-T11 (orchestrator reale) è emerso che il task non è
+eseguibile: manca il **wiring di produzione del role `context_orchestrator`**. Diagnosi
+verificata sul codice in-container:
+
+- **`_build_orchestrator_tick_job` NON esiste.** `__main__.py:66` per il role orchestrator chiama
+  `build_scheduler_for_orchestrator(settings)` **senza `tick_job`** → lo scheduler resta legato al
+  placeholder `_unbound_orchestrator_tick` (`scheduler.py:28-29`), che **solleva
+  `RuntimeError("tick_job not bound …")`** ad ogni tick (non un no-op silenzioso). Per il role
+  `agent` esiste invece `_build_agent_tick_job` che costruisce il job reale; l'equivalente
+  orchestrator manca.
+- **Conseguenza**: `python -m aiat` (role=context_orchestrator) avvia lo scheduler ma ogni tick
+  fallisce → **zero `context_snapshots` scritti** → il verify di M3-T11 fallirebbe per forza.
+- **I mattoni esistono** (ContextOrchestrator, ContextBuilder, i 6 collector completi); manca solo
+  l'assemblaggio nel tick job. **Stesso pattern di M4-T08**: il loop ha saltato il wiring finale
+  perché dietro un task human-gated.
+
+**CONFOUND di validità (da risolvere nello stesso wiring) → candidato ADR-0019 "rete-del-context"**:
+- `TechnicalCollector` ha `base_url` **default = MAINNET** (`technical.py:17` `_HL_BASE_URL =
+  https://api.hyperliquid.xyz`; `__init__` `base_url: str = _HL_BASE_URL`), mentre
+  `HLPublicInfoClient` (onchain) riceve `network=settings.network` (testnet). I due collector sullo
+  **stesso endpoint `/info`** puntano a **reti diverse**. La rete del context va ratificata in un ADR
+  prima/durante la scrittura del wiring.
+- **Preflight debole**: `_check_orchestrator_sources` (lifecycle) verifica HL-info/RSS/F&G ma **NON**
+  la raggiungibilità di `TechnicalCollector` — benché sia la **fonte dati principale** del context.
+  Candidato all'inclusione nel check O2.
+
+**Lavoro residuo M3-T11 (prossima sessione)**: (1) ADR rete-del-context (0019); (2) scrivere
+`_build_orchestrator_tick_job` in `__main__` — i 6 collector tutti su `settings.network` →
+ContextBuilder → ContextOrchestrator → callable per lo scheduler; (3) passare il job a
+`build_scheduler_for_orchestrator`; (4) run reale in WSL (human-gated). Valutare anche l'aggiunta
+di TechnicalCollector al preflight O2.
