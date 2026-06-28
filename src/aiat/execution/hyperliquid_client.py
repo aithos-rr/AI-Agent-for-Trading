@@ -545,6 +545,22 @@ class RealHyperliquidClient(HyperliquidClient):
         quantum = Decimal(1).scaleb(-self._sz_decimals(symbol))
         return size.quantize(quantum, rounding=ROUND_DOWN)
 
+    def _quantize_price(self, symbol: str, price: Decimal) -> Decimal:
+        """Quantize a price to Hyperliquid's native perp rule (ADR-0018).
+
+        A valid perp price has at most 5 significant figures AND at most
+        ``6 - szDecimals`` decimals, rounded to nearest. This mirrors
+        ``Exchange._slippage_price`` exactly (a float-based rule), so the output is
+        guaranteed to pass the SDK's ``float_to_wire`` check. szDecimals is read live
+        from the venue. Unlike size (ADR-0017, ROUND_DOWN), price rounds to nearest —
+        the ≤ half-tick deviation is negligible at SL/TP risk levels.
+        """
+        sz_decimals = self._sz_decimals(symbol)
+        # Mirror the SDK's native formula: round(float(f"{px:.5g}"), 6 - szDecimals).
+        five_sig_figs = float(f"{float(price):.5g}")
+        rounded = round(five_sig_figs, 6 - sz_decimals)
+        return _to_decimal(rounded)
+
     async def _open_orders(self, action: ActionDecision) -> list[OrderResult]:
         """Open a LONG/SHORT position: leverage + market entry + SL/TP triggers."""
         # The ActionDecision validator guarantees SL/TP for LONG/SHORT (mirrors Mock).
@@ -651,6 +667,10 @@ class RealHyperliquidClient(HyperliquidClient):
         # szDecimals-valid, so this is idempotent in practice, but keeps every
         # size→SDK path uniform.
         size_units = self._quantize_size(symbol, size_units)
+        # ADR-0018: quantize the trigger price to HL's native perp rule, else HL rejects
+        # it ("Invalid TP/SL price"). Quantize once; use the same value for triggerPx and
+        # the order's limit price.
+        trigger_price = self._quantize_price(symbol, trigger_price)
         order_type = {
             "trigger": {
                 "triggerPx": float(trigger_price),

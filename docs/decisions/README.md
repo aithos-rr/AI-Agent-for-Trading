@@ -47,6 +47,7 @@ e l'originale viene marcato `superseded by ADR-YYYY`.
 | 0015 | [size-units-convention](0015-size-units-convention.md) — `size_units` = quantità leveraged eseguita (devia da §9.2 r.2346; reconcilia sizing.py con positions.py) | accepted | 2026-06-14 | M4 | none |
 | 0016 | [position-identity-symbol](0016-position-identity-symbol.md) — identità posizione = coin symbol; fix bug rilevazione chiusure SL/TP (decision_loop usava hl_position_id=None); `hl_position_id` vestigiale | accepted | 2026-06-28 | M4/M5 | none |
 | 0017 | [size-quantization](0017-size-quantization.md) — size ordine quantizzata a `szDecimals` (ROUND_DOWN) al confine SDK; bug `float_to_wire` stanato da M4-T08; guard size-zero; notional eseguito ≤ richiesto | accepted | 2026-06-28 | M4 | none |
+| 0018 | [price-quantization](0018-price-quantization.md) — prezzo trigger SL/TP quantizzato alla regola nativa HL perp (`round(f"{px:.5g}", 6−szDecimals)`, al più vicino); bug `Invalid TP/SL price` stanato da M4-T08 round 2; distinta da ADR-0017 (size, ROUND_DOWN) | accepted | 2026-06-28 | M4 | none |
 
 ## Template
 

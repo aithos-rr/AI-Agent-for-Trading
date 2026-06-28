@@ -937,3 +937,81 @@ class TestSizeQuantization:
         submitted = exchange.market_open.call_args.args[2]
         assert submitted == 30.0
         assert results[0].requested_size_units == Decimal("30.000")
+
+
+# ---------------------------------------------------------------------------
+# Trigger price quantization to HL's perp rule (ADR-0018) — the Invalid TP/SL bug
+# ---------------------------------------------------------------------------
+
+
+class TestPriceQuantization:
+    def _client_with_szdec(self, sz_decimals: int) -> RealHyperliquidClient:
+        info = MagicMock()
+        info.name_to_asset.return_value = 0
+        info.asset_to_sz_decimals = {0: sz_decimals}
+        return _client(exchange=MagicMock(), info=info)
+
+    def test_btc_price_5_sig_figs_one_decimal(self) -> None:
+        # BTC szDecimals=5 ⇒ 1 decimal, 5 sig figs ⇒ ~$73k is effectively integer.
+        client = self._client_with_szdec(5)
+        assert client._quantize_price("BTC", Decimal("73118.456789")) == Decimal("73118.0")
+
+    def test_two_decimals(self) -> None:
+        client = self._client_with_szdec(2)  # 6-2 = 4 decimals, 5 sig figs
+        assert client._quantize_price("SOL", Decimal("180.456789")) == Decimal("180.46")
+
+    def test_one_decimal_rounds_to_nearest(self) -> None:
+        client = self._client_with_szdec(5)  # 1 decimal
+        assert client._quantize_price("BTC", Decimal("1.2814444")) == Decimal("1.3")
+
+    def test_integer_price_unchanged(self) -> None:
+        client = self._client_with_szdec(5)
+        assert client._quantize_price("BTC", Decimal("100")) == Decimal("100")
+
+    def test_unknown_symbol_raises(self) -> None:
+        info = MagicMock()
+        info.name_to_asset.side_effect = KeyError("DOGE")
+        client = _client(exchange=MagicMock(), info=info)
+        with pytest.raises(ExecutionRejectedError, match="szDecimals"):
+            client._quantize_price("DOGE", Decimal("1"))
+
+    @pytest.mark.parametrize(
+        ("price", "sz_decimals"),
+        [
+            ("73118.456789", 5),
+            ("180.456789", 2),
+            ("1.2814444", 5),
+            ("61750.0", 5),
+            ("71500.0", 5),
+        ],
+    )
+    def test_output_passes_float_to_wire(self, price: str, sz_decimals: int) -> None:
+        # The real guarantee: the quantized price clears HL's own float_to_wire check
+        # (the native validation that rejected the raw price on testnet).
+        from hyperliquid.utils.signing import float_to_wire
+
+        client = self._client_with_szdec(sz_decimals)
+        quantized = client._quantize_price("BTC", Decimal(price))
+        float_to_wire(float(quantized))  # must not raise
+
+    async def test_trigger_order_sends_quantized_price(self) -> None:
+        # End-to-end through execute_action: the SL trigger price sent to the SDK is
+        # quantized (1.1728), not the raw sizing value (1.172832).
+        info = MagicMock()
+        info.user_state.return_value = _user_state(account_value="10000.0")
+        info.all_mids.return_value = {"BTC": "1.23456"}  # low price ⇒ fractional SL/TP
+        info.name_to_asset.return_value = 0
+        info.asset_to_sz_decimals = {0: 2}  # 4 decimals
+        exchange = MagicMock()
+        exchange.update_leverage.return_value = {"status": "ok"}
+        exchange.market_open.return_value = _filled_resp(total_sz="2430.0", avg_px="1.23")
+        exchange.order.return_value = _resting_resp()
+        client = _client(exchange=exchange, info=info)
+
+        await client.execute_action(_long_action("BTC"), "run-p", None)
+
+        sl_call = exchange.order.call_args_list[0]
+        # SL = 1.23456 * (1 - 0.05) = 1.172832 → quantized to 1.1728
+        assert sl_call.args[4]["trigger"]["triggerPx"] == 1.1728
+        assert sl_call.args[3] == 1.1728  # limit_px also quantized
+        assert sl_call.args[4]["trigger"]["triggerPx"] != 1.172832  # not the raw value
