@@ -1309,3 +1309,30 @@ riletti a mano: corretti e minimali.
 
 **Next**: M5 (parte loop) PASSED, committato, pushato. **STOP fisici umani**: M4-T08 (wallet HL
 testnet) e M5-T14 (smoke locale multi-tick 4 tick). Il loop M5 ha completato tutto il completabile.
+
+---
+
+## M4-T08 CHIUSO (2026-06-28) — primo stop fisico validato su testnet reale
+
+Validazione fisica di `RealHyperliquidClient` eseguita in WSL contro wallet HL **testnet**
+reale (lo scaffold e2e è commit `e0c0f3d`, `tests/e2e/test_testnet_smoke.py`):
+
+- **2 run e2e verdi ripetibili**: open/close LONG BTC, identità PnL sull'outcome verificata,
+  wallet pulito tra i run, equity testnet coerente (~776 USDC).
+- **Gate M4 verde nel container**: 286 unit + 99 integration, coverage **99.40%** (≥95%).
+- **2 assunzioni SDK implicite stanate e corrette durante la validazione** (il mock non le
+  emulava): **ADR-0017** (quantizzazione size, ROUND_DOWN) e **ADR-0018** (quantizzazione
+  prezzo trigger, regola nativa HL).
+
+**Assunzioni SDK VALIDATE sul campo**: round-trip open/close; size quantizzata on-chain
+(vista a 0.00128 BTC nel fill reale); prezzo trigger quantizzato; **symbol-come-identità**
+(ADR-0016 confermato via `check_position_closure`); holding duration; leva intera.
+
+**Assunzioni NON validate da questo smoke** (esplicite, per onestà di tesi):
+- (a) **parsing fee da `user_fills`** — RINVIATA: il client mette `fee_usd=None` →
+  `sum_fees_usd=0`; sulla testnet le fee reali NON sono zero (~0.03 USDC/lato osservate) →
+  scarto noto da riconciliare (future work).
+- (b) **attribuzione `close_reason` SL-vs-TP-vs-liquidazione** — lo smoke fa solo model-close;
+  forzare i trigger richiede muovere il prezzo → rinviata.
+
+M4-T08 spuntato in `TASKS.md`. `hl_position_id` (ADR-0016) affrontato come passo separato.

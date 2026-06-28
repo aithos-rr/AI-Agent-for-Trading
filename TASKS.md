@@ -889,7 +889,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/integration/test_db_repositories_positions.py -q`
   - **done-when** 🐘: lo scenario completo è verde su Postgres effimero.
 
-- [ ] **M4-T08** 🛑 **[HUMAN-GATED]** — e2e su wallet HL testnet REALE  ← **PRIMO STOP FISICO**
+- [x] **M4-T08** 🛑 **[HUMAN-GATED]** — e2e su wallet HL testnet REALE  ← **PRIMO STOP FISICO**
   - **what**: Verifica §12 M4: smoke su wallet testnet apre LONG BTC con SL/TP, lo chiude,
     verifica `outcomes.pnl_net_fee_funding_usd` corretto. Il loop **non può**: serve wallet
     HL testnet reale fundato + chiave in `.env`; il firewall blocca anche Hyperliquid.
