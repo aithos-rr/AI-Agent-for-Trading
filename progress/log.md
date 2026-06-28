@@ -1336,3 +1336,20 @@ reale (lo scaffold e2e è commit `e0c0f3d`, `tests/e2e/test_testnet_smoke.py`):
   forzare i trigger richiede muovere il prezzo → rinviata.
 
 M4-T08 spuntato in `TASKS.md`. `hl_position_id` (ADR-0016) affrontato come passo separato.
+
+---
+
+## M2-T12 CHIUSO (2026-06-28) — cassette VCR registrate e validate
+
+Verify ufficiale **verde in replay puro**: `pytest tests/integration/test_llm_providers.py`
+→ **15/15 passed** con `record_mode="none"` (conftest, default — nessuna chiamata di rete).
+Le **14 cassette** `.yaml` in `tests/cassettes/` sono registrazioni **reali via OpenRouter**
+(14/14 citano `openrouter.ai`); i test senza cassetta esercitano percorsi errore/timeout che
+non richiedono risposta registrata. Registrazione avvenuta **fuori dal container** (openrouter.ai
+non è nel firewall del devcontainer — mai bucato), con `VCR_RECORD_MODE=once`, sotto supervisione
+umana (**ADR-0010**, 2026-06-14). **NON ri-registrare**: artefatti sperimentali validi.
+
+Verificato in-container (non spunto su claim): record_mode=none, 14 cassette openrouter, replay
+15/15. Le cassette dei provider **DIRETTI** per l'esperimento restano a **M6** (ADR-0008).
+
+Human-gate ancora aperti: **M3-T11** (smoke orchestrator reale), **M5-T14** (smoke multi-tick).

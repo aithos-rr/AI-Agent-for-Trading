@@ -623,7 +623,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **done-when**: pytest **colleziona** le 15 funzioni (la collection non richiede
     cassette); config VCR presente. L'esecuzione reale è M2-T12.
 
-- [ ] **M2-T12** 🛑 **[HUMAN-GATED]** — Record 15 cassette VCR
+- [x] **M2-T12** 🛑 **[HUMAN-GATED]** — Record 15 cassette VCR
   - **what**: Registrare le 15 cassette in `tests/cassettes/` **via OpenRouter**
     (`AIAT_LLM_GATEWAY=openrouter`, `record_mode="once"`), **una volta sola** (~$0.01), sotto
     **supervisione umana**. **Decisione ADR-0008 (Strada 2, scelta accademica)**: le cassette
