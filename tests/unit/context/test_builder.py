@@ -55,7 +55,7 @@ def _make_news() -> list[NewsItem]:
         NewsItem(
             title="BTC surges past 100k",
             summary="Bitcoin sets a new all-time high above 100,000 USD.",
-            source="cryptopanic",
+            source="cointelegraph",
             published_at="2026-06-14T14:00:00+00:00",
         )
     ]
@@ -145,7 +145,7 @@ async def test_build_news_correct() -> None:
     builder = _make_builder()
     bundle = await builder.build(_TICK_ID, _TICK_AT)
     assert len(bundle.news) == 1
-    assert bundle.news[0].source == "cryptopanic"
+    assert bundle.news[0].source == "cointelegraph"
 
 
 async def test_build_onchain_correct() -> None:

@@ -18,7 +18,9 @@ logger = structlog.get_logger(__name__)
 
 # D5 decision (ADR-0011): 2 RSS sources, 10 items/tick max.
 _RSS_SOURCES: Final[dict[str, str]] = {
-    "cryptopanic": "https://cryptopanic.com/news/rss/",
+    # cryptopanic's public RSS was discontinued (now serves HTML, not XML — verified
+    # M3-T11); replaced with cointelegraph (public RSS, no API key). See ADR-0011.
+    "cointelegraph": "https://cointelegraph.com/rss",
     "coindesk": "https://www.coindesk.com/arc/outboundfeeds/rss/",
 }
 
@@ -80,8 +82,8 @@ def _parse_rss_strict(xml_text: str, source_name: str) -> list[NewsItem]:
 class _LenientRSSParser(HTMLParser):
     """Best-effort RSS extraction for feeds that are NOT well-formed XML (ADR-0013).
 
-    Real feeds (e.g. CryptoPanic) embed raw HTML / bare ampersands that the strict
-    parser rejects. HTMLParser is lenient and lowercases tag names.
+    Real feeds can embed raw HTML / bare ampersands that the strict parser rejects.
+    HTMLParser is lenient and lowercases tag names.
     """
 
     def __init__(self) -> None:
@@ -137,7 +139,7 @@ def _parse_rss(xml_text: str, source_name: str) -> list[NewsItem]:
 
 
 class NewsCollector(BaseCollector[list[NewsItem]]):
-    """Fetches crypto news from RSS feeds (CryptoPanic + CoinDesk).
+    """Fetches crypto news from RSS feeds (CoinDesk + Cointelegraph).
 
     D5 decision (ADR-0011): 10 items/tick, 2 sources, sorted by recency.
     At least one source must succeed; partial failures are tolerated.

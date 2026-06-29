@@ -6,6 +6,16 @@
 **PRD reference**: §15.4 (D5), §6.3 (NewsItem), §7.2 (BaseCollector), §10.1 (O3)
 **Closes deferral**: D5
 
+> **Aggiornamento 2026-06-29 (M3-T11)** — Il feed RSS pubblico di **CryptoPanic**
+> (`https://cryptopanic.com/news/rss/`) è stato **dismesso**: l'endpoint ora restituisce
+> una pagina HTML (Vue app), non più XML/RSS (sintomi osservati durante lo smoke M3-T11:
+> 502 allo startup, "Invalid XML mismatched tag" ai tick). Sostituito con **Cointelegraph**
+> (`https://cointelegraph.com/rss`, verificato: 200, XML valido, 30 item parsati dal parser
+> `_parse_rss` esistente senza adattamenti). La coppia diventa **CoinDesk + Cointelegraph**,
+> entrambe testate maggiori con RSS pubblico **senza API key** (least-privilege, startup
+> check O1). La decisione "2 RSS pubblici, 10 items/tick max" resta invariata; cambia solo
+> una sorgente. Le sezioni sotto sono aggiornate di conseguenza.
+
 ## Contesto
 
 Il PRD §15.4 ha deferito esplicitamente due decisioni legate al news collector:
@@ -21,8 +31,8 @@ Vincoli emersi dall'implementazione:
 - Il PRD §7.2 specifica `timeout 8s, cached TTL 90s` per il news collector.
 - `NewsItem.title` ha `max_length=300`, `.summary` ha `max_length=600` (§6.3).
 - Il startup check O3 (§10.1) richiede `check_sources_reachability() → ≥1 reachable`.
-- Il firewall del devcontainer blocca `cryptopanic.com` e `coindesk.com` in sviluppo;
-  la connettività reale sarà verificata dallo smoke M3-T11 (human-gated).
+- Il firewall del devcontainer blocca `coindesk.com` e `cointelegraph.com` in sviluppo;
+  la connettività reale è stata verificata dallo smoke M3-T11 (2026-06-29).
 
 ## Decisione
 
@@ -30,13 +40,14 @@ Vincoli emersi dall'implementazione:
 
 | Chiave | URL |
 |--------|-----|
-| `cryptopanic` | `https://cryptopanic.com/news/rss/` |
 | `coindesk` | `https://www.coindesk.com/arc/outboundfeeds/rss/` |
+| `cointelegraph` | `https://cointelegraph.com/rss` |
 
-CryptoPanic: news aggregator crypto-specifico con sentiment segnalato dalla community,
-feed pubblico senza autenticazione. CoinDesk: testata giornalistica di riferimento per
-il settore, feed RSS attivo e stabile. Le due fonti coprono angolazioni diverse
-(aggregazione vs editorial), riducendo il bias di una singola fonte.
+CoinDesk e Cointelegraph: due testate giornalistiche di riferimento del settore, entrambe
+con feed RSS pubblico attivo e **senza API key** (riproducibilità + least-privilege O1). Le
+due fonti coprono angolazioni editoriali diverse, riducendo il bias di una singola fonte.
+*(Storico: la coppia originale era CryptoPanic + CoinDesk; CryptoPanic è stato sostituito da
+Cointelegraph dopo la dismissione del suo RSS pubblico — vedi banner di aggiornamento sopra.)*
 
 ### Numero di items per tick
 
@@ -82,8 +93,8 @@ registrata qui come richiesto da CLAUDE.md ("ogni scostamento dal PRD frozen →
   analisi sentiment inline): potrebbe essere popolato in M6+ con un modello dedicato.
 
 ### Neutre (trade-off accettati)
-- CryptoPanic in modalità free-tier non include sentiment score nelle API, solo nel feed
-  web. Accettato per la prima fase sperimentale.
+- Entrambe le fonti (CoinDesk, Cointelegraph) sono editorial, non aggregatori con sentiment
+  community: `NewsItem.sentiment_polarity` resta `None` a runtime. Accettato per la prima fase.
 - L'ordinamento per `published_at` ISO string funziona correttamente solo se le fonti
   emettono date in formato RFC 2822 parseable; fallback a `datetime.now(UTC)` per
   date malformate.
@@ -108,7 +119,9 @@ registrata qui come richiesto da CLAUDE.md ("ogni scostamento dal PRD frozen →
   probabilità di overlap di notizie (stessa storia da 3 fonti), e un'altra fonte da
   validare nel firewall al momento dello smoke M3-T11.
 - Scartata: 2 fonti eterogenee sono sufficienti per M3; espandibile in M6 se
-  i risultati sperimentali lo giustificano.
+  i risultati sperimentali lo giustificano. *(Nota 2026-06-29: Cointelegraph è poi
+  entrato come **sostituto** di CryptoPanic dismesso, non come terza fonte — la coppia
+  resta 2.)*
 
 ## Test gating
 

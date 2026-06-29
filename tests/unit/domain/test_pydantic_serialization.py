@@ -82,7 +82,7 @@ def test_context_bundle_roundtrip() -> None:
             NewsItem(
                 title="Bitcoin rises",
                 summary="BTC up 5% today.",
-                source="CryptoPanic",
+                source="Cointelegraph",
                 published_at="2026-01-01T00:00:00Z",
                 sentiment_polarity=Decimal("0.5"),
             )

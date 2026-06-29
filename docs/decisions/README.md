@@ -40,7 +40,7 @@ e l'originale viene marcato `superseded by ADR-YYYY`.
 | 0008 | Routing LLM dual-mode — OpenRouter (sviluppo) / provider diretti (esperimento) | accepted | 2026-06-13 | M2 | none |
 | 0009 | [exception-classification](0009-exception-classification.md) — isinstance() primario + string-match fallback | accepted | 2026-06-13 | M2 | D3 |
 | 0010 | [vcr-cassette-recording](0010-vcr-cassette-recording.md) — meccanismo cassette, slug OpenRouter, limiti cost ledger | accepted | 2026-06-14 | M2 | none |
-| 0011 | [rss-sources](0011-rss-sources.md) — 10 items/tick, 2 fonti (CryptoPanic + CoinDesk), fallimento parziale tollerato | accepted | 2026-06-14 | M3 | D5 |
+| 0011 | [rss-sources](0011-rss-sources.md) — 10 items/tick, 2 fonti RSS pubbliche (CoinDesk + Cointelegraph; CryptoPanic dismesso, sostituito 2026-06-29), fallimento parziale tollerato | accepted | 2026-06-14 | M3 | D5 |
 | 0012 | [controlled-signals](0012-controlled-signals.md) — 18 segnali §6.2 adottati come vocabolario finale | accepted | 2026-06-14 | M3 | D4 |
 | 0013 | [onchain-semantics-and-news-robustness](0013-onchain-semantics-and-news-robustness.md) — funding ×8, premium al posto di long_short_ratio, news follow_redirects + parser tollerante | accepted | 2026-06-14 | M3 | none |
 | 0014 | [holdflat-outcome](0014-holdflat-outcome.md) — HOLD/FLAT outcome labeling: fee-hurdle counterfactual, was_profitable_net=True iff \|Δprice%\| ≤ fee_roundtrip% | accepted | 2026-06-14 | M4 | D2 |

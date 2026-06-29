@@ -15,11 +15,11 @@ from aiat.domain.schemas import NewsItem
 # RSS fixture data
 # ---------------------------------------------------------------------------
 
-_RSS_CRYPTOPANIC = """\
+_RSS_COINTELEGRAPH = """\
 <?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
   <channel>
-    <title>CryptoPanic</title>
+    <title>Cointelegraph</title>
     <item>
       <title>Bitcoin surges to new highs</title>
       <description>BTC breaks $100k resistance level after weeks of consolidation</description>
@@ -101,7 +101,7 @@ def _two_source_client(
     cp_resp: httpx.Response | Exception,
     cd_resp: httpx.Response | Exception,
 ) -> httpx.AsyncClient:
-    """Mock client: first call → cryptopanic, second call → coindesk."""
+    """Mock client: first call → cointelegraph, second call → coindesk."""
     client: AsyncMock = AsyncMock(spec=httpx.AsyncClient)
     client.get = AsyncMock(side_effect=[cp_resp, cd_resp])
     return client  # type: ignore[return-value]
@@ -123,7 +123,7 @@ class TestNewsCollectorHappyPath:
     @pytest.mark.asyncio
     async def test_returns_list_of_news_items(self) -> None:
         client = _two_source_client(
-            _make_response(text=_RSS_CRYPTOPANIC),
+            _make_response(text=_RSS_COINTELEGRAPH),
             _make_response(text=_RSS_COINDESK),
         )
         collector = NewsCollector(client=client)
@@ -134,21 +134,21 @@ class TestNewsCollectorHappyPath:
     @pytest.mark.asyncio
     async def test_items_from_both_sources_returned(self) -> None:
         client = _two_source_client(
-            _make_response(text=_RSS_CRYPTOPANIC),
+            _make_response(text=_RSS_COINTELEGRAPH),
             _make_response(text=_RSS_COINDESK),
         )
         collector = NewsCollector(client=client)
         result = await collector.collect()
         sources = {item.source for item in result}
-        assert "cryptopanic" in sources
+        assert "cointelegraph" in sources
         assert "coindesk" in sources
 
     @pytest.mark.asyncio
     async def test_items_sorted_by_recency_descending(self) -> None:
-        # cryptopanic has 12:00 and 10:00; coindesk has 11:00
+        # cointelegraph has 12:00 and 10:00; coindesk has 11:00
         # sorted descending: 12:00, 11:00, 10:00
         client = _two_source_client(
-            _make_response(text=_RSS_CRYPTOPANIC),
+            _make_response(text=_RSS_COINTELEGRAPH),
             _make_response(text=_RSS_COINDESK),
         )
         collector = NewsCollector(client=client)
@@ -178,7 +178,7 @@ class TestNewsCollectorHappyPath:
     async def test_get_follows_redirects(self) -> None:
         """Real CoinDesk returns HTTP 308; the collector must follow redirects."""
         client = _two_source_client(
-            _make_response(text=_RSS_CRYPTOPANIC),
+            _make_response(text=_RSS_COINTELEGRAPH),
             _make_response(text=_RSS_COINDESK),
         )
         await NewsCollector(client=client).collect()
@@ -188,7 +188,7 @@ class TestNewsCollectorHappyPath:
 
     @pytest.mark.asyncio
     async def test_malformed_feed_recovered_by_lenient_fallback(self) -> None:
-        """A not-well-formed feed (real CryptoPanic case) is recovered best-effort."""
+        """A not-well-formed feed (real malformed-feed case) is recovered best-effort."""
         client = _two_source_client(
             _make_response(text=_RSS_MALFORMED),
             _make_response(text=_RSS_EMPTY),
@@ -200,7 +200,7 @@ class TestNewsCollectorHappyPath:
     @pytest.mark.asyncio
     async def test_sentiment_polarity_is_none(self) -> None:
         client = _two_source_client(
-            _make_response(text=_RSS_CRYPTOPANIC),
+            _make_response(text=_RSS_COINTELEGRAPH),
             _make_response(text=_RSS_COINDESK),
         )
         collector = NewsCollector(client=client)
@@ -210,19 +210,19 @@ class TestNewsCollectorHappyPath:
     @pytest.mark.asyncio
     async def test_source_name_set_correctly(self) -> None:
         client = _two_source_client(
-            _make_response(text=_RSS_CRYPTOPANIC),
+            _make_response(text=_RSS_COINTELEGRAPH),
             _make_response(text=_RSS_COINDESK),
         )
         collector = NewsCollector(client=client)
         result = await collector.collect()
-        cp_items = [i for i in result if i.source == "cryptopanic"]
+        cp_items = [i for i in result if i.source == "cointelegraph"]
         cd_items = [i for i in result if i.source == "coindesk"]
         assert len(cp_items) == 2
         assert len(cd_items) == 1
 
     @pytest.mark.asyncio
     async def test_max_items_cap_respected(self) -> None:
-        # Build RSS with 15 items in cryptopanic
+        # Build RSS with 15 items in cointelegraph
         items_xml = "\n".join(
             f"<item><title>Item {i}</title><description>desc</description>"
             f"<pubDate>Mon, 10 Jun 2026 {i:02d}:00:00 +0000</pubDate></item>"
@@ -240,7 +240,7 @@ class TestNewsCollectorHappyPath:
     @pytest.mark.asyncio
     async def test_custom_max_items(self) -> None:
         client = _two_source_client(
-            _make_response(text=_RSS_CRYPTOPANIC),
+            _make_response(text=_RSS_COINTELEGRAPH),
             _make_response(text=_RSS_COINDESK),
         )
         collector = NewsCollector(client=client, max_items=2)
@@ -286,7 +286,7 @@ class TestNewsCollectorHappyPath:
         from datetime import datetime
 
         client = _two_source_client(
-            _make_response(text=_RSS_CRYPTOPANIC),
+            _make_response(text=_RSS_COINTELEGRAPH),
             _make_response(text=_RSS_COINDESK),
         )
         collector = NewsCollector(client=client)
@@ -473,7 +473,7 @@ class TestCheckSourcesReachability:
         client.head = AsyncMock(side_effect=[cp_resp, cd_resp])
         collector = NewsCollector(client=client)  # type: ignore[arg-type]
         result = await collector.check_sources_reachability()
-        assert result["cryptopanic"] is True
+        assert result["cointelegraph"] is True
         assert result["coindesk"] is True
 
     @pytest.mark.asyncio
@@ -484,7 +484,7 @@ class TestCheckSourcesReachability:
         client.head = AsyncMock(side_effect=[cp_err, cd_resp])
         collector = NewsCollector(client=client)  # type: ignore[arg-type]
         result = await collector.check_sources_reachability()
-        assert result["cryptopanic"] is False
+        assert result["cointelegraph"] is False
         assert result["coindesk"] is True
 
     @pytest.mark.asyncio
@@ -495,7 +495,7 @@ class TestCheckSourcesReachability:
         client.head = AsyncMock(side_effect=[cp_resp, cd_resp])
         collector = NewsCollector(client=client)  # type: ignore[arg-type]
         result = await collector.check_sources_reachability()
-        assert result["cryptopanic"] is False
+        assert result["cointelegraph"] is False
         assert result["coindesk"] is True
 
     @pytest.mark.asyncio
@@ -504,7 +504,7 @@ class TestCheckSourcesReachability:
         client.head = AsyncMock(return_value=_make_response(status_code=200))
         collector = NewsCollector(client=client)  # type: ignore[arg-type]
         result = await collector.check_sources_reachability()
-        assert "cryptopanic" in result
+        assert "cointelegraph" in result
         assert "coindesk" in result
 
 
