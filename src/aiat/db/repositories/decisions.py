@@ -10,8 +10,13 @@ from aiat.db.models.action import DecisionAction
 from aiat.db.models.cost_event import CostEvent
 from aiat.db.models.decision import Decision
 from aiat.db.models.llm_invocation import LLMInvocation
+from aiat.domain.enums import ExecutionStatus
 from aiat.domain.schemas import ActionDecision as ActionDecisionSchema
 from aiat.domain.schemas import GuardrailReport, LLMInvocationResult
+
+# decision_actions.execution_error is unbounded TEXT in Postgres, but a raw exchange-rejection
+# message can embed a full order response; cap defensively before storing (ADR-0024).
+_EXECUTION_ERROR_MAXLEN = 1000
 
 
 class DecisionsRepository:
@@ -165,6 +170,38 @@ class DecisionsRepository:
         await self._session.flush()
 
         return str(decision_uuid)
+
+    async def mark_action_execution(
+        self,
+        action_id: str,
+        *,
+        status: ExecutionStatus,
+        executed: bool,
+        error: str | None = None,
+    ) -> None:
+        """Record a decision_action's execution outcome (ADR-0024).
+
+        Sets execution_status/executed (and execution_error on failure) after the decision
+        loop attempts the action on the exchange. The decision bounded context (§7.6) owns
+        decision_actions. No internal commit — caller owns the Unit of Work.
+
+        Args:
+            action_id: UUID string of the DecisionAction to update.
+            status: Terminal ExecutionStatus for the action.
+            executed: True iff an order actually moved size on the exchange (filled/partial).
+            error: Optional rejection/timeout message (truncated before storage).
+
+        Raises:
+            ValueError: if action_id does not exist.
+        """
+        action = await self._session.get(DecisionAction, uuid.UUID(action_id))
+        if action is None:
+            raise ValueError(f"DecisionAction {action_id!r} not found")
+        action.execution_status = status.value
+        action.executed = executed
+        if error is not None:
+            action.execution_error = error[:_EXECUTION_ERROR_MAXLEN]
+        await self._session.flush()
 
     async def get_by_run(self, run_id: str) -> Decision | None:
         """Return the Decision for a given run_id, or None if not found."""

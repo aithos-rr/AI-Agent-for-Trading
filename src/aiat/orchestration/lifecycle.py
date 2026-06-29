@@ -175,9 +175,13 @@ async def _check_llm_credentials(settings: AgentSettings) -> None:
 
     llm = load_llm(settings)
     try:
+        # Thinking models (Opus 4.8, effort=high) have high latency; A7 must use the
+        # configured hard timeout, not a fixed 15s (M5-T14, ADR-0023). FOLLOW-UP: A7 runs a
+        # full structured-output call just to validate credentials — should be a lightweight
+        # ping (tracked post-M5-T14).
         await asyncio.wait_for(
             llm.invoke("Reply with exactly: pong"),
-            timeout=15.0,
+            timeout=float(settings.hard_timeout_seconds),
         )
     except Exception as exc:
         raise RuntimeError(f"LLM credentials invalid or unreachable: {exc!r}") from exc

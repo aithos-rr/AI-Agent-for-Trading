@@ -2,6 +2,7 @@
 
 import time
 from decimal import Decimal
+from typing import Any
 
 from langchain_anthropic import ChatAnthropic
 
@@ -21,7 +22,7 @@ class AnthropicClient(BaseLLMClient):
         *,
         api_key: str,
         model_name: str,
-        temperature: Decimal,
+        temperature: Decimal | None = None,
         pricing: dict[str, Decimal],
         max_tokens: int = 4096,
     ) -> None:
@@ -29,12 +30,17 @@ class AnthropicClient(BaseLLMClient):
         self._pricing = pricing
         self._temperature = temperature
         self._max_tokens = max_tokens
-        self._llm = ChatAnthropic(  # type: ignore[call-arg]
-            api_key=api_key,  # type: ignore[arg-type]
-            model=model_name,
-            temperature=float(temperature),
-            max_tokens=max_tokens,
-        )
+        # Pass `temperature` ONLY when set: current Anthropic models (Opus 4.8+) are
+        # thinking-only and reject the parameter with HTTP 400 (discovered M5-T14). When
+        # omitted, langchain-anthropic does not inject it into the payload. See ADR-0023.
+        kwargs: dict[str, Any] = {
+            "api_key": api_key,
+            "model": model_name,
+            "max_tokens": max_tokens,
+        }
+        if temperature is not None:
+            kwargs["temperature"] = float(temperature)
+        self._llm = ChatAnthropic(**kwargs)
 
     async def invoke(
         self,

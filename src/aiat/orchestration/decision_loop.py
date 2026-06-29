@@ -20,10 +20,11 @@ from aiat.db.repositories.decisions import DecisionsRepository
 from aiat.db.repositories.positions import PositionsRepository
 from aiat.db.repositories.runs import RunsRepository
 from aiat.db.repositories.snapshots import SnapshotsRepository
-from aiat.domain.enums import CloseReason, OrderKind, RunStatus, Side
+from aiat.domain.enums import CloseReason, ExecutionStatus, OrderKind, RunStatus, Side
+from aiat.domain.exceptions import ExecutionRejectedError, ExecutionTimeoutError
 from aiat.domain.schemas import ContextBundle, PortfolioState, TradeDecision
 from aiat.execution.guardrails import Guardrails
-from aiat.execution.hyperliquid_client import HyperliquidClient, PositionClosureInfo
+from aiat.execution.hyperliquid_client import HyperliquidClient, OrderResult, PositionClosureInfo
 from aiat.llm.base import BaseLLMClient
 
 logger = structlog.get_logger(__name__)
@@ -54,6 +55,38 @@ def _render_prompt(
     )
     prompt_hash = hashlib.sha256(rendered.encode()).hexdigest()
     return rendered, prompt_hash
+
+
+# OrderResult.status → DecisionAction.execution_status (ADR-0024). `executed` is True only
+# when the primary order actually moved size on the exchange (filled or partial).
+_ORDER_STATUS_TO_EXECUTION: dict[str, ExecutionStatus] = {
+    "filled": ExecutionStatus.FILLED,
+    "partial": ExecutionStatus.PARTIAL,
+    "rejected": ExecutionStatus.FAILED,
+    "cancelled": ExecutionStatus.CANCELLED,
+    "pending": ExecutionStatus.PENDING,
+}
+
+
+def _action_execution_outcome(order_results: list[OrderResult]) -> tuple[ExecutionStatus, bool]:
+    """Derive (execution_status, executed) for a DecisionAction from its executed orders.
+
+    The outcome tracks the *primary* order — the ENTRY when opening (an opposite-side flip
+    also emits a CLOSE, but the action's intent is the new entry), otherwise the CLOSE for a
+    pure FLAT. Protective SL/TP triggers are not primary. Returns NOT_APPLICABLE when no
+    primary order is present (ADR-0024).
+    """
+    primary = next((o for o in order_results if o.order_kind == OrderKind.ENTRY), None) or next(
+        (o for o in order_results if o.order_kind == OrderKind.CLOSE), None
+    )
+    if primary is None:
+        return ExecutionStatus.NOT_APPLICABLE, False
+    status = _ORDER_STATUS_TO_EXECUTION.get(primary.status)
+    if status is None:
+        # 'triggered' (or any unmapped value) is never expected for a primary entry/close.
+        logger.warning("unexpected_primary_order_status", status=primary.status)
+        return ExecutionStatus.NOT_APPLICABLE, False
+    return status, status in (ExecutionStatus.FILLED, ExecutionStatus.PARTIAL)
 
 
 class DecisionLoop:
@@ -189,8 +222,12 @@ class DecisionLoop:
             await snapshots_repo.persist_account_snapshot(run_id, portfolio_state)
             await session.commit()
 
-            # PRD §4.1 step [5]: invoke LLM
-            invocation = await self._llm_client.invoke(rendered_text, timeout_seconds=90)
+            # PRD §4.1 step [5]: invoke LLM. Use the configured hard timeout (aligned with
+            # the outer run_once wait_for): thinking models (Opus 4.8, effort=high) can exceed
+            # a fixed 90s for one structured decision (M5-T14, ADR-0023).
+            invocation = await self._llm_client.invoke(
+                rendered_text, timeout_seconds=self._settings.hard_timeout_seconds
+            )
 
             # PRD §4.1 step [6]: apply guardrails
             post_decision, reports = self._guardrails.apply(
@@ -212,23 +249,34 @@ class DecisionLoop:
             )
             await session.commit()
 
-            # PRD §4.1 step [8]: execute actions on Hyperliquid + persist positions
-            await self._execute_actions(session, run_id, post_decision, portfolio_state)
+            # PRD §4.1 step [8]: execute actions on Hyperliquid + persist positions.
+            # Per-action isolation records each action's execution_status; the count of
+            # failed actions downgrades the run to PARTIAL at step [10] (ADR-0024).
+            failed_action_count = await self._execute_actions(
+                session, run_id, post_decision, portfolio_state
+            )
             await session.commit()
 
             # PRD §4.1 step [9]: check pending closures (SL/TP may have triggered)
             await self._check_pending_closures(session, run_id)
             await session.commit()
 
-            # PRD §4.1 step [10]: mark run success
-            await runs_repo.update_status(run_id, RunStatus.SUCCESS)
+            # PRD §4.1 step [10]: finalize run. SUCCESS only if every order executed; a
+            # rejected/timed-out action makes the tick PARTIAL — the loop still completed,
+            # so FAILED stays reserved for pipeline-aborting exceptions (ADR-0024).
+            final_status = RunStatus.PARTIAL if failed_action_count > 0 else RunStatus.SUCCESS
+            await runs_repo.update_status(run_id, final_status)
             await session.commit()
 
+            # Event name kept for log continuity; `status`/`failed_actions` now carry the
+            # truth — 'success' no longer implies every order executed (ADR-0024).
             logger.info(
                 "decision_loop_success",
                 tick_id=tick_id,
                 run_id=run_id,
                 decision_id=decision_id,
+                status=final_status.value,
+                failed_actions=failed_action_count,
             )
             return run_id
 
@@ -271,15 +319,22 @@ class DecisionLoop:
         run_id: str,
         post_decision: TradeDecision,
         portfolio_state: PortfolioState,
-    ) -> None:
-        """Execute each non-HOLD action on Hyperliquid and persist positions.
+    ) -> int:
+        """Execute each non-HOLD action on Hyperliquid, persist positions, and record the
+        per-action execution outcome on ``decision_actions`` (ADR-0024).
 
-        Sends orders to HL for LONG/SHORT/FLAT actions, then persists the resulting
-        positions and orders via PositionsRepository.
+        Each action is isolated: an ``ExecutionRejectedError``/``ExecutionTimeoutError`` from
+        one action marks THAT action FAILED and lets the others proceed — one rejected order
+        no longer aborts the whole tick. HOLD and no-op actions are marked NOT_APPLICABLE
+        instead of being left at the ``pending`` server default.
+
+        Returns:
+            The number of actions whose execution failed (>0 ⇒ the tick is PARTIAL).
         """
         # Build per-symbol current position summary from portfolio state
         open_summary_by_symbol = {p.symbol: p for p in portfolio_state.open_positions}
         positions_repo = PositionsRepository(session)
+        decisions_repo = DecisionsRepository(session)
 
         # Fetch persisted DecisionAction IDs for this run (created in persist_decision)
         result = await session.execute(
@@ -287,23 +342,53 @@ class DecisionLoop:
         )
         db_actions_by_symbol = {a.symbol: a for a in result.scalars().all()}
 
+        failed_count = 0
         for action in post_decision.actions:
-            if action.side == Side.HOLD:
-                continue
-
-            current_pos_summary = open_summary_by_symbol.get(action.symbol)
-            order_results = await self._hl_client.execute_action(
-                action, run_id, current_pos_summary
-            )
-            if not order_results:
-                continue
-
             db_action = db_actions_by_symbol.get(action.symbol)
             if db_action is None:
                 logger.warning(
                     "db_action_not_found_for_execution",
                     run_id=run_id,
                     symbol=action.symbol,
+                )
+                continue
+
+            # HOLD never reaches the exchange (PRD §4.1): record not_applicable explicitly
+            # rather than leaving the row at its 'pending' server default (ADR-0024).
+            if action.side == Side.HOLD:
+                await decisions_repo.mark_action_execution(
+                    str(db_action.id), status=ExecutionStatus.NOT_APPLICABLE, executed=False
+                )
+                continue
+
+            current_pos_summary = open_summary_by_symbol.get(action.symbol)
+            try:
+                order_results = await self._hl_client.execute_action(
+                    action, run_id, current_pos_summary
+                )
+            except (ExecutionRejectedError, ExecutionTimeoutError) as exc:
+                # Per-action isolation (ADR-0024): one rejection no longer aborts the tick.
+                failed_count += 1
+                logger.warning(
+                    "action_execution_failed",
+                    run_id=run_id,
+                    symbol=action.symbol,
+                    side=action.side.value,
+                    error=str(exc),
+                )
+                await decisions_repo.mark_action_execution(
+                    str(db_action.id),
+                    status=ExecutionStatus.FAILED,
+                    executed=False,
+                    error=str(exc),
+                )
+                continue
+
+            if not order_results:
+                # FLAT with no open position, or a LONG/SHORT same-side action (no
+                # add-to-position in v2): nothing reached the exchange → not_applicable.
+                await decisions_repo.mark_action_execution(
+                    str(db_action.id), status=ExecutionStatus.NOT_APPLICABLE, executed=False
                 )
                 continue
 
@@ -333,6 +418,14 @@ class DecisionLoop:
             if has_entry:
                 entry_orders = [o for o in order_results if o.order_kind != OrderKind.CLOSE]
                 await positions_repo.open_position(str(db_action.id), entry_orders, run_id)
+
+            # Record the action's execution outcome only after persistence succeeded.
+            status, executed = _action_execution_outcome(order_results)
+            await decisions_repo.mark_action_execution(
+                str(db_action.id), status=status, executed=executed
+            )
+
+        return failed_count
 
     async def _check_pending_closures(
         self,

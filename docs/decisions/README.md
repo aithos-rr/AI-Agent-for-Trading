@@ -52,6 +52,8 @@ e l'originale viene marcato `superseded by ADR-YYYY`.
 | 0020 | [model-structure](0020-model-structure.md) — struttura 4 modelli LLM (D1-struttura): matrice provider×geography×tier, tier=costo assoluto di mercato, id stabili (usa/cn-premium/cheap), temp=0/seed=42; nomi commerciali al seed M7; 3 limiti dichiarati | accepted | 2026-06-29 | M5/M6 | D1 (parziale) |
 | 0021 | [single-seed-script](0021-single-seed-script.md) — `seed_experiment.py` unico idempotente (experiment+4 models+prompt_template+3 baselines) invece di due script separati; hash del template calcolato una volta sola → niente `prompt_template_hash` divergente (A5) | accepted | 2026-06-29 | M5/M6 | none |
 | 0022 | [m5t14-real-llm-smoke](0022-m5t14-real-llm-smoke.md) — M5-T14 con LLM reali + HL testnet (non mock): il mock nasconde il confound formato structured-output provider-specifico; Opzione 2 (un agent/volta, 1 wallet reale, swap address DB); concorrenza 4-agent coperta da e2e | accepted | 2026-06-29 | M5-T14 | none |
+| 0023 | [provider-aware-sampling](0023-provider-aware-sampling.md) — client provider-aware sui sampling param: Anthropic Opus 4.8 (thinking-only) rifiuta `temperature` (HTTP 400, M5-T14) → omessa; asimmetria di determinismo cross-model dichiarata (limite tesi); corregge ADR-0020 | accepted | 2026-06-29 | M5-T14/M7 | none |
+| 0024 | [per-action-execution-isolation](0024-per-action-execution-isolation.md) — isolamento errori esecuzione per-azione (un ordine rifiutato non aborta il tick → run PARTIAL) + tassonomia `execution_status` (HOLD/no-op→not_applicable, filled→FILLED+executed, rejected→FAILED+error) via `mark_action_execution`; bug bookkeeping stanato da M5-T14; nessuna migrazione | accepted | 2026-06-29 | M5-T14/M7 | none |
 
 ## Template
 

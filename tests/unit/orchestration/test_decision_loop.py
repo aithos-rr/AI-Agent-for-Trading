@@ -12,7 +12,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiat.config.settings import AgentSettings
-from aiat.domain.enums import CloseReason, EntryType, OrderKind, RunStatus, Side
+from aiat.domain.enums import (
+    CloseReason,
+    EntryType,
+    ExecutionStatus,
+    OrderKind,
+    RunStatus,
+    Side,
+)
+from aiat.domain.exceptions import ExecutionRejectedError, ExecutionTimeoutError
 from aiat.domain.schemas import (
     ActionDecision,
     ContextBundle,
@@ -32,7 +40,11 @@ from aiat.execution.hyperliquid_client import (
     OrderResult,
     PositionClosureInfo,
 )
-from aiat.orchestration.decision_loop import DecisionLoop, _render_prompt
+from aiat.orchestration.decision_loop import (
+    DecisionLoop,
+    _action_execution_outcome,
+    _render_prompt,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
@@ -1146,3 +1158,359 @@ class TestDecisionLoopRunOnce:
         assert call_args[0] == str(open_position.id)
         assert call_args[1] is closure
         assert call_args[2] == RUN_ID
+
+
+# ---------------------------------------------------------------------------
+# Tests for _execute_actions execution-status bookkeeping + per-action isolation
+# (ADR-0024). These drive the real _execute_actions with the two repositories
+# patched, so the mark_action_execution / open_position calls can be asserted.
+# ---------------------------------------------------------------------------
+
+
+def _filled_entry(price: str = "65000", size: str = "0.01") -> OrderResult:
+    return OrderResult(
+        hl_order_id=str(uuid.uuid4()),
+        client_order_id=str(uuid.uuid4()),
+        order_kind=OrderKind.ENTRY,
+        status="filled",
+        requested_price=None,
+        filled_price=Decimal(price),
+        requested_size_units=Decimal(size),
+        filled_size_units=Decimal(size),
+        slippage_bps=Decimal("5"),
+        fee_usd=Decimal("1.00"),
+        raw_response={},
+    )
+
+
+def _order_result(
+    kind: OrderKind,
+    status: str,
+    *,
+    filled_price: str | None = "65000",
+    size: str = "0.01",
+) -> OrderResult:
+    """Build an OrderResult of any kind/status for outcome-mapping tests."""
+    return OrderResult(
+        hl_order_id=str(uuid.uuid4()),
+        client_order_id=str(uuid.uuid4()),
+        order_kind=kind,
+        status=status,  # type: ignore[arg-type]
+        requested_price=None,
+        filled_price=Decimal(filled_price) if filled_price is not None else None,
+        requested_size_units=Decimal(size),
+        filled_size_units=Decimal(size) if filled_price is not None else None,
+        slippage_bps=None,
+        fee_usd=None,
+        raw_response={},
+    )
+
+
+def _session_with_db_actions(actions: list[MagicMock]) -> AsyncMock:
+    """A session whose select(DecisionAction) returns the given db actions."""
+    session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.all.return_value = actions
+    session.execute = AsyncMock(return_value=mock_result)
+    return session
+
+
+def _mixed_decision(*actions: ActionDecision) -> TradeDecision:
+    return TradeDecision(
+        portfolio_reasoning="Mixed actions across the book for the next 15-minute horizon",
+        risk_assessment="Risk is moderate; sizing kept conservative under current volatility",
+        portfolio_confidence=Decimal("0.6"),
+        actions=list(actions),
+    )
+
+
+def _marks_by_action_id(mock_dr: AsyncMock) -> dict[str, dict[str, object]]:
+    """Map action_id → kwargs for every mark_action_execution call."""
+    out: dict[str, dict[str, object]] = {}
+    for call in mock_dr.mark_action_execution.call_args_list:
+        out[call.args[0]] = dict(call.kwargs)
+    return out
+
+
+class TestActionExecutionOutcome:
+    """Direct unit tests for the _action_execution_outcome status mapping (ADR-0024)."""
+
+    def test_filled_entry_is_filled_executed(self) -> None:
+        assert _action_execution_outcome([_filled_entry()]) == (ExecutionStatus.FILLED, True)
+
+    def test_partial_entry_is_partial_executed(self) -> None:
+        """A partial entry fill → PARTIAL + executed=True (mapping is live even if dormant)."""
+        partial = _order_result(OrderKind.ENTRY, "partial")
+        assert _action_execution_outcome([partial]) == (ExecutionStatus.PARTIAL, True)
+
+    def test_close_only_filled_is_filled_executed(self) -> None:
+        """A pure FLAT (CLOSE only) that fills → FILLED + executed=True."""
+        close = _order_result(OrderKind.CLOSE, "filled")
+        assert _action_execution_outcome([close]) == (ExecutionStatus.FILLED, True)
+
+    def test_flip_uses_entry_as_primary(self) -> None:
+        """An opposite-side flip emits CLOSE+ENTRY (+SL/TP); the ENTRY is the primary order."""
+        orders = [
+            _order_result(OrderKind.CLOSE, "filled"),
+            _order_result(OrderKind.ENTRY, "filled"),
+            _order_result(OrderKind.STOP_LOSS, "triggered", filled_price=None),
+            _order_result(OrderKind.TAKE_PROFIT, "triggered", filled_price=None),
+        ]
+        assert _action_execution_outcome(orders) == (ExecutionStatus.FILLED, True)
+
+    def test_only_triggered_orders_is_not_applicable(self) -> None:
+        """No primary entry/close (only protective triggers) → NOT_APPLICABLE, not executed."""
+        triggers = [
+            _order_result(OrderKind.STOP_LOSS, "triggered", filled_price=None),
+            _order_result(OrderKind.TAKE_PROFIT, "triggered", filled_price=None),
+        ]
+        assert _action_execution_outcome(triggers) == (ExecutionStatus.NOT_APPLICABLE, False)
+
+    def test_empty_orders_is_not_applicable(self) -> None:
+        assert _action_execution_outcome([]) == (ExecutionStatus.NOT_APPLICABLE, False)
+
+
+class TestExecuteActionsStateTransition:
+    def _loop_with_hl(self, hl_client: object) -> DecisionLoop:
+        return DecisionLoop(
+            settings=_make_agent_settings(),
+            llm_client=AsyncMock(),
+            hl_client=hl_client,  # type: ignore[arg-type]
+            session_factory=_make_session_factory(AsyncMock()),
+            guardrails=MagicMock(),
+        )
+
+    @pytest.mark.asyncio
+    async def test_filled_long_marks_action_filled_and_executed(self) -> None:
+        """A LONG whose entry fills → execution_status=FILLED, executed=True."""
+        btc, eth, sol = (
+            _make_mock_db_action("BTC"),
+            _make_mock_db_action("ETH"),
+            _make_mock_db_action("SOL"),
+        )
+        session = _session_with_db_actions([btc, eth, sol])
+        decision = _mixed_decision(
+            _make_long_action("BTC"), _make_hold_action("ETH"), _make_hold_action("SOL")
+        )
+
+        hl_client = AsyncMock()
+        hl_client.execute_action = AsyncMock(return_value=[_filled_entry()])
+
+        with (
+            patch("aiat.orchestration.decision_loop.PositionsRepository") as MockPR,
+            patch("aiat.orchestration.decision_loop.DecisionsRepository") as MockDR,
+        ):
+            mock_pr = AsyncMock()
+            mock_pr.open_position = AsyncMock(return_value=str(uuid.uuid4()))
+            MockPR.return_value = mock_pr
+            mock_dr = AsyncMock()
+            MockDR.return_value = mock_dr
+
+            loop = self._loop_with_hl(hl_client)
+            failed = await loop._execute_actions(session, RUN_ID, decision, _make_portfolio_state())
+
+        assert failed == 0
+        mock_pr.open_position.assert_awaited_once()
+        marks = _marks_by_action_id(mock_dr)
+        assert marks[str(btc.id)] == {"status": ExecutionStatus.FILLED, "executed": True}
+        assert marks[str(eth.id)] == {"status": ExecutionStatus.NOT_APPLICABLE, "executed": False}
+        assert marks[str(sol.id)] == {"status": ExecutionStatus.NOT_APPLICABLE, "executed": False}
+
+    @pytest.mark.asyncio
+    async def test_hold_marks_not_applicable_without_touching_exchange(self) -> None:
+        """HOLD → execution_status=NOT_APPLICABLE and execute_action is never called."""
+        btc, eth, sol = (
+            _make_mock_db_action("BTC"),
+            _make_mock_db_action("ETH"),
+            _make_mock_db_action("SOL"),
+        )
+        session = _session_with_db_actions([btc, eth, sol])
+        decision = _make_trade_decision()  # all HOLD
+
+        hl_client = AsyncMock()
+        hl_client.execute_action = AsyncMock(return_value=[])
+
+        with (
+            patch("aiat.orchestration.decision_loop.PositionsRepository") as MockPR,
+            patch("aiat.orchestration.decision_loop.DecisionsRepository") as MockDR,
+        ):
+            MockPR.return_value = AsyncMock()
+            mock_dr = AsyncMock()
+            MockDR.return_value = mock_dr
+
+            loop = self._loop_with_hl(hl_client)
+            failed = await loop._execute_actions(session, RUN_ID, decision, _make_portfolio_state())
+
+        assert failed == 0
+        hl_client.execute_action.assert_not_called()
+        marks = _marks_by_action_id(mock_dr)
+        for action in (btc, eth, sol):
+            assert marks[str(action.id)] == {
+                "status": ExecutionStatus.NOT_APPLICABLE,
+                "executed": False,
+            }
+
+    @pytest.mark.asyncio
+    async def test_rejected_action_isolated_others_proceed(self) -> None:
+        """A rejected action is marked FAILED+error; the other actions still execute."""
+        btc, eth, sol = (
+            _make_mock_db_action("BTC"),
+            _make_mock_db_action("ETH"),
+            _make_mock_db_action("SOL"),
+        )
+        session = _session_with_db_actions([btc, eth, sol])
+        decision = _mixed_decision(
+            _make_long_action("BTC"), _make_long_action("ETH"), _make_hold_action("SOL")
+        )
+
+        async def _exec(
+            action: ActionDecision, run_id: str, current_pos: object
+        ) -> list[OrderResult]:
+            if action.symbol == "BTC":
+                raise ExecutionRejectedError("margin too low for BTC")
+            return [_filled_entry(price="3500", size="0.1")]
+
+        hl_client = AsyncMock()
+        hl_client.execute_action = AsyncMock(side_effect=_exec)
+
+        with (
+            patch("aiat.orchestration.decision_loop.PositionsRepository") as MockPR,
+            patch("aiat.orchestration.decision_loop.DecisionsRepository") as MockDR,
+        ):
+            mock_pr = AsyncMock()
+            mock_pr.open_position = AsyncMock(return_value=str(uuid.uuid4()))
+            MockPR.return_value = mock_pr
+            mock_dr = AsyncMock()
+            MockDR.return_value = mock_dr
+
+            loop = self._loop_with_hl(hl_client)
+            failed = await loop._execute_actions(session, RUN_ID, decision, _make_portfolio_state())
+
+        assert failed == 1
+        # ETH still executed despite BTC's rejection
+        mock_pr.open_position.assert_awaited_once()
+        marks = _marks_by_action_id(mock_dr)
+        assert marks[str(btc.id)]["status"] == ExecutionStatus.FAILED
+        assert marks[str(btc.id)]["executed"] is False
+        assert "margin too low" in str(marks[str(btc.id)]["error"])
+        assert marks[str(eth.id)] == {"status": ExecutionStatus.FILLED, "executed": True}
+        assert marks[str(sol.id)] == {"status": ExecutionStatus.NOT_APPLICABLE, "executed": False}
+
+    @pytest.mark.asyncio
+    async def test_timeout_action_isolated_others_proceed(self) -> None:
+        """ExecutionTimeoutError is isolated identically to ExecutionRejectedError."""
+        btc, eth, sol = (
+            _make_mock_db_action("BTC"),
+            _make_mock_db_action("ETH"),
+            _make_mock_db_action("SOL"),
+        )
+        session = _session_with_db_actions([btc, eth, sol])
+        decision = _mixed_decision(
+            _make_long_action("BTC"), _make_long_action("ETH"), _make_hold_action("SOL")
+        )
+
+        async def _exec(
+            action: ActionDecision, run_id: str, current_pos: object
+        ) -> list[OrderResult]:
+            if action.symbol == "BTC":
+                raise ExecutionTimeoutError("HL call timed out for BTC")
+            return [_filled_entry(price="3500", size="0.1")]
+
+        hl_client = AsyncMock()
+        hl_client.execute_action = AsyncMock(side_effect=_exec)
+
+        with (
+            patch("aiat.orchestration.decision_loop.PositionsRepository") as MockPR,
+            patch("aiat.orchestration.decision_loop.DecisionsRepository") as MockDR,
+        ):
+            mock_pr = AsyncMock()
+            mock_pr.open_position = AsyncMock(return_value=str(uuid.uuid4()))
+            MockPR.return_value = mock_pr
+            mock_dr = AsyncMock()
+            MockDR.return_value = mock_dr
+
+            loop = self._loop_with_hl(hl_client)
+            failed = await loop._execute_actions(session, RUN_ID, decision, _make_portfolio_state())
+
+        assert failed == 1
+        mock_pr.open_position.assert_awaited_once()  # ETH still executed
+        marks = _marks_by_action_id(mock_dr)
+        assert marks[str(btc.id)]["status"] == ExecutionStatus.FAILED
+        assert marks[str(btc.id)]["executed"] is False
+        assert "timed out" in str(marks[str(btc.id)]["error"])
+        assert marks[str(eth.id)] == {"status": ExecutionStatus.FILLED, "executed": True}
+
+    @pytest.mark.asyncio
+    async def test_run_status_partial_when_action_rejected(self) -> None:
+        """End-to-end: one rejected action → run finalized PARTIAL, not SUCCESS (ADR-0024)."""
+        snap = _make_mock_snapshot()
+        session = _setup_session(snap, _make_mock_template())
+        decision = _mixed_decision(
+            _make_long_action("BTC"), _make_long_action("ETH"), _make_hold_action("SOL")
+        )
+        inv = _make_invocation_result(decision)
+
+        with (
+            patch("aiat.orchestration.decision_loop.SnapshotsRepository") as MockSnapshotsRepo,
+            patch("aiat.orchestration.decision_loop.RunsRepository") as MockRunsRepo,
+            patch("aiat.orchestration.decision_loop.DecisionsRepository") as MockDecisionsRepo,
+            patch("aiat.orchestration.decision_loop.PositionsRepository") as MockPositionsRepo,
+        ):
+            mock_sr = AsyncMock()
+            mock_sr.get_context_snapshot = AsyncMock(return_value=snap)
+            mock_sr.persist_account_snapshot = AsyncMock(return_value=str(uuid.uuid4()))
+            MockSnapshotsRepo.return_value = mock_sr
+
+            mock_rr = AsyncMock()
+            mock_rr.create_run = AsyncMock(return_value=RUN_ID)
+            mock_rr.update_status = AsyncMock()
+            MockRunsRepo.return_value = mock_rr
+
+            mock_dr = AsyncMock()
+            mock_dr.persist_decision = AsyncMock(return_value=DECISION_ID)
+            MockDecisionsRepo.return_value = mock_dr
+
+            mock_pr = AsyncMock()
+            mock_pr.list_open_for_model = AsyncMock(return_value=[])
+            mock_pr.open_position = AsyncMock(return_value=str(uuid.uuid4()))
+            MockPositionsRepo.return_value = mock_pr
+
+            reports = [
+                GuardrailReport(
+                    symbol=a.symbol,
+                    original_side=a.side,
+                    leverage_clamped=False,
+                    size_pct_clamped=False,
+                    forced_hold=False,
+                    final_action=a,
+                )
+                for a in decision.actions
+            ]
+            guardrails = MagicMock()
+            guardrails.apply = MagicMock(return_value=(decision, reports))
+
+            async def _exec(
+                action: ActionDecision, run_id: str, current_pos: object
+            ) -> list[OrderResult]:
+                if action.symbol == "BTC":
+                    raise ExecutionRejectedError("margin too low for BTC")
+                return [_filled_entry(price="3500", size="0.1")]
+
+            hl_client = AsyncMock()
+            hl_client.fetch_portfolio_state = AsyncMock(return_value=_make_portfolio_state())
+            hl_client.execute_action = AsyncMock(side_effect=_exec)
+            hl_client.check_position_closure = AsyncMock(return_value=None)
+            llm_client = AsyncMock()
+            llm_client.invoke = AsyncMock(return_value=inv)
+
+            loop = DecisionLoop(
+                settings=_make_agent_settings(),
+                llm_client=llm_client,
+                hl_client=hl_client,
+                session_factory=_make_session_factory(session),
+                guardrails=guardrails,
+            )
+            result = await loop.run_once(TICK_ID, SCHEDULED_FOR)
+
+        assert result == RUN_ID
+        mock_rr.update_status.assert_called_once_with(RUN_ID, RunStatus.PARTIAL)

@@ -71,10 +71,11 @@ def load_llm(settings: AgentSettings) -> BaseLLMClient:
             )
         case "anthropic":
             assert settings.anthropic_api_key is not None
+            # Anthropic current models (Opus 4.8+) are thinking-only and reject temperature
+            # (HTTP 400, M5-T14). Sampling params not passed → client omits them. See ADR-0023.
             return AnthropicClient(
                 api_key=settings.anthropic_api_key.get_secret_value(),
                 model_name=settings.model_name_api,
-                temperature=temperature,
                 pricing=pricing,
                 max_tokens=max_tokens,
             )

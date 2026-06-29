@@ -15,6 +15,7 @@ from aiat.orchestration.lifecycle import (
     _agent_startup_checks,
     _check_active_experiment,
     _check_db_connectivity_and_schema,
+    _check_llm_credentials,
     _check_network_testnet,
     _orchestrator_startup_checks,
     startup_checks,
@@ -473,3 +474,30 @@ async def test_startup_checks_dispatches_to_orchestrator() -> None:
         await startup_checks(settings)
         mock_orch.assert_called_once_with(settings)
         mock_agent.assert_not_called()
+
+
+# ── A7: thinking-model latency — must use hard_timeout_seconds, not a fixed 15s ──
+# (M5-T14 / ADR-0023: Opus 4.8 effort=high exceeds 15s for one structured decision.)
+
+
+@pytest.mark.asyncio
+async def test_a7_uses_configured_hard_timeout() -> None:
+    """_check_llm_credentials must bound the smoke call with settings.hard_timeout_seconds."""
+    settings = _agent(hard_timeout_seconds=123)
+    captured: dict[str, float] = {}
+
+    async def _fake_wait_for(coro: object, timeout: float) -> object:
+        captured["timeout"] = timeout
+        return await coro  # type: ignore[misc]
+
+    mock_llm = MagicMock()
+    mock_llm.invoke = AsyncMock(return_value=MagicMock())
+
+    with (
+        patch("aiat.llm.factory.load_llm", return_value=mock_llm),
+        patch("aiat.orchestration.lifecycle.asyncio.wait_for", side_effect=_fake_wait_for),
+    ):
+        await _check_llm_credentials(settings)
+
+    assert captured["timeout"] == 123.0  # the setting, NOT a hardcoded 15.0
+    mock_llm.invoke.assert_awaited_once()

@@ -42,10 +42,16 @@ Ordinamento per costo input: Opus 5.00 > Qwen 2.50 > DeepSeek 1.74 > GPT-mini 0.
 - I due **`premium`** = i due più cari in assoluto: **Opus (USA)** e **Qwen (CN)**.
 - I due **`cheap_alt`** = i due meno cari in assoluto: **DeepSeek (CN)** e **GPT-mini (USA)**.
 
-### Parametri deterministici (tutti i modelli, riproducibilità)
+### Parametri deterministici (riproducibilità)
 
-`temperature = 0`, `seed = 42` per tutti e 4 i modelli (output il più deterministico possibile;
-gli scostamenti residui sono attribuibili al modello, non al sampling).
+`temperature = 0`, `seed = 42` per i modelli **che li supportano** (output il più deterministico
+possibile; gli scostamenti residui sono attribuibili al modello, non al sampling).
+
+> **Correzione evolutiva (ADR-0023, 2026-06-29)**: M5-T14 ha rivelato che i modelli Anthropic
+> thinking-only (Opus 4.8) **rifiutano** `temperature`/`seed` (HTTP 400). Il determinismo
+> uniforme cross-model **non è raggiungibile**: i client sono provider-aware (Anthropic gira nel
+> regime nativo senza sampling params). Asimmetria di determinismo dichiarata come limite di tesi
+> (RESEARCH §7). La struttura D1 sopra resta invariata.
 
 ## Limiti / threats to validity (dichiarati, coerente con RESEARCH §7)
 

@@ -26,7 +26,7 @@ from aiat.db.models.model import Model
 from aiat.db.models.prompt_template import PromptTemplate
 from aiat.db.models.run import Run
 from aiat.db.repositories.decisions import DecisionsRepository
-from aiat.domain.enums import EntryType, Side
+from aiat.domain.enums import EntryType, ExecutionStatus, Side
 from aiat.domain.schemas import (
     ActionDecision,
     CostEventData,
@@ -790,3 +790,170 @@ async def test_get_action_history_multiple_runs(db_session: AsyncSession) -> Non
     since = "2026-01-14T00:00:00+00:00"
     btc_history = await repo.get_action_history(ids.model_id, "BTC", since)
     assert len(btc_history) == 2
+
+
+@pytest.mark.asyncio
+async def test_mark_action_execution_default_is_pending(db_session: AsyncSession) -> None:
+    """After persist_decision, an action defaults to execution_status='pending'/executed=False."""
+    ids = await _seed(db_session)
+    invocation = _make_invocation()
+    post_actions, reports = _make_guardrail_reports(invocation)
+    repo = DecisionsRepository(db_session)
+    decision_id = await repo.persist_decision(
+        run_id=str(ids.run_id),
+        experiment_id=str(ids.experiment_id),
+        model_id=ids.model_id,
+        invocation=invocation,
+        post_guardrail_actions=post_actions,
+        guardrail_reports=reports,
+    )
+    btc = (
+        await db_session.execute(
+            select(DecisionAction).where(
+                DecisionAction.decision_id == uuid.UUID(decision_id),
+                DecisionAction.symbol == "BTC",
+            )
+        )
+    ).scalar_one()
+    assert btc.execution_status == "pending"
+    assert btc.executed is False
+    assert btc.execution_error is None
+
+
+@pytest.mark.asyncio
+async def test_mark_action_execution_filled(db_session: AsyncSession) -> None:
+    """mark_action_execution(FILLED, executed=True) persists against the DDL CHECK."""
+    ids = await _seed(db_session)
+    invocation = _make_invocation()
+    post_actions, reports = _make_guardrail_reports(invocation)
+    repo = DecisionsRepository(db_session)
+    decision_id = await repo.persist_decision(
+        run_id=str(ids.run_id),
+        experiment_id=str(ids.experiment_id),
+        model_id=ids.model_id,
+        invocation=invocation,
+        post_guardrail_actions=post_actions,
+        guardrail_reports=reports,
+    )
+    btc = (
+        await db_session.execute(
+            select(DecisionAction).where(
+                DecisionAction.decision_id == uuid.UUID(decision_id),
+                DecisionAction.symbol == "BTC",
+            )
+        )
+    ).scalar_one()
+
+    await repo.mark_action_execution(str(btc.id), status=ExecutionStatus.FILLED, executed=True)
+    await db_session.refresh(btc)
+    assert btc.execution_status == "filled"
+    assert btc.executed is True
+    assert btc.execution_error is None
+
+
+@pytest.mark.asyncio
+async def test_mark_action_execution_failed_truncates_error(db_session: AsyncSession) -> None:
+    """A FAILED mark stores the (truncated) error and leaves executed=False."""
+    ids = await _seed(db_session)
+    invocation = _make_invocation()
+    post_actions, reports = _make_guardrail_reports(invocation)
+    repo = DecisionsRepository(db_session)
+    decision_id = await repo.persist_decision(
+        run_id=str(ids.run_id),
+        experiment_id=str(ids.experiment_id),
+        model_id=ids.model_id,
+        invocation=invocation,
+        post_guardrail_actions=post_actions,
+        guardrail_reports=reports,
+    )
+    eth = (
+        await db_session.execute(
+            select(DecisionAction).where(
+                DecisionAction.decision_id == uuid.UUID(decision_id),
+                DecisionAction.symbol == "ETH",
+            )
+        )
+    ).scalar_one()
+
+    long_error = "rejected: " + ("x" * 5000)
+    await repo.mark_action_execution(
+        str(eth.id), status=ExecutionStatus.FAILED, executed=False, error=long_error
+    )
+    await db_session.refresh(eth)
+    assert eth.execution_status == "failed"
+    assert eth.executed is False
+    assert eth.execution_error is not None
+    assert len(eth.execution_error) == 1000  # _EXECUTION_ERROR_MAXLEN
+    assert eth.execution_error.startswith("rejected: ")
+
+
+@pytest.mark.asyncio
+async def test_mark_action_execution_unknown_id_raises(db_session: AsyncSession) -> None:
+    """mark_action_execution on a missing action_id raises ValueError."""
+    repo = DecisionsRepository(db_session)
+    with pytest.raises(ValueError, match="DecisionAction"):
+        await repo.mark_action_execution(
+            str(uuid.uuid4()), status=ExecutionStatus.FILLED, executed=True
+        )
+
+
+@pytest.mark.asyncio
+async def test_mark_action_execution_not_applicable(db_session: AsyncSession) -> None:
+    """mark_action_execution(NOT_APPLICABLE) persists against the DDL CHECK (HOLD/no-op path)."""
+    ids = await _seed(db_session)
+    invocation = _make_invocation()
+    post_actions, reports = _make_guardrail_reports(invocation)
+    repo = DecisionsRepository(db_session)
+    decision_id = await repo.persist_decision(
+        run_id=str(ids.run_id),
+        experiment_id=str(ids.experiment_id),
+        model_id=ids.model_id,
+        invocation=invocation,
+        post_guardrail_actions=post_actions,
+        guardrail_reports=reports,
+    )
+    eth = (
+        await db_session.execute(
+            select(DecisionAction).where(
+                DecisionAction.decision_id == uuid.UUID(decision_id),
+                DecisionAction.symbol == "ETH",
+            )
+        )
+    ).scalar_one()
+
+    await repo.mark_action_execution(
+        str(eth.id), status=ExecutionStatus.NOT_APPLICABLE, executed=False
+    )
+    await db_session.refresh(eth)
+    assert eth.execution_status == "not_applicable"
+    assert eth.executed is False
+
+
+@pytest.mark.asyncio
+async def test_mark_action_execution_partial(db_session: AsyncSession) -> None:
+    """mark_action_execution(PARTIAL, executed=True) persists against the DDL CHECK."""
+    ids = await _seed(db_session)
+    invocation = _make_invocation()
+    post_actions, reports = _make_guardrail_reports(invocation)
+    repo = DecisionsRepository(db_session)
+    decision_id = await repo.persist_decision(
+        run_id=str(ids.run_id),
+        experiment_id=str(ids.experiment_id),
+        model_id=ids.model_id,
+        invocation=invocation,
+        post_guardrail_actions=post_actions,
+        guardrail_reports=reports,
+    )
+    btc = (
+        await db_session.execute(
+            select(DecisionAction).where(
+                DecisionAction.decision_id == uuid.UUID(decision_id),
+                DecisionAction.symbol == "BTC",
+            )
+        )
+    ).scalar_one()
+
+    await repo.mark_action_execution(str(btc.id), status=ExecutionStatus.PARTIAL, executed=True)
+    await db_session.refresh(btc)
+    assert btc.execution_status == "partial"
+    assert btc.executed is True

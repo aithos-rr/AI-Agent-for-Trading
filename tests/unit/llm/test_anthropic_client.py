@@ -96,3 +96,58 @@ def test_anthropic_no_top_p_no_seed() -> None:
     client = _make_client()
     # AnthropicClient does not store top_p or seed
     assert not hasattr(client, "_top_p") or client._top_p is None  # type: ignore[attr-defined]
+
+
+# ── ADR-0023: provider-aware sampling — Opus 4.8+ is thinking-only, rejects temperature ──
+
+
+def test_anthropic_omits_temperature_when_none() -> None:
+    """temperature=None (default) must NOT be passed to ChatAnthropic (else HTTP 400, M5-T14)."""
+    from aiat.llm.anthropic_client import AnthropicClient
+
+    with patch("aiat.llm.anthropic_client.ChatAnthropic") as mock_chat:
+        client = AnthropicClient(
+            api_key="test-key",
+            model_name="claude-opus-4-8",
+            pricing=_PRICING,
+            max_tokens=4096,
+        )
+    kwargs = mock_chat.call_args.kwargs
+    assert "temperature" not in kwargs, "temperature must be omitted when None"
+    assert kwargs["model"] == "claude-opus-4-8"
+    assert client._temperature is None  # type: ignore[attr-defined]
+
+
+def test_anthropic_passes_temperature_when_explicit() -> None:
+    """A provider that DOES accept temperature still gets it (backward compatible)."""
+    from aiat.llm.anthropic_client import AnthropicClient
+
+    with patch("aiat.llm.anthropic_client.ChatAnthropic") as mock_chat:
+        AnthropicClient(
+            api_key="test-key",
+            model_name="claude-3-5-sonnet-20241022",
+            temperature=Decimal("0"),
+            pricing=_PRICING,
+            max_tokens=4096,
+        )
+    kwargs = mock_chat.call_args.kwargs
+    assert kwargs["temperature"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_anthropic_invocation_result_temperature_none_when_omitted() -> None:
+    """The audited LLMInvocationResult.temperature is None (the truth), not a fake 0."""
+    from aiat.domain.schemas import TradeDecision
+    from aiat.llm.anthropic_client import AnthropicClient
+
+    decision = TradeDecision.model_validate(_VALID_DECISION)
+    with patch("aiat.llm.anthropic_client.ChatAnthropic"):
+        client = AnthropicClient(
+            api_key="test-key",
+            model_name="claude-opus-4-8",
+            pricing=_PRICING,
+        )
+    with patch("aiat.llm.anthropic_client.invoke_structured", new_callable=AsyncMock) as mock_inv:
+        mock_inv.return_value = (decision, False)
+        result = await client.invoke("test prompt", timeout_seconds=10)
+    assert result.temperature is None
