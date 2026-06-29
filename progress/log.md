@@ -1417,3 +1417,58 @@ firma **zero-arg** del tick job, **allineamento `tick_id`** (inv #13), fix **con
   cartella** richiede gestione `.env` separata (rilevante per **M5-T14**).
 
 M3-T11 spuntato in `TASKS.md`. Human-gate restante: **M5-T14** (smoke multi-tick).
+
+---
+
+## M5-T14 IN CORSO (2026-06-29) — PRIMO AGENT REALE validato end-to-end su testnet (usa-premium)
+
+**`usa-premium` / anthropic Opus 4.8 (`claude-opus-4-8`): primo agent reale validato
+end-to-end su HL testnet.** Ciclo `decision → execution → stato` coerente e funzionante.
+
+- **Tick 1**: il modello apre **BTC LONG** + **ETH LONG** (entry **filled**, `hl_order_id`
+  reali, trigger SL/TP **reduce-only** piazzati), tiene **SOL HOLD**.
+- **Tick 2**: **mantiene** le posizioni (HOLD → `execution_status=not_applicable`), run
+  **success**.
+- `decision_actions.execution_status` ora **corretto** (`filled` / `not_applicable`, non più
+  `pending`). Commit **a426c43**.
+
+**5 confound stanati** (tutti emersi **solo** col sistema reale — il mock li nascondeva):
+
+| ADR | Scoperta | Decisione |
+|-----|----------|-----------|
+| **0023** | Opus 4.8 thinking-only: **rifiuta `temperature`** (HTTP 400) e ha **latenza alta** (effort=high, >15s e talvolta >90s) | Client **provider-aware** (Anthropic senza sampling params, audit `temperature=None`); timeout A7 + decision-loop allineati a `hard_timeout_seconds`. **Determinismo uniforme cross-model non raggiungibile** → asimmetria dichiarata (RESEARCH §7). |
+| **0024** | `_execute_actions` **non scriveva `execution_status`** (bug bookkeeping: azioni eseguite restavano `pending`) | `mark_action_execution` + tassonomia `filled/partial/failed/not_applicable`; **isolamento errori per-azione** (un'azione rifiutata non aborta più il tick → run `partial`). |
+| **0025** *(TRACCIATO, non ancora fatto)* | **Atomicità del flip opposite-side** nel `RealHyperliquidClient`: se `_open_orders` fallisce dopo che il close è andato a buon fine, l'azione è marcata FAILED e il close non è persistito nel tick | Limite noto documentato in ADR-0024 §Limiti. Raro e **auto-sanante** (`_check_pending_closures` riconcilia al tick dopo). ADR dedicato + fix futuro, fuori scope. |
+
+(0017 size-quant e 0018 price-quant erano già stati stanati in M4-T08, stesso meccanismo:
+ogni run reale scopre un'assunzione SDK implicita invisibile al mock.)
+
+**M5-T14 RESTANTE** — gli altri 3 provider, in sequenza, stesso metodo (UPDATE wallet nel DB
+→ `.env` provider → orchestrator + agent → osserva; runbook Opzione 2):
+- `usa-cheap` / **OpenAI**, `cn-premium` / **Qwen**, `cn-cheap` / **DeepSeek**.
+- Il grosso dei confound è già stanato; **prossimo probabile**: sampling params / formato
+  structured-output di GPT (un confine reale alla volta, come per Anthropic).
+
+**NOTA RESEARCH** — la semantica di **HOLD è contestuale al portfolio** (non-entrare *vs*
+mantieni-posizione: tick 1 SOL HOLD = non entrare; tick 2 BTC/ETH HOLD = mantieni). Da
+collegare a **D2** (outcome labeling HOLD/FLAT, ADR-0014).
+
+**FOLLOW-UP pre-M6** (non bloccanti):
+1. **Disallineamento pricing**: `load_llm` cerca il pricing per `model_name_api`, lifecycle A4
+   per `model_id` → cost-tracking usa il fallback (1.00/5.00) se non combaciano.
+2. **Test-hygiene `.env` pollution**: `test_settings.py::test_agent_settings_optional_fields_default_none`
+   fallisce quando un `.env` reale è presente in `/workspace` (setta `AIAT_TEMPERATURE=0`). Isolare
+   con `_env_file=None` negli helper.
+3. **ADR-0025**: atomicità flip opposite-side (vedi sopra).
+
+**DA PUSHARE quando M5-T14 sarà completo** (tutti e 4 i provider): il blocco «da ADR-0020 in
+poi» sono **4 commit** (non 3) — **6a3349e** (ADR-0020 struttura D1), **4737222** (seed +
+prompt V2 + ADR-0021), **463c319** (prep M5-T14 + ADR-0022 + runbook), **a426c43** (sampling +
+timeout + execution state, ADR-0023/0024). *(6a3349e è il commit di ADR-0020 stesso, primo del
+blocco; `caecd46` ADR-0011 è precedente e fuori blocco. Riverificare con `git log` prima del push.)*
+
+**STATO TESTNET — ATTENZIONE**: **2 posizioni aperte** (BTC LONG + ETH LONG) sul wallet
+`usa-premium` (`0xD460282e…`). **Da chiudere prima** di testare gli altri provider — oppure
+riusare il wallet con stato pulito (vedi runbook M5-T14 Opzione 2, swap address nel DB).
+
+Human-gate restante: **M5-T14** (completamento sugli altri 3 provider).
