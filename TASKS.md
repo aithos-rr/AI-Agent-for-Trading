@@ -779,7 +779,7 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run pytest tests/unit/context -q`
   - **done-when**: tutti gli unit test dei collector passano.
 
-- [ ] **M3-T11** ⚠️ **[HUMAN-GATED]** — Smoke reale orchestrator
+- [x] **M3-T11** ⚠️ **[HUMAN-GATED]** — Smoke reale orchestrator
   - **what**: Verifica §12 M3 reale: `python -m aiat` con `AIAT_SERVICE_ROLE=
     context_orchestrator` contro fonti reali (RSS/F&G/HL-info) + Postgres genera
     context_snapshot. Il loop non può: firewall blocca le fonti.

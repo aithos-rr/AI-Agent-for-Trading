@@ -1389,3 +1389,31 @@ verificata sul codice in-container:
 ContextBuilder → ContextOrchestrator → callable per lo scheduler; (3) passare il job a
 `build_scheduler_for_orchestrator`; (4) run reale in WSL (human-gated). Valutare anche l'aggiunta
 di TechnicalCollector al preflight O2.
+
+---
+
+## M3-T11 CHIUSO (2026-06-29) — smoke orchestrator reale validato su testnet
+
+Validato in WSL contro **fonti reali su TESTNET**: **2 context_snapshots persistiti**
+(`context_build_runs` status=success):
+- tick_id **07:45:00** — tick manuale diretto;
+- tick_id **08:00:00** — **scheduler reale** che fira da solo al boundary 15m.
+
+Fonti reali usate: **HL testnet `/info`** (technical + onchain), **CoinDesk RSS** (news),
+**Fear&Greed** (sentiment). Confermati sul campo: wiring `_build_orchestrator_tick_job`, fix bug
+firma **zero-arg** del tick job, **allineamento `tick_id`** (inv #13), fix **confound rete**
+(technical+onchain entrambi su testnet, ADR-0019), startup check **O1-O4** +
+`_check_active_experiment`. Wiring committato a `fe08533` (ADR-0019).
+
+**OSSERVAZIONI (materiale di tesi / follow-up, NON bloccanti):**
+- (a) il servizio reale richiede una riga `experiments` **attiva** nel DB
+  (`_check_active_experiment`) → in **M6** servirà `scripts/seed_experiment.py` (oggi sostituito
+  da un mini-seed manuale).
+- (b) **CryptoPanic RSS instabile** (502 / XML malformato) → il news collector è resiliente
+  (fallback CoinDesk, ADR-0011), ma di fatto si dipende da CoinDesk quando CryptoPanic è giù.
+- (c) il preflight `_check_orchestrator_sources` **NON** verifica il `TechnicalCollector` (fonte
+  dati principale del context) → candidato a inclusione in **O2** (follow-up).
+- (d) `load_settings` legge un `.env` fisso → far girare orchestrator+agent dalla **stessa
+  cartella** richiede gestione `.env` separata (rilevante per **M5-T14**).
+
+M3-T11 spuntato in `TASKS.md`. Human-gate restante: **M5-T14** (smoke multi-tick).
