@@ -51,6 +51,7 @@ e l'originale viene marcato `superseded by ADR-YYYY`.
 | 0019 | [context-network](0019-context-network.md) — context su `settings.network` (testnet, fix confound technical-mainnet vs onchain-testnet); + fix bug tick job zero-arg su orchestrator E agent, `current_tick()` allinea `tick_id` al boundary 15m (inv #13); sblocca M3-T11/M5-T14 | accepted | 2026-06-29 | M3/M4 | none |
 | 0020 | [model-structure](0020-model-structure.md) — struttura 4 modelli LLM (D1-struttura): matrice provider×geography×tier, tier=costo assoluto di mercato, id stabili (usa/cn-premium/cheap), temp=0/seed=42; nomi commerciali al seed M7; 3 limiti dichiarati | accepted | 2026-06-29 | M5/M6 | D1 (parziale) |
 | 0021 | [single-seed-script](0021-single-seed-script.md) — `seed_experiment.py` unico idempotente (experiment+4 models+prompt_template+3 baselines) invece di due script separati; hash del template calcolato una volta sola → niente `prompt_template_hash` divergente (A5) | accepted | 2026-06-29 | M5/M6 | none |
+| 0022 | [m5t14-real-llm-smoke](0022-m5t14-real-llm-smoke.md) — M5-T14 con LLM reali + HL testnet (non mock): il mock nasconde il confound formato structured-output provider-specifico; Opzione 2 (un agent/volta, 1 wallet reale, swap address DB); concorrenza 4-agent coperta da e2e | accepted | 2026-06-29 | M5-T14 | none |
 
 ## Template
 
