@@ -48,6 +48,7 @@ e l'originale viene marcato `superseded by ADR-YYYY`.
 | 0016 | [position-identity-symbol](0016-position-identity-symbol.md) — identità posizione = coin symbol; fix bug rilevazione chiusure SL/TP; `hl_position_id` **rimossa** (migr. 003) dopo conferma M4-T08 | accepted | 2026-06-28 | M4/M5 | none |
 | 0017 | [size-quantization](0017-size-quantization.md) — size ordine quantizzata a `szDecimals` (ROUND_DOWN) al confine SDK; bug `float_to_wire` stanato da M4-T08; guard size-zero; notional eseguito ≤ richiesto | accepted | 2026-06-28 | M4 | none |
 | 0018 | [price-quantization](0018-price-quantization.md) — prezzo trigger SL/TP quantizzato alla regola nativa HL perp (`round(f"{px:.5g}", 6−szDecimals)`, al più vicino); bug `Invalid TP/SL price` stanato da M4-T08 round 2; distinta da ADR-0017 (size, ROUND_DOWN) | accepted | 2026-06-28 | M4 | none |
+| 0019 | [context-network](0019-context-network.md) — context su `settings.network` (testnet, fix confound technical-mainnet vs onchain-testnet); + fix bug tick job zero-arg su orchestrator E agent, `current_tick()` allinea `tick_id` al boundary 15m (inv #13); sblocca M3-T11/M5-T14 | accepted | 2026-06-29 | M3/M4 | none |
 
 ## Template
 

@@ -6,16 +6,27 @@ import asyncio
 from collections.abc import Callable
 from typing import Any
 
+import httpx
 import structlog
 
 from aiat.config.settings import AgentSettings, ContextOrchestratorSettings, load_settings
+from aiat.context.builder import ContextBuilder
+from aiat.context.collectors.news import NewsCollector
+from aiat.context.collectors.onchain import _HL_TESTNET_URL, HLPublicInfoClient, OnchainCollector
+from aiat.context.collectors.sentiment import SentimentCollector
+from aiat.context.collectors.technical import TechnicalCollector
 from aiat.db.session import get_db_session
 from aiat.execution.hyperliquid_client import build_hl_client
 from aiat.llm.factory import load_llm
 from aiat.observability.logging_config import configure_logging as _configure_logging_impl
+from aiat.orchestration.context_orchestrator import ContextOrchestrator
 from aiat.orchestration.decision_loop import DecisionLoop
 from aiat.orchestration.lifecycle import startup_checks
-from aiat.orchestration.scheduler import build_scheduler_for_agent, build_scheduler_for_orchestrator
+from aiat.orchestration.scheduler import (
+    build_scheduler_for_agent,
+    build_scheduler_for_orchestrator,
+    current_tick,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -31,7 +42,10 @@ async def _build_agent_tick_job(
     """Build the per-tick callable for an agent service.
 
     Returns:
-        The bound `DecisionLoop.run_once` method ready for APScheduler.
+        A zero-argument coroutine for APScheduler. APScheduler fires jobs with no
+        args, so the closure derives (tick_id, scheduled_for) from ``current_tick``
+        — the same 15-min boundary the orchestrator uses (inv #13) — and invokes
+        ``DecisionLoop.run_once``.
     """
     session_factory = get_db_session(settings.database_url.get_secret_value())
     llm_client = load_llm(settings)
@@ -42,7 +56,50 @@ async def _build_agent_tick_job(
         hl_client=hl_client,
         session_factory=session_factory,
     )
-    return loop.run_once
+
+    async def _agent_tick() -> None:
+        tick_id, scheduled_for = current_tick()
+        await loop.run_once(tick_id, scheduled_for)
+
+    return _agent_tick
+
+
+async def _build_orchestrator_tick_job(
+    settings: ContextOrchestratorSettings,
+) -> Callable[..., Any]:
+    """Build the per-tick callable for the context-orchestrator service.
+
+    Assembles the 6 collectors (all on ``settings.network`` = testnet, ADR-0019),
+    the ContextBuilder and the ContextOrchestrator, and returns a zero-argument
+    coroutine for APScheduler that materialises one context_snapshot per tick.
+    """
+    session_factory = get_db_session(settings.database_url.get_secret_value())
+    http_client = httpx.AsyncClient()
+
+    # ADR-0019: every market collector reads from settings.network (testnet, inv #9).
+    # TechnicalCollector's default base_url is mainnet — the production wiring MUST
+    # pass the testnet URL explicitly so technical and on-chain share one network.
+    builder = ContextBuilder(
+        technical_btc=TechnicalCollector("BTC", http_client, base_url=_HL_TESTNET_URL),
+        technical_eth=TechnicalCollector("ETH", http_client, base_url=_HL_TESTNET_URL),
+        technical_sol=TechnicalCollector("SOL", http_client, base_url=_HL_TESTNET_URL),
+        sentiment=SentimentCollector(http_client),
+        news=NewsCollector(http_client),
+        onchain=OnchainCollector(HLPublicInfoClient(network=settings.network)),
+    )
+    orchestrator = ContextOrchestrator(
+        builder,
+        session_factory,
+        hard_timeout_seconds=float(settings.hard_timeout_seconds),
+    )
+
+    async def _orchestrator_tick() -> None:
+        tick_id, scheduled_for = current_tick()
+        await orchestrator.build_tick_context(
+            tick_id, scheduled_for.isoformat(), settings.experiment_id
+        )
+
+    return _orchestrator_tick
 
 
 async def _run_forever() -> None:
@@ -63,7 +120,8 @@ async def _main() -> None:
         tick_job = await _build_agent_tick_job(settings)
         scheduler = await build_scheduler_for_agent(settings, tick_job=tick_job)
     else:
-        scheduler = await build_scheduler_for_orchestrator(settings)
+        orchestrator_job = await _build_orchestrator_tick_job(settings)
+        scheduler = await build_scheduler_for_orchestrator(settings, tick_job=orchestrator_job)
 
     scheduler.start()
     log.info("scheduler_started", service_role=settings.service_role)

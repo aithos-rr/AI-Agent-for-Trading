@@ -1,5 +1,8 @@
 """Tests for orchestration/scheduler.py — APScheduler config (M5-T05, PRD §4.1)."""
 
+from datetime import UTC, datetime
+from unittest.mock import patch
+
 import pytest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -9,6 +12,7 @@ from aiat.orchestration.scheduler import (
     _JOB_DEFAULTS,
     build_scheduler_for_agent,
     build_scheduler_for_orchestrator,
+    current_tick,
 )
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -49,6 +53,54 @@ def agent_settings() -> AgentSettings:
 
 async def _noop() -> None:
     """Dummy no-op job for configuration tests."""
+
+
+# ── current_tick (ADR-0019: tick_id aligned to the 15-min boundary, inv #13) ──
+
+
+def test_current_tick_floors_to_quarter_boundary() -> None:
+    fixed = datetime(2026, 6, 29, 14, 37, 12, 345000, tzinfo=UTC)
+    with patch("aiat.orchestration.scheduler.datetime") as mock_dt:
+        mock_dt.now.return_value = fixed
+        tick_id, scheduled_for = current_tick()
+    assert scheduled_for == datetime(2026, 6, 29, 14, 30, 0, tzinfo=UTC)
+    assert tick_id == "2026-06-29T14:30:00+00:00"
+    assert tick_id == scheduled_for.isoformat()
+
+
+def test_same_quarter_yields_same_tick_id() -> None:
+    """Orchestrator (:MM:00) and agent (:MM:30) land in the same quarter → same tick_id."""
+    with patch("aiat.orchestration.scheduler.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 6, 29, 14, 30, 0, tzinfo=UTC)
+        orch_id, _ = current_tick()
+        mock_dt.now.return_value = datetime(2026, 6, 29, 14, 30, 30, tzinfo=UTC)
+        agent_id, _ = current_tick()
+    assert orch_id == agent_id == "2026-06-29T14:30:00+00:00"
+
+
+def test_different_quarter_yields_different_tick_id() -> None:
+    with patch("aiat.orchestration.scheduler.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 6, 29, 14, 14, 59, tzinfo=UTC)
+        id1, _ = current_tick()
+        mock_dt.now.return_value = datetime(2026, 6, 29, 14, 15, 1, tzinfo=UTC)
+        id2, _ = current_tick()
+    assert id1 == "2026-06-29T14:00:00+00:00"
+    assert id2 == "2026-06-29T14:15:00+00:00"
+    assert id1 != id2
+
+
+@pytest.mark.parametrize(
+    ("minute", "expected_minute"),
+    [(0, 0), (7, 0), (14, 0), (15, 15), (22, 15), (30, 30), (44, 30), (45, 45), (59, 45)],
+)
+def test_floor_boundaries(minute: int, expected_minute: int) -> None:
+    with patch("aiat.orchestration.scheduler.datetime") as mock_dt:
+        mock_dt.now.return_value = datetime(2026, 6, 29, 14, minute, 33, 7, tzinfo=UTC)
+        _, scheduled_for = current_tick()
+    assert scheduled_for.minute == expected_minute
+    assert scheduled_for.second == 0
+    assert scheduled_for.microsecond == 0
+    assert scheduled_for.tzinfo == UTC
 
 
 # ── Constant validation ───────────────────────────────────────────────────────

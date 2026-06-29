@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from aiat.config.settings import AgentSettings, ContextOrchestratorSettings
+
+# Aligned tick the closures derive via current_tick() (ADR-0019).
+_TICK_ID = "2026-06-29T14:30:00+00:00"
+_SCHED = datetime(2026, 6, 29, 14, 30, tzinfo=UTC)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -133,6 +138,11 @@ class TestMainDispatch:
             patch("aiat.__main__.configure_logging"),
             patch("aiat.__main__.startup_checks", new_callable=AsyncMock),
             patch(
+                "aiat.__main__._build_orchestrator_tick_job",
+                new_callable=AsyncMock,
+                return_value=AsyncMock(),
+            ),
+            patch(
                 "aiat.__main__.build_scheduler_for_orchestrator",
                 new_callable=AsyncMock,
                 return_value=mock_scheduler,
@@ -253,8 +263,11 @@ class TestMainDispatch:
         mock_asyncio.run.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_build_agent_tick_job_builds_decision_loop(self) -> None:
-        """_build_agent_tick_job must return a callable (loop.run_once)."""
+    async def test_build_agent_tick_job_invokes_run_once_with_aligned_tick(self) -> None:
+        """_build_agent_tick_job returns a ZERO-ARG closure (APScheduler fires with no
+        args) that derives the tick via current_tick() and calls run_once. Regression
+        guard for the bug where it returned the bare 2-arg run_once → TypeError per tick.
+        """
         settings = _agent_settings()
 
         import aiat.__main__ as main_mod
@@ -264,10 +277,52 @@ class TestMainDispatch:
             patch("aiat.__main__.load_llm", return_value=MagicMock()),
             patch("aiat.__main__.build_hl_client", return_value=MagicMock()),
             patch("aiat.__main__.DecisionLoop") as MockLoop,
+            patch(
+                "aiat.__main__.current_tick",
+                return_value=(_TICK_ID, _SCHED),
+            ),
         ):
             mock_loop_instance = MagicMock()
+            mock_loop_instance.run_once = AsyncMock(return_value="run-id")
             MockLoop.return_value = mock_loop_instance
-            result = await main_mod._build_agent_tick_job(settings)
+            tick_job = await main_mod._build_agent_tick_job(settings)
+            # zero-arg callable — must be invocable with no args (what APScheduler does)
+            await tick_job()
 
         MockLoop.assert_called_once()
-        assert result is mock_loop_instance.run_once
+        assert tick_job is not mock_loop_instance.run_once  # closure, not the bare method
+        mock_loop_instance.run_once.assert_awaited_once_with(_TICK_ID, _SCHED)
+
+    @pytest.mark.asyncio
+    async def test_build_orchestrator_tick_job_invokes_build_tick_context(self) -> None:
+        """_build_orchestrator_tick_job returns a zero-arg closure that builds the context
+        snapshot for the aligned tick (collectors all on settings.network = testnet)."""
+        settings = _orchestrator_settings()
+
+        import aiat.__main__ as main_mod
+
+        with (
+            patch("aiat.__main__.get_db_session", return_value=MagicMock()),
+            patch("aiat.__main__.httpx"),
+            patch("aiat.__main__.TechnicalCollector"),
+            patch("aiat.__main__.SentimentCollector"),
+            patch("aiat.__main__.NewsCollector"),
+            patch("aiat.__main__.HLPublicInfoClient"),
+            patch("aiat.__main__.OnchainCollector"),
+            patch("aiat.__main__.ContextBuilder"),
+            patch("aiat.__main__.ContextOrchestrator") as MockOrch,
+            patch(
+                "aiat.__main__.current_tick",
+                return_value=(_TICK_ID, _SCHED),
+            ),
+        ):
+            mock_orch_instance = MagicMock()
+            mock_orch_instance.build_tick_context = AsyncMock()
+            MockOrch.return_value = mock_orch_instance
+            tick_job = await main_mod._build_orchestrator_tick_job(settings)
+            await tick_job()
+
+        MockOrch.assert_called_once()
+        mock_orch_instance.build_tick_context.assert_awaited_once_with(
+            _TICK_ID, _TICK_ID, settings.experiment_id
+        )

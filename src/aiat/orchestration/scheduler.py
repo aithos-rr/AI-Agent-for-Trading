@@ -9,6 +9,7 @@ Job defaults are invariant (PRD §4.1, fix 12):
 """
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -17,12 +18,33 @@ from apscheduler.triggers.cron import CronTrigger
 from aiat.config.settings import AgentSettings, ContextOrchestratorSettings
 
 _CRON_MINUTE = "0,15,30,45"
+_TICK_MINUTES = 15
 
 _JOB_DEFAULTS: dict[str, Any] = {
     "coalesce": True,
     "max_instances": 1,
     "misfire_grace_time": 60,
 }
+
+
+def current_tick() -> tuple[str, datetime]:
+    """Return ``(tick_id, scheduled_for)`` for the current 15-minute tick boundary.
+
+    APScheduler fires the tick jobs with no arguments, so each job derives its own
+    tick from wall-clock time. Both the context-orchestrator (fires at second 0) and
+    the agents (fire at second ``agent_start_delay_seconds``, default 30, of the SAME
+    minute) floor ``now()`` to the same 15-minute boundary, so they agree on
+    ``tick_id`` — the precondition for invariant #13 (agents read the snapshot the
+    orchestrator wrote for that tick). ``tick_id`` is the boundary's ISO timestamp;
+    ``scheduled_for`` is the same instant as a ``datetime``.
+    """
+    now = datetime.now(UTC)
+    floored = now.replace(
+        minute=(now.minute // _TICK_MINUTES) * _TICK_MINUTES,
+        second=0,
+        microsecond=0,
+    )
+    return floored.isoformat(), floored
 
 
 async def _unbound_orchestrator_tick() -> None:
