@@ -35,3 +35,8 @@ class BaseLLMClient(ABC):
             LLMUnrecoverableError: both primary and freetext fallback failed parsing.
         """
         ...
+
+    async def ping(self, *, timeout_seconds: int = 30) -> None:
+        """[A7] Lightweight credential probe. Raw ainvoke, NO structured output.
+        Raises on empty/failed response. Does NOT validate TradeDecision. See ADR-0026."""
+        raise NotImplementedError

@@ -2,7 +2,7 @@
 
 from decimal import Decimal
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -148,3 +148,47 @@ def test_compatible_client_uses_base_url_override() -> None:
     # The underlying ChatOpenAI should have used the base_url
     assert client.provider == "custom"
     assert client.model_name_api == "custom-model"
+
+
+# ── ADR-0026: A7 lightweight credential probe — raw ainvoke, NO structured output ──
+
+
+@pytest.mark.asyncio
+async def test_compatible_ping_ok_with_nonempty_response() -> None:
+    """ping() completes without raising when _llm.ainvoke returns non-empty content."""
+    client = _make_deepseek_client()
+    client._llm = MagicMock()
+    client._llm.ainvoke = AsyncMock(return_value=MagicMock(content="pong"))
+
+    await client.ping(timeout_seconds=10)
+
+    client._llm.ainvoke.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_compatible_ping_raises_on_empty_response() -> None:
+    """ping() raises RuntimeError mentioning the provider and 'empty response'."""
+    client = _make_qwen_client()
+    client._llm = MagicMock()
+    client._llm.ainvoke = AsyncMock(return_value=MagicMock(content=""))
+
+    with pytest.raises(RuntimeError, match="qwen ping returned empty response"):
+        await client.ping(timeout_seconds=10)
+
+
+@pytest.mark.asyncio
+async def test_compatible_ping_propagates_timeout() -> None:
+    """ping(timeout_seconds=N) passes N to asyncio.wait_for."""
+    client = _make_deepseek_client()
+    client._llm = MagicMock()
+    client._llm.ainvoke = AsyncMock(return_value=MagicMock(content="pong"))
+    captured: dict[str, float] = {}
+
+    async def _fake_wait_for(coro: Any, timeout: float) -> Any:
+        captured["timeout"] = timeout
+        return await coro
+
+    with patch("asyncio.wait_for", side_effect=_fake_wait_for):
+        await client.ping(timeout_seconds=77)
+
+    assert captured["timeout"] == 77

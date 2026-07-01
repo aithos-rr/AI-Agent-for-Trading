@@ -477,27 +477,21 @@ async def test_startup_checks_dispatches_to_orchestrator() -> None:
 
 
 # ── A7: thinking-model latency — must use hard_timeout_seconds, not a fixed 15s ──
-# (M5-T14 / ADR-0023: Opus 4.8 effort=high exceeds 15s for one structured decision.)
+# (M5-T14 / ADR-0023: Opus 4.8 effort=high exceeds 15s.) A7 now uses llm.ping(): a raw
+# lightweight probe (NO structured output), realigned to PRD §10.1 (ADR-0026). The hard
+# timeout is passed as the ping's timeout_seconds kwarg (int, not float).
 
 
 @pytest.mark.asyncio
 async def test_a7_uses_configured_hard_timeout() -> None:
-    """_check_llm_credentials must bound the smoke call with settings.hard_timeout_seconds."""
+    """_check_llm_credentials must bound the ping probe with settings.hard_timeout_seconds."""
     settings = _agent(hard_timeout_seconds=123)
-    captured: dict[str, float] = {}
-
-    async def _fake_wait_for(coro: object, timeout: float) -> object:
-        captured["timeout"] = timeout
-        return await coro  # type: ignore[misc]
 
     mock_llm = MagicMock()
-    mock_llm.invoke = AsyncMock(return_value=MagicMock())
+    mock_llm.ping = AsyncMock(return_value=None)
 
-    with (
-        patch("aiat.llm.factory.load_llm", return_value=mock_llm),
-        patch("aiat.orchestration.lifecycle.asyncio.wait_for", side_effect=_fake_wait_for),
-    ):
+    with patch("aiat.llm.factory.load_llm", return_value=mock_llm):
         await _check_llm_credentials(settings)
 
-    assert captured["timeout"] == 123.0  # the setting, NOT a hardcoded 15.0
-    mock_llm.invoke.assert_awaited_once()
+    # int(settings.hard_timeout_seconds), NOT a hardcoded 15
+    mock_llm.ping.assert_awaited_once_with(timeout_seconds=123)

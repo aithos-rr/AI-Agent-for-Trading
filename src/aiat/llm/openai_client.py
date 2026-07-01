@@ -76,3 +76,11 @@ class OpenAIClient(BaseLLMClient):
             max_tokens=self._max_tokens,
             seed=self._seed,
         )
+
+    async def ping(self, *, timeout_seconds: int = 30) -> None:
+        import asyncio
+
+        resp = await asyncio.wait_for(self._llm.ainvoke("ping"), timeout=timeout_seconds)
+        content = getattr(resp, "content", None)
+        if not content:
+            raise RuntimeError(f"{self.provider} ping returned empty response")
