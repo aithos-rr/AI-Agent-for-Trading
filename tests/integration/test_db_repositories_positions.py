@@ -19,6 +19,7 @@ from aiat.db.models.context_snapshot import ContextSnapshot
 from aiat.db.models.decision import Decision
 from aiat.db.models.experiment import Experiment
 from aiat.db.models.model import Model
+from aiat.db.models.order import Order
 from aiat.db.models.outcome import Outcome
 from aiat.db.models.position import Position
 from aiat.db.models.prompt_template import PromptTemplate
@@ -242,6 +243,85 @@ def _make_order_results(
     ]
 
 
+def _make_close_order(
+    size_units: Decimal = Decimal("1.0"),
+    fee_usd: Decimal | None = None,
+    filled_price: Decimal = Decimal("105.00"),
+) -> OrderResult:
+    """Build a CLOSE OrderResult (ADR-0027 fix (a)).
+
+    fee_usd defaults to None so the existing close-path tests keep their PnL/fee
+    assertions unchanged; the dedicated ADR-0027 test passes a real fee.
+    """
+    return OrderResult(
+        hl_order_id=str(uuid.uuid4()),
+        client_order_id=str(uuid.uuid4()),
+        order_kind=OrderKind.CLOSE,
+        status="filled",
+        requested_price=None,
+        filled_price=filled_price,
+        requested_size_units=size_units,
+        filled_size_units=size_units,
+        slippage_bps=Decimal("5"),
+        fee_usd=fee_usd,
+        raw_response={},
+    )
+
+
+async def _seed_flat_closing_action(session: AsyncSession, ids: SeedIds) -> uuid.UUID:
+    """Seed a DISTINCT FLAT DecisionAction (the closing action) under a closing-run decision.
+
+    closing_action_id must point to the FLAT close action, NOT the opening action —
+    reusing the opening action would be a valid FK but semantically false (it would
+    mask decision->closure traceability bugs, ADR-0027 fix (b)). Per chk_hold_flat_no_sizing,
+    a FLAT action has size_pct=0, leverage=0, entry_type='none', SL/TP NULL.
+    """
+    closing_decision_id = uuid.uuid4()
+    closing_action_id = uuid.uuid4()
+    decided_at = datetime(2026, 1, 15, 12, 15, 0, tzinfo=UTC)
+
+    closing_decision = Decision(
+        id=closing_decision_id,
+        run_id=ids.closing_run_id,
+        experiment_id=ids.experiment_id,
+        model_id=ids.model_id,
+        decided_at=decided_at,
+        portfolio_reasoning="Momentum faded",
+        risk_assessment="De-risk BTC",
+        latency_ms=500,
+        raw_payload={},
+    )
+    session.add(closing_decision)
+    await session.flush()
+
+    flat_action = DecisionAction(
+        id=closing_action_id,
+        decision_id=closing_decision_id,
+        experiment_id=ids.experiment_id,
+        model_id=ids.model_id,
+        run_id=ids.closing_run_id,
+        symbol="BTC",
+        confidence=Decimal("0.6000"),
+        time_horizon_min=60,
+        action_reasoning="Momentum faded; close the BTC position (FLAT).",
+        action_key_signals=[],
+        side_requested="FLAT",
+        leverage_requested=Decimal("0"),
+        size_pct_requested=Decimal("0"),
+        stop_loss_pct=None,
+        take_profit_pct=None,
+        entry_type="none",
+        side_executed="FLAT",
+        leverage_executed=Decimal("0"),
+        size_pct_executed=Decimal("0"),
+        execution_status="filled",
+        executed=True,
+    )
+    session.add(flat_action)
+    await session.flush()
+    return closing_action_id
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -355,6 +435,7 @@ async def test_close_position_updates_and_creates_outcome(db_session: AsyncSessi
         run_id=str(ids.opening_run_id),
     )
 
+    closing_action_id = await _seed_flat_closing_action(db_session, ids)
     closure = PositionClosureInfo(
         closed_at="2026-01-15T13:00:00+00:00",
         exit_price=Decimal("105.00"),
@@ -365,6 +446,8 @@ async def test_close_position_updates_and_creates_outcome(db_session: AsyncSessi
         position_id=pos_id,
         closure=closure,
         closing_run_id=str(ids.closing_run_id),
+        closing_action_id=str(closing_action_id),
+        close_order=_make_close_order(),
     )
 
     pos = await db_session.get(Position, uuid.UUID(pos_id))
@@ -409,6 +492,7 @@ async def test_close_position_unprofitable(db_session: AsyncSession) -> None:
         run_id=str(ids.opening_run_id),
     )
 
+    closing_action_id = await _seed_flat_closing_action(db_session, ids)
     closure = PositionClosureInfo(
         closed_at="2026-01-15T13:00:00+00:00",
         exit_price=Decimal("95.00"),
@@ -419,6 +503,8 @@ async def test_close_position_unprofitable(db_session: AsyncSession) -> None:
         position_id=pos_id,
         closure=closure,
         closing_run_id=str(ids.closing_run_id),
+        closing_action_id=str(closing_action_id),
+        close_order=_make_close_order(),
     )
 
     from sqlalchemy import select
@@ -468,6 +554,7 @@ async def test_list_open_for_model_returns_open_only(db_session: AsyncSession) -
     assert len(open_positions) == 1
     assert str(open_positions[0].id) == pos_id
 
+    closing_action_id = await _seed_flat_closing_action(db_session, ids)
     closure = PositionClosureInfo(
         closed_at="2026-01-15T13:00:00+00:00",
         exit_price=Decimal("110.00"),
@@ -478,6 +565,8 @@ async def test_list_open_for_model_returns_open_only(db_session: AsyncSession) -
         position_id=pos_id,
         closure=closure,
         closing_run_id=str(ids.closing_run_id),
+        closing_action_id=str(closing_action_id),
+        close_order=_make_close_order(),
     )
 
     open_after_close = await repo.list_open_for_model(ids.model_id)
@@ -543,6 +632,7 @@ async def test_close_position_with_funding_events(db_session: AsyncSession) -> N
     db_session.add(funding)
     await db_session.flush()
 
+    closing_action_id = await _seed_flat_closing_action(db_session, ids)
     closure = PositionClosureInfo(
         closed_at="2026-01-15T20:00:00+00:00",
         exit_price=Decimal("110.00"),
@@ -553,6 +643,8 @@ async def test_close_position_with_funding_events(db_session: AsyncSession) -> N
         position_id=pos_id,
         closure=closure,
         closing_run_id=str(ids.closing_run_id),
+        closing_action_id=str(closing_action_id),
+        close_order=_make_close_order(),
     )
 
     outcome = (
@@ -586,3 +678,119 @@ async def test_close_position_consistency_check_enforced(db_session: AsyncSessio
 
     with pytest.raises(IntegrityError):
         await db_session.flush()
+
+
+@pytest.mark.asyncio
+async def test_close_position_consistency_check_requires_closing_action_id(
+    db_session: AsyncSession,
+) -> None:
+    """ADR-0027 fix (c) / migration 004: a closed position with every OTHER closing
+    field set but closing_action_id NULL must be REJECTED.
+
+    This is the discriminating case for migration 004: under the pre-004 CHECK (whose
+    closed branch omitted closing_action_id) this row PASSED; the post-004 CHECK adds
+    `closing_action_id IS NOT NULL` to the closed branch, so it must now raise
+    IntegrityError. Distinct failure mode from test_close_position_consistency_check_enforced
+    (which trips on the OTHER NULL fields and would pass under both the old and new CHECK).
+    """
+    ids = await _seed(db_session)
+    repo = PositionsRepository(db_session)
+    pos_id = await repo.open_position(
+        action_id=str(ids.action_id),
+        order_results=_make_order_results(),
+        run_id=str(ids.opening_run_id),
+    )
+
+    pos = await db_session.get(Position, uuid.UUID(pos_id))
+    assert pos is not None
+    # Set every closing field EXCEPT closing_action_id (left NULL): the closed branch of
+    # the pre-004 CHECK was satisfied by these four alone; 004 additionally requires
+    # closing_action_id IS NOT NULL.
+    pos.closed_at = datetime.now(UTC)
+    pos.exit_price = Decimal("105.00")
+    pos.realized_pnl_usd = Decimal("5.00")
+    pos.close_reason = "model_close"
+    # pos.closing_action_id intentionally left NULL
+
+    with pytest.raises(IntegrityError):
+        await db_session.flush()
+
+
+@pytest.mark.asyncio
+async def test_close_position_persists_close_order_and_action_id(
+    db_session: AsyncSession,
+) -> None:
+    """ADR-0027 fix (a)+(b): the close path inserts exactly one orders row with
+    order_kind='close' (hl_order_id populated), populates positions.closing_action_id
+    with the FLAT close action, and includes the close fee in sum_fees_usd / net PnL.
+    """
+    from sqlalchemy import func, select
+
+    from aiat.db.models.fee_event import FeeEvent
+
+    ids = await _seed(db_session)
+    repo = PositionsRepository(db_session)
+    pos_id = await repo.open_position(
+        action_id=str(ids.action_id),
+        order_results=_make_order_results(fee_usd=Decimal("0.30")),
+        run_id=str(ids.opening_run_id),
+    )
+
+    closing_action_id = await _seed_flat_closing_action(db_session, ids)
+    close_order = _make_close_order(fee_usd=Decimal("0.50"))
+    closure = PositionClosureInfo(
+        closed_at="2026-01-15T13:00:00+00:00",
+        exit_price=Decimal("105.00"),
+        close_reason=CloseReason.MODEL_CLOSE,
+        realized_pnl_usd=Decimal("5.00"),
+    )
+    await repo.close_position(
+        position_id=pos_id,
+        closure=closure,
+        closing_run_id=str(ids.closing_run_id),
+        closing_action_id=str(closing_action_id),
+        close_order=close_order,
+    )
+
+    # (a) exactly one orders row with order_kind='close', hl_order_id populated
+    close_rows = (
+        (
+            await db_session.execute(
+                select(Order).where(
+                    Order.decision_action_id == closing_action_id,
+                    Order.order_kind == "close",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(close_rows) == 1
+    close_row = close_rows[0]
+    assert close_row.hl_order_id == close_order.hl_order_id
+    assert close_row.hl_order_id is not None
+    assert close_row.symbol == "BTC"
+    assert close_row.run_id == ids.closing_run_id
+
+    # (b) closing_action_id populated, points to the FLAT close action (not the opening one)
+    pos = await db_session.get(Position, uuid.UUID(pos_id))
+    assert pos is not None
+    assert pos.closing_action_id == closing_action_id
+    assert pos.closing_action_id != ids.action_id
+
+    # (a) close fee included in sum_fees_usd (0.30 entry + 0.50 close) → net PnL reflects it
+    fee_total = (
+        await db_session.execute(
+            select(func.coalesce(func.sum(FeeEvent.fee_usd), Decimal("0"))).where(
+                FeeEvent.position_id == uuid.UUID(pos_id)
+            )
+        )
+    ).scalar_one()
+    assert fee_total == Decimal("0.80")
+
+    outcome = (
+        await db_session.execute(select(Outcome).where(Outcome.position_id == uuid.UUID(pos_id)))
+    ).scalar_one()
+    assert outcome.sum_fees_usd == Decimal("0.80")
+    # pnl_net_fee = 5.00 - 0.80 = 4.20
+    assert outcome.pnl_net_fee_usd == Decimal("4.20")

@@ -413,7 +413,13 @@ class DecisionLoop:
                             close_reason=CloseReason.MODEL_CLOSE,
                             realized_pnl_usd=realized_pnl,
                         )
-                        await positions_repo.close_position(str(open_pos.id), closure_info, run_id)
+                        await positions_repo.close_position(
+                            str(open_pos.id),
+                            closure_info,
+                            run_id,
+                            closing_action_id=str(db_action.id),
+                            close_order=close_order,
+                        )
 
             if has_entry:
                 entry_orders = [o for o in order_results if o.order_kind != OrderKind.CLOSE]

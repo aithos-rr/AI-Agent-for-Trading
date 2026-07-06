@@ -63,11 +63,13 @@ class Position(TimestampMixin, Base):
             name="chk_position_close_reason",
         ),
         # Ensures all closing fields are either all NULL (open) or all set (closed).
+        # closing_action_id IS NOT NULL on the closed branch added by ADR-0027 fix (c)
+        # (migration 004) to keep the model in sync with the DDL.
         CheckConstraint(
             "(closed_at IS NULL AND exit_price IS NULL AND realized_pnl_usd IS NULL "
             "AND close_reason IS NULL AND closing_action_id IS NULL) OR "
             "(closed_at IS NOT NULL AND exit_price IS NOT NULL AND realized_pnl_usd IS NOT NULL "
-            "AND close_reason IS NOT NULL)",
+            "AND close_reason IS NOT NULL AND closing_action_id IS NOT NULL)",
             name="chk_position_closed_consistency",
         ),
         Index("uniq_positions_opening_action", "opening_action_id", unique=True),
