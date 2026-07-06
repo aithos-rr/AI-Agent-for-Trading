@@ -1,8 +1,8 @@
 # ADR-0027: Gap di bookkeeping sul path di chiusura FLAT (order `close` mancante, `closing_action_id` NULL, CHECK bucato)
 
 **Data**: 2026-07-01
-**Status**: accepted
-**Milestone**: M5-T14 (scoperto in review avversariale), follow-up **pre-M6 BLOCCANTE**
+**Status**: accepted — **Fix implementato: 2026-07-06 (commit 1ec8029)**
+**Milestone**: M5-T14 (scoperto in review avversariale), follow-up **pre-M6 BLOCCANTE** (chiuso 2026-07-06)
 **PRD reference**: §3.2.3 (`decision_actions`); §7.6 (DecisionsRepository / PositionsRepository);
 §4.1 step [8]/[10]; ADR-0024 (execution bookkeeping per-azione), ADR-0025 (atomicità flip)
 **Closes deferral**: none (tracciamento di un difetto; il fix è una sessione dedicata pre-M6)
@@ -57,10 +57,12 @@ incompleto), ma sul path di **chiusura FLAT**, non di apertura.
 
 ## Decisione
 
-Il fix è da eseguire in **sessione dedicata pre-M6**, **NON ora**. Questo ADR **traccia** il
-difetto e ne fissa lo scope; **nessun file di codice/schema è toccato** da questo ADR.
+Il fix era pianificato per una **sessione dedicata pre-M6**. **È stato implementato il
+2026-07-06** (commit `1ec8029`) — vedi la sezione «Implementazione (2026-07-06)» in fondo.
+Questo ADR **traccia** il difetto e ne fissa lo scope; la diagnosi qui sotto resta la storia
+del difetto **come osservato al 2026-07-01**, non riscritta a posteriori.
 
-Interventi previsti dal fix (fuori dallo scope di questo documento):
+Interventi previsti dal fix (ora implementati — dettaglio in «Implementazione (2026-07-06)»):
 
 - **(a)** Inserire nel path FLAT una riga `orders` con `order_kind='close'` e `hl_order_id` reale,
   così le chiusure entrano nel dataset di audit al pari di entry/SL/TP.
@@ -96,6 +98,35 @@ Interventi previsti dal fix (fuori dallo scope di questo documento):
 
 - [x] Difetto tracciato in questo ADR (scoperto in review avversariale M5-T14)
 - [x] Indicizzato in `docs/decisions/README.md`
-- [ ] Sessione fix pre-M6: (a) order `close`, (b) `closing_action_id`, (c) migration del CHECK
+- [x] Sessione fix pre-M6: (a) order `close`, (b) `closing_action_id`, (c) migration del CHECK (migration 004) — 2026-07-06
 - [ ] Coordinamento con ADR-0025 (flip) sul path di modifica posizioni esistenti
 - [ ] (PRD/schema non modificati da questo ADR: solo tracciamento)
+
+## Implementazione (2026-07-06)
+
+Fix implementato e committato (commit `1ec8029`, sessione 2026-07-06). Tutti i test verdi
+(**680 passed**, a parte una failure preesistente e non correlata in `test_settings`).
+
+- **fix (a) — riga `orders` `order_kind='close'` + fee**: `close_position`
+  (`src/aiat/db/repositories/positions.py`) ora inserisce una riga `Order` con
+  `order_kind=close_order.order_kind.value` (`'close'`) e `hl_order_id` reale, replicando il
+  pattern del path di apertura; se `close_order.fee_usd` è valorizzato crea anche il `FeeEvent`
+  di chiusura **prima** del `select sum(fee_usd)`, così la fee di chiusura entra nel PnL netto.
+- **fix (b) — `closing_action_id` popolato**: `close_position` setta
+  `pos.closing_action_id = uuid.UUID(closing_action_id)` (nuovi parametri `closing_action_id` +
+  `close_order` sulla firma); il chiamante `decision_loop.py` passa `str(db_action.id)` e il
+  `close_order` dell'azione FLAT (`src/aiat/orchestration/decision_loop.py`).
+- **fix (c) — migration del CHECK**:
+  `alembic/versions/004_fix_position_closed_consistency_check.py` droppa e ricrea
+  `chk_position_closed_consistency` aggiungendo `closing_action_id IS NOT NULL` al ramo «chiuso»
+  (downgrade ripristina il CHECK vecchio; `down_revision="003"`). Allineato anche
+  `__table_args__` del model `Position` (`src/aiat/db/models/position.py`) per coerenza col DDL.
+- **test**:
+  - gating `test_close_position_persists_close_order_and_action_id` — verifica esattamente una
+    riga `orders` `order_kind='close'` con `hl_order_id`, `closing_action_id` popolato (≠ opening
+    action), e la fee di chiusura inclusa in `sum_fees_usd`/PnL netto;
+  - teeth-test `test_close_position_consistency_check_requires_closing_action_id` — verifica che
+    il CHECK post-004 **rifiuti** (`IntegrityError`) una posizione chiusa con `closing_action_id`
+    NULL e gli altri campi di chiusura valorizzati (caso discriminante che sotto il CHECK
+    pre-004 sarebbe passato).
+  - Entrambi in `tests/integration/test_db_repositories_positions.py`.
