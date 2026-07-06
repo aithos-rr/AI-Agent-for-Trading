@@ -91,6 +91,8 @@ def load_llm(settings: AgentSettings) -> BaseLLMClient:
                 max_tokens=max_tokens,
                 seed=settings.seed,
                 provider_name="deepseek",
+                structured_method="function_calling",
+                thinking_extra_body={"thinking": {"type": "disabled"}},
             )
         case "qwen":
             assert settings.qwen_api_key is not None
@@ -104,6 +106,8 @@ def load_llm(settings: AgentSettings) -> BaseLLMClient:
                 max_tokens=max_tokens,
                 seed=settings.seed,
                 provider_name="qwen",
+                structured_method="function_calling",
+                thinking_extra_body={"enable_thinking": False},
             )
         case _:
             raise ValueError(

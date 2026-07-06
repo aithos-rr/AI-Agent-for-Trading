@@ -66,6 +66,7 @@ async def invoke_structured(
     *,
     timeout_seconds: int,
     stats_handler: StatsCallbackHandler,
+    structured_method: str = "json_schema",
 ) -> tuple[TradeDecision, bool]:
     """Invoke LLM with structured output; fall back to freetext only on parse failures.
 
@@ -90,13 +91,15 @@ async def invoke_structured(
 
     # PATH 1: primary attempt with structured output
     try:
-        # method="json_schema" forces native response_format (verified working via OpenRouter
-        # for OpenAI-compatible models). The default "function_calling" does not propagate the
-        # schema correctly through OpenRouter. NOTE: direct providers (esp. Anthropic, which
-        # uses tool-use rather than response_format) may need a provider-aware method — to be
-        # verified at M6 when direct-provider access is implemented (ADR-0008 scope boundary).
+        # structured_method is now provider-aware (default "json_schema"). "json_schema" forces
+        # native response_format (verified working via OpenRouter for OpenAI-compatible models);
+        # the default "function_calling" does not propagate the schema correctly through
+        # OpenRouter. As anticipated by the ADR-0008 scope note, some direct providers need a
+        # different method: Qwen via DashScope-intl rejects response_format (HTTP 400, gateway
+        # constraint) so its factory passes structured_method="function_calling" (tool-use),
+        # which sidesteps response_format entirely and keeps the prompt byte-for-byte identical.
         structured_llm = llm.with_structured_output(
-            TradeDecision, method="json_schema"
+            TradeDecision, method=structured_method
         ).with_config({"callbacks": [stats_handler]})
         result = await asyncio.wait_for(
             structured_llm.ainvoke(prompt),

@@ -38,6 +38,8 @@ class OpenAICompatibleClient(BaseLLMClient):
         max_tokens: int = 4096,
         seed: int | None = None,
         provider_name: str = "openai_compatible",
+        structured_method: str = "json_schema",
+        thinking_extra_body: dict | None = None,
     ) -> None:
         self.model_name_api = model_name
         self.provider = provider_name
@@ -46,6 +48,8 @@ class OpenAICompatibleClient(BaseLLMClient):
         self._top_p = top_p
         self._max_tokens = max_tokens
         self._seed = seed
+        self._structured_method = structured_method
+        self._thinking_extra_body = thinking_extra_body
         llm_kwargs: dict[str, object] = {
             "api_key": api_key,
             "model": model_name,
@@ -57,6 +61,15 @@ class OpenAICompatibleClient(BaseLLMClient):
             llm_kwargs["model_kwargs"] = {"top_p": float(top_p)}
         if seed is not None:
             llm_kwargs["seed"] = seed
+        if thinking_extra_body is not None:
+            # extra_body is a first-level ChatOpenAI param (langchain-openai 1.3.2); it must be
+            # passed as a direct kwarg, NOT inside model_kwargs. Both Chinese providers default
+            # to thinking ON and reject forced tool_choice in thinking mode (HTTP 400), so
+            # structured output via function_calling requires thinking OFF. The disable syntax
+            # is provider-specific and supplied by the factory:
+            #   Qwen/DashScope: {"enable_thinking": False}
+            #   DeepSeek:       {"thinking": {"type": "disabled"}}
+            llm_kwargs["extra_body"] = thinking_extra_body
         self._llm = ChatOpenAI(**llm_kwargs)  # type: ignore[arg-type]
 
     async def invoke(
@@ -73,6 +86,7 @@ class OpenAICompatibleClient(BaseLLMClient):
             prompt,
             timeout_seconds=timeout_seconds,
             stats_handler=handler,
+            structured_method=self._structured_method,
         )
         latency_ms = int((time.monotonic() - t0) * 1000)
         cost = handler.build_cost_event()
