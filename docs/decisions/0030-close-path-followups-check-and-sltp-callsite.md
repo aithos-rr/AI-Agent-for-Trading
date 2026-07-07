@@ -1,8 +1,8 @@
 # ADR-0030: Follow-up del fix ADR-0027 — CHECK troppo restrittivo per chiusure senza azione (SL/TP) e call-site `_check_pending_closures` non aggiornato
 
 **Data**: 2026-07-06
-**Status**: accepted (tracciamento difetto; fix in sessione dedicata pre-M6)
-**Milestone**: M5-T14 (scoperto in review avversariale post-fix-0027), follow-up **pre-M6 BLOCCANTE**
+**Status**: accepted — **Problemi 1+2 fixati: 2026-07-07 (commit `b65e833`)**; Problema 3 (atomicità flip + riconciliazione) **aperto → ADR-0025**
+**Milestone**: M5-T14 (scoperto in review avversariale post-fix-0027), follow-up **pre-M6 BLOCCANTE** (P1+P2 chiusi 2026-07-07)
 **PRD reference**: §3.2.3 / §7.6 (positions/orders); §4.1 step [9] (`_check_pending_closures` / SL/TP); ADR-0027 (fix di cui questo è follow-up); ADR-0024 (per-action isolation); ADR-0025 (atomicità flip, da scrivere)
 **Closes deferral**: none
 
@@ -80,19 +80,23 @@ semantica flip vanno decisi insieme.
 
 ## Decisione
 
-Questo ADR **traccia** i tre problemi; **nessun codice/schema è toccato ora**. Il fix è pianificato
-per una **sessione dedicata pre-M6**. Interventi previsti (fuori scope di questo documento):
+Questo ADR **traccia** i tre problemi. Il fix di **Problemi 1 e 2** era pianificato per una
+**sessione dedicata pre-M6**: **è stato implementato il 2026-07-07** (commit `b65e833`) — vedi la
+sezione «Implementazione (2026-07-07)» in fondo. La diagnosi dei tre problemi qui sopra resta la
+**storia com'era osservata** (2026-07-06), non riscritta a posteriori. Il **Problema 3** (atomicità
+flip + assenza di riconciliazione) **resta aperto** ed è demandato ad **ADR-0025**.
 
-- Rivedere `chk_position_closed_consistency` (nuova migration, **o** revisione della 004 che **non è
-  ancora pushata**) per condizionare il requisito `closing_action_id IS NOT NULL` a
-  `close_reason='model_close'`, ammettendolo NULL per `stop_loss`/`take_profit`/`liquidated`.
-- Aggiornare il call-site `_check_pending_closures:451` alla firma a 5 argomenti, coerentemente con
-  la revisione del CHECK (cosa passare come `closing_action_id` / `close_order` per una chiusura
-  SL/TP).
-- Aggiungere un **test del path SL/TP con repository reale** (non mockato) che esercita la firma vera
-  e la persistenza della chiusura SL/TP.
-- Scrivere **ADR-0025** (atomicità flip) e decidere se/come mitigare la divergenza chain↔DB e
-  l'assenza di riconciliazione.
+Interventi previsti (stato dopo il fix del 2026-07-07):
+
+- **[fatto]** Rivedere `chk_position_closed_consistency` (revisione della 004, **non ancora pushata**)
+  per condizionare il requisito `closing_action_id IS NOT NULL` a `close_reason='model_close'`,
+  ammettendolo NULL per `stop_loss`/`take_profit`/`liquidated`.
+- **[fatto]** Aggiornare il call-site `_check_pending_closures` alla firma a 5 argomenti, coerentemente
+  con la revisione del CHECK (per una chiusura SL/TP: `closing_action_id` / `close_order` = `None`).
+- **[fatto]** Aggiungere un **test del path SL/TP con repository reale** (non mockato) che esercita la
+  firma vera e la persistenza della chiusura SL/TP.
+- **[aperto → ADR-0025]** Scrivere **ADR-0025** (atomicità flip) e decidere se/come mitigare la
+  divergenza chain↔DB e l'assenza di riconciliazione (Problema 3).
 
 ## Conseguenze
 
@@ -138,6 +142,60 @@ per una **sessione dedicata pre-M6**. Interventi previsti (fuori scope di questo
 
 - [x] Difetti tracciati in questo ADR (review avversariale post-fix-0027, 2026-07-06)
 - [ ] Indicizzare in `docs/decisions/README.md`
-- [ ] Sessione fix pre-M6: revisione CHECK + call-site `:451` + test SL/TP reale
-- [ ] ADR-0025 (atomicità flip) da scrivere nella stessa sessione
-- [ ] Aggiornare ADR-0027: il checkbox "[ ] Coordinamento con path SL/TP e flip" si chiude qui
+- [x] Sessione fix pre-M6: revisione CHECK + call-site `_check_pending_closures` + test SL/TP reale
+  (Problemi 1+2, commit `b65e833`, 2026-07-07 — vedi «Implementazione (2026-07-07)»)
+- [ ] ADR-0025 (atomicità flip + riconciliazione, Problema 3) da scrivere — **resta aperto**
+- [x] Aggiornare ADR-0027: la parte **SL/TP** del checkbox "Coordinamento con path SL/TP e flip"
+  (§Propagazione di ADR-0027) **si chiude qui** (b65e833); la parte **flip** resta ad ADR-0025. (Lo
+  spunto del checkbox nel file di ADR-0027 è una modifica separata a quel documento.)
+- [ ] Sessione audit-completa: limiti deferiti **(iii)** marcare `filled` la riga `orders` del
+  trigger scattato + **(iv)** riconciliare la fee di chiusura nell'`Outcome`
+
+## Implementazione (2026-07-07)
+
+Fix di **Problemi 1 e 2** implementato e committato (commit `b65e833`, 2026-07-07). Suite verde
+(693 passed, 1 skipped e2e testnet, a parte la failure preesistente e non correlata in
+`test_settings`). Il **Problema 3 resta aperto** → ADR-0025.
+
+**Scelta: Strada 1 raffinata** — `closing_action_id` e `close_order` resi **OPZIONALI** (`None` per
+le chiusure autonome), **non fabbricati**. **NON** è stata adottata la **Strada 2** (agganciare e
+aggiornare a `filled` la riga `orders` del trigger scattato): richiede la disambiguazione SL-vs-TP via
+`oid` e un refactor più ampio di `close_position` → **deferita alla sessione audit-completa**.
+
+- **CHECK condizionale** — migration `004` **rivista in-place** (non ancora pushata):
+  `chk_position_closed_consistency` richiede `closing_action_id IS NOT NULL` **solo** per
+  `close_reason='model_close'`; lo **ammette NULL** per `stop_loss`/`take_profit`/`liquidated`. Il
+  `__table_args__` del model `Position` (`src/aiat/db/models/position.py`) è allineato alla stessa
+  definizione. (`'manual'` non è ammesso sul ramo «chiuso»: nessun path automatico lo produce.)
+- **`close_position`** (`src/aiat/db/repositories/positions.py`): firma
+  `closing_action_id: str | None`, `close_order: OrderResult | None`. Sul ramo `None` (chiusura
+  autonoma SL/TP/liquidazione): **non** setta `pos.closing_action_id`, **non** inserisce la riga
+  `orders` `order_kind='close'`, **non** crea il `FeeEvent` di chiusura; setta comunque i campi di
+  chiusura della posizione e crea l'`Outcome` (che usa `opening_action_id`, non il closing). Il ramo
+  `model_close` (entrambi valorizzati) resta invariato (bookkeeping ADR-0027).
+- **Attribuzione per-lato** (`_attribute_close_reason` in
+  `src/aiat/orchestration/decision_loop.py`): la **liquidazione ha priorità** (flag sul fill →
+  `liquidated`, euristica non applicata); altrimenti attribuzione **per-lato** — LONG:
+  `exit ≤ entry → stop_loss`, `exit > entry → take_profit`; SHORT invertito; il tie `exit == entry`
+  (strutturalmente impossibile per un trigger reale) → `stop_loss` + `logger.warning`. Usa **solo
+  `entry_price` + `side`** (immune alla divergenza tra i prezzi trigger memorizzati e quelli effettivi
+  sul venue).
+- **Call-site**: `_check_pending_closures` (path SL/TP autonomo) passa `closing_action_id=None`,
+  `close_order=None` sulla firma a 5 argomenti. La review ha scoperto un **3° call-site** rotto,
+  `tests/e2e/test_testnet_smoke.py` (path `model_close`): corretto passando un `closing_action_id`
+  reale (azione FLAT seminata) + il `close_order` reale già prodotto nel test. **Grep esaustivo**
+  (`src/`, `tests/`, `scripts/`): **10 chiamanti** di `close_position`, **tutti a 5 argomenti**.
+- **Test**: attribuzione per-lato (**7 casi**: LONG SL/TP, SHORT SL/TP, liquidated-priorità, tie
+  LONG/SHORT); chiusura SL/TP autonoma con **repository reale** (`closing_action_id` NULL, nessuna
+  riga `close`, CHECK condizionale l'**accetta**) + teeth-test che il CHECK **rifiuta** `model_close`
+  con `closing_action_id` NULL; teeth-test `model_close` di ADR-0027 **invariato**; call-site e2e con
+  firma corretta; aggiornato `test_check_pending_closures_detects_closure_by_symbol` alla firma vera.
+
+**Limiti accettati** (deferiti alla sessione audit-completa / ADR-0025):
+
+- **(i)** l'attribuzione SL-vs-TP è **euristica per-lato**, **non** matching dell'`oid` del trigger;
+- **(ii)** assume che le chiusure autonome siano **solo** trigger SL/TP o liquidazione (nessun
+  intervento manuale esterno) — `close_reason='manual'` resta **irraggiungibile** e fuori dal CHECK;
+- **(iii)** le righe `orders` dei trigger restano `status='triggered'` (l'exit **non** è marcato
+  `filled` a livello ordine);
+- **(iv)** la fee di chiusura del trigger **non entra** nell'`Outcome` (riconciliazione fee deferita).
