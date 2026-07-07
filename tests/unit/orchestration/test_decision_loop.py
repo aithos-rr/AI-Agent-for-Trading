@@ -43,6 +43,7 @@ from aiat.execution.hyperliquid_client import (
 from aiat.orchestration.decision_loop import (
     DecisionLoop,
     _action_execution_outcome,
+    _attribute_close_reason,
     _render_prompt,
 )
 
@@ -1129,11 +1130,17 @@ class TestDecisionLoopRunOnce:
         to which value is passed: only resolving by symbol looks up closed_positions["BTC"]
         and closes; anything else would never close and this assertion would fail.
         """
-        open_position = SimpleNamespace(id=uuid.uuid4(), symbol="BTC")
+        # entry_price + side are read by the per-side attribution (ADR-0030); a LONG whose
+        # exit (95) is below entry (100) attributes to stop_loss.
+        open_position = SimpleNamespace(
+            id=uuid.uuid4(), symbol="BTC", side="LONG", entry_price=Decimal("100")
+        )
+        # The real client only ever emits model_close (non-liquidated) here; the loop
+        # re-attributes it per-side.
         closure = PositionClosureInfo(
             closed_at="2026-06-14T15:00:00+00:00",
-            exit_price=Decimal("105"),
-            close_reason=CloseReason.STOP_LOSS,
+            exit_price=Decimal("95"),
+            close_reason=CloseReason.MODEL_CLOSE,
             realized_pnl_usd=Decimal("-50"),
         )
         hl_client = MockHyperliquidClient(closed_positions={"BTC": closure})
@@ -1155,9 +1162,86 @@ class TestDecisionLoopRunOnce:
 
         mock_pr.close_position.assert_awaited_once()
         call_args = mock_pr.close_position.call_args.args
+        call_kwargs = mock_pr.close_position.call_args.kwargs
         assert call_args[0] == str(open_position.id)
-        assert call_args[1] is closure
+        # Autonomous closure: reason attributed per-side (LONG, exit<entry → stop_loss),
+        # carried on a corrected PositionClosureInfo (not the object the client returned).
+        passed_closure = call_args[1]
+        assert passed_closure.close_reason == CloseReason.STOP_LOSS
+        assert passed_closure.exit_price == Decimal("95")
         assert call_args[2] == RUN_ID
+        # ADR-0030: SL/TP path now passes the 5-arg signature with no closing action / order.
+        assert call_kwargs == {"closing_action_id": None, "close_order": None}
+
+
+class TestAttributeCloseReason:
+    """Per-side SL/TP attribution for autonomous closures (ADR-0030, Modifica 3).
+
+    The heuristic keys off the side of exit_price relative to entry_price: for a LONG the
+    SL sits strictly below entry and the TP strictly above (SHORT inverted); liquidation
+    (flagged on the fill) takes priority over the SL/TP heuristic.
+    """
+
+    @staticmethod
+    def _pos(side: str, entry_price: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            id=uuid.uuid4(), symbol="BTC", side=side, entry_price=Decimal(entry_price)
+        )
+
+    @staticmethod
+    def _closure(exit_price: str, close_reason: CloseReason) -> PositionClosureInfo:
+        return PositionClosureInfo(
+            closed_at="2026-06-14T15:00:00+00:00",
+            exit_price=Decimal(exit_price),
+            close_reason=close_reason,
+            realized_pnl_usd=Decimal("0"),
+        )
+
+    def test_long_exit_below_entry_is_stop_loss(self) -> None:
+        reason = _attribute_close_reason(
+            self._pos("LONG", "100"), self._closure("95", CloseReason.MODEL_CLOSE), RUN_ID
+        )
+        assert reason == CloseReason.STOP_LOSS
+
+    def test_long_exit_above_entry_is_take_profit(self) -> None:
+        reason = _attribute_close_reason(
+            self._pos("LONG", "100"), self._closure("105", CloseReason.MODEL_CLOSE), RUN_ID
+        )
+        assert reason == CloseReason.TAKE_PROFIT
+
+    def test_short_exit_above_entry_is_stop_loss(self) -> None:
+        # SHORT SL sits ABOVE entry (inverted from LONG).
+        reason = _attribute_close_reason(
+            self._pos("SHORT", "100"), self._closure("105", CloseReason.MODEL_CLOSE), RUN_ID
+        )
+        assert reason == CloseReason.STOP_LOSS
+
+    def test_short_exit_below_entry_is_take_profit(self) -> None:
+        reason = _attribute_close_reason(
+            self._pos("SHORT", "100"), self._closure("95", CloseReason.MODEL_CLOSE), RUN_ID
+        )
+        assert reason == CloseReason.TAKE_PROFIT
+
+    def test_liquidation_has_priority_over_side_heuristic(self) -> None:
+        # A LONG liquidation fills below entry (would look like SL by side), but the
+        # liquidation flag wins and the heuristic is not applied.
+        reason = _attribute_close_reason(
+            self._pos("LONG", "100"), self._closure("90", CloseReason.LIQUIDATED), RUN_ID
+        )
+        assert reason == CloseReason.LIQUIDATED
+
+    def test_long_exit_equals_entry_resolves_to_stop_loss(self) -> None:
+        # Structurally impossible for a real trigger; tie resolves deterministically to SL.
+        reason = _attribute_close_reason(
+            self._pos("LONG", "100"), self._closure("100", CloseReason.MODEL_CLOSE), RUN_ID
+        )
+        assert reason == CloseReason.STOP_LOSS
+
+    def test_short_exit_equals_entry_resolves_to_stop_loss(self) -> None:
+        reason = _attribute_close_reason(
+            self._pos("SHORT", "100"), self._closure("100", CloseReason.MODEL_CLOSE), RUN_ID
+        )
+        assert reason == CloseReason.STOP_LOSS
 
 
 # ---------------------------------------------------------------------------

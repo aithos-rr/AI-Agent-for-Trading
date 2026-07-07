@@ -55,7 +55,7 @@ from aiat.execution.hyperliquid_client import (
     PositionClosureInfo,
     RealHyperliquidClient,
 )
-from tests.integration.test_db_repositories_positions import _seed
+from tests.integration.test_db_repositories_positions import _seed, _seed_flat_closing_action
 
 # Every test here requires a real testnet wallet + network; mark + skip-guard.
 pytestmark = pytest.mark.testnet
@@ -230,7 +230,18 @@ async def test_testnet_open_close_outcome(db_session: AsyncSession) -> None:
             close_reason=CloseReason.MODEL_CLOSE,
             realized_pnl_usd=realized_pnl,
         )
-        await repo.close_position(str(open_pos.id), closure, str(seed.closing_run_id))
+        # Model-close bookkeeping (ADR-0027 + ADR-0030): a FLAT close is caused by a model
+        # decision, so it carries a persisted FLAT closing action (distinct from the opening
+        # one) + the CLOSE OrderResult we submitted above. Pass both — the conditional
+        # chk_position_closed_consistency REQUIRES closing_action_id for model_close.
+        closing_action_id = await _seed_flat_closing_action(db_session, seed)
+        await repo.close_position(
+            str(open_pos.id),
+            closure,
+            str(seed.closing_run_id),
+            closing_action_id=str(closing_action_id),
+            close_order=close_order,
+        )
         await db_session.flush()
 
         # --- ASSERT outcome math (market-independent) ----------------------

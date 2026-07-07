@@ -150,10 +150,24 @@ class PositionsRepository:
         position_id: str,
         closure: PositionClosureInfo,
         closing_run_id: str,
-        closing_action_id: str,
-        close_order: OrderResult,
+        closing_action_id: str | None,
+        close_order: OrderResult | None,
     ) -> None:
         """Update position with closing fields and create outcomes row.
+
+        Two closure shapes (ADR-0027 + ADR-0030), keyed by whether a model decision caused
+        the close. The two optional arguments travel together — pass both, or neither:
+
+        - **model_close (FLAT)**: the model decided to close, so ``closing_action_id`` (the
+          FLAT ``decision_action``) and ``close_order`` (the CLOSE ``OrderResult`` we
+          submitted) are both provided. Persists ``positions.closing_action_id``, a
+          ``close`` orders row, and — if present — the close ``fee_event``.
+        - **autonomous (SL/TP trigger, liquidation)**: the exchange closed the position with
+          no model action and no close order of ours, so both are ``None``.
+          ``closing_action_id`` stays NULL and no close order row / fee_event is written (the
+          SL/TP trigger rows persisted at open are left ``status='triggered'`` —
+          reconciliation deferred, ADR-0025). ``chk_position_closed_consistency`` admits NULL
+          ``closing_action_id`` for ``stop_loss``/``take_profit``/``liquidated``.
 
         Computes sum_fees_usd and sum_funding_usd from the DB, then persists
         an Outcome in the caller's transaction.  pnl_net_fee_funding_tax_sim_usd
@@ -173,51 +187,62 @@ class PositionsRepository:
         pos.exit_price = closure.exit_price
         pos.close_reason = closure.close_reason.value
         pos.realized_pnl_usd = closure.realized_pnl_usd
-        pos.closing_action_id = uuid.UUID(closing_action_id)
+        # ADR-0030: an autonomous closure (SL/TP trigger or liquidation) is executed by the
+        # exchange with no model decision_action and no close OrderResult of ours, so
+        # closing_action_id and close_order arrive as None — leave closing_action_id NULL
+        # (the revised chk_position_closed_consistency admits NULL for
+        # stop_loss/take_profit/liquidated) and skip the close order row + close fee_event.
+        # The SL/TP trigger `orders` rows already exist from open_position (left
+        # status='triggered'); marking the fired trigger filled and reconciling its fee is
+        # deferred to the audit-complete session (ADR-0025). The FLAT (model_close) path
+        # supplies both and keeps its full bookkeeping (ADR-0027).
+        if closing_action_id is not None:
+            pos.closing_action_id = uuid.UUID(closing_action_id)
         await self._session.flush()
 
-        # Persist the close order row so closures enter the orders audit dataset at
-        # parity with entry/SL/TP (ADR-0027 fix (a)). Mirrors the open_position order
-        # loop; mapped from the CLOSE OrderResult produced by the decision_loop.
-        close_order_row = Order(
-            id=uuid.uuid4(),
-            decision_action_id=uuid.UUID(closing_action_id),
-            experiment_id=pos.experiment_id,
-            model_id=pos.model_id,
-            run_id=uuid.UUID(closing_run_id),
-            symbol=pos.symbol,
-            order_kind=close_order.order_kind.value,
-            hl_order_id=close_order.hl_order_id,
-            client_order_id=close_order.client_order_id,
-            status=close_order.status,
-            requested_price=close_order.requested_price,
-            filled_price=close_order.filled_price,
-            requested_size_units=close_order.requested_size_units,
-            filled_size_units=close_order.filled_size_units,
-            slippage_bps=close_order.slippage_bps,
-            raw_order_response=close_order.raw_response,
-            submitted_at=closed_at_dt,
-            filled_at=closed_at_dt if close_order.status == "filled" else None,
-        )
-        self._session.add(close_order_row)
-        await self._session.flush()
-
-        # Create the close fee_event BEFORE the sum(fee_usd) select below, so the
-        # closing fee is included in the net PnL (ADR-0027 fix (a)).
-        if close_order.fee_usd is not None:
-            close_fee_event = FeeEvent(
+        if closing_action_id is not None and close_order is not None:
+            # Persist the close order row so closures enter the orders audit dataset at
+            # parity with entry/SL/TP (ADR-0027 fix (a)). Mirrors the open_position order
+            # loop; mapped from the CLOSE OrderResult produced by the decision_loop.
+            close_order_row = Order(
                 id=uuid.uuid4(),
-                order_id=close_order_row.id,
-                position_id=pos.id,
+                decision_action_id=uuid.UUID(closing_action_id),
                 experiment_id=pos.experiment_id,
                 model_id=pos.model_id,
                 run_id=uuid.UUID(closing_run_id),
-                fee_type=_fee_type(close_order.order_kind),
-                fee_usd=close_order.fee_usd,
-                occurred_at=closed_at_dt,
+                symbol=pos.symbol,
+                order_kind=close_order.order_kind.value,
+                hl_order_id=close_order.hl_order_id,
+                client_order_id=close_order.client_order_id,
+                status=close_order.status,
+                requested_price=close_order.requested_price,
+                filled_price=close_order.filled_price,
+                requested_size_units=close_order.requested_size_units,
+                filled_size_units=close_order.filled_size_units,
+                slippage_bps=close_order.slippage_bps,
+                raw_order_response=close_order.raw_response,
+                submitted_at=closed_at_dt,
+                filled_at=closed_at_dt if close_order.status == "filled" else None,
             )
-            self._session.add(close_fee_event)
+            self._session.add(close_order_row)
             await self._session.flush()
+
+            # Create the close fee_event BEFORE the sum(fee_usd) select below, so the
+            # closing fee is included in the net PnL (ADR-0027 fix (a)).
+            if close_order.fee_usd is not None:
+                close_fee_event = FeeEvent(
+                    id=uuid.uuid4(),
+                    order_id=close_order_row.id,
+                    position_id=pos.id,
+                    experiment_id=pos.experiment_id,
+                    model_id=pos.model_id,
+                    run_id=uuid.UUID(closing_run_id),
+                    fee_type=_fee_type(close_order.order_kind),
+                    fee_usd=close_order.fee_usd,
+                    occurred_at=closed_at_dt,
+                )
+                self._session.add(close_fee_event)
+                await self._session.flush()
 
         fee_row = await self._session.execute(
             select(func.coalesce(func.sum(FeeEvent.fee_usd), Decimal("0"))).where(

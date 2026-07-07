@@ -9,6 +9,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy.exc import IntegrityError
@@ -26,7 +27,12 @@ from aiat.db.models.prompt_template import PromptTemplate
 from aiat.db.models.run import Run
 from aiat.db.repositories.positions import PositionsRepository
 from aiat.domain.enums import CloseReason, OrderKind
-from aiat.execution.hyperliquid_client import OrderResult, PositionClosureInfo
+from aiat.execution.hyperliquid_client import (
+    MockHyperliquidClient,
+    OrderResult,
+    PositionClosureInfo,
+)
+from aiat.orchestration.decision_loop import DecisionLoop
 
 # ---------------------------------------------------------------------------
 # Seed helpers
@@ -436,10 +442,13 @@ async def test_close_position_updates_and_creates_outcome(db_session: AsyncSessi
     )
 
     closing_action_id = await _seed_flat_closing_action(db_session, ids)
+    # A model-driven close carries a closing_action_id, so under the ADR-0030 conditional
+    # CHECK its reason must be model_close (stop_loss/take_profit/liquidated require the
+    # action to be NULL). This test exercises the outcome math, not the reason label.
     closure = PositionClosureInfo(
         closed_at="2026-01-15T13:00:00+00:00",
         exit_price=Decimal("105.00"),
-        close_reason=CloseReason.TAKE_PROFIT,
+        close_reason=CloseReason.MODEL_CLOSE,
         realized_pnl_usd=Decimal("5.00"),
     )
     await repo.close_position(
@@ -453,7 +462,7 @@ async def test_close_position_updates_and_creates_outcome(db_session: AsyncSessi
     pos = await db_session.get(Position, uuid.UUID(pos_id))
     assert pos is not None
     assert pos.exit_price == Decimal("105.00")
-    assert pos.close_reason == "take_profit"
+    assert pos.close_reason == "model_close"
     assert pos.realized_pnl_usd == Decimal("5.00")
     assert pos.closed_at is not None
 
@@ -493,10 +502,13 @@ async def test_close_position_unprofitable(db_session: AsyncSession) -> None:
     )
 
     closing_action_id = await _seed_flat_closing_action(db_session, ids)
+    # Model-driven close (has a closing_action_id) → reason must be model_close under the
+    # ADR-0030 conditional CHECK. This test exercises the unprofitable-net branch, not the
+    # reason label.
     closure = PositionClosureInfo(
         closed_at="2026-01-15T13:00:00+00:00",
         exit_price=Decimal("95.00"),
-        close_reason=CloseReason.STOP_LOSS,
+        close_reason=CloseReason.MODEL_CLOSE,
         realized_pnl_usd=Decimal("-5.00"),
     )
     await repo.close_position(
@@ -794,3 +806,192 @@ async def test_close_position_persists_close_order_and_action_id(
     assert outcome.sum_fees_usd == Decimal("0.80")
     # pnl_net_fee = 5.00 - 0.80 = 4.20
     assert outcome.pnl_net_fee_usd == Decimal("4.20")
+
+
+# ---------------------------------------------------------------------------
+# ADR-0030: autonomous closures (SL/TP trigger, liquidation) — no model action,
+# no close order of ours. close_position accepts closing_action_id/close_order=None;
+# the revised conditional CHECK admits NULL closing_action_id for those reasons.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("close_reason", "exit_price", "realized_pnl"),
+    [
+        (CloseReason.STOP_LOSS, Decimal("95.00"), Decimal("-5.00")),
+        (CloseReason.TAKE_PROFIT, Decimal("105.00"), Decimal("5.00")),
+        (CloseReason.LIQUIDATED, Decimal("90.00"), Decimal("-10.00")),
+    ],
+)
+async def test_close_position_autonomous_persists_without_action(
+    db_session: AsyncSession,
+    close_reason: CloseReason,
+    exit_price: Decimal,
+    realized_pnl: Decimal,
+) -> None:
+    """ADR-0030: an autonomous closure has no model action and no close order of ours.
+
+    close_position must accept closing_action_id=None + close_order=None: it persists the
+    closing fields with closing_action_id NULL (the revised conditional CHECK admits NULL
+    for stop_loss/take_profit/liquidated), creates the Outcome, and writes NO orders row of
+    kind 'close' (the SL/TP trigger rows already exist from the open, left
+    status='triggered' — reconciliation deferred, ADR-0025).
+    """
+    from sqlalchemy import select
+
+    ids = await _seed(db_session)
+    repo = PositionsRepository(db_session)
+    pos_id = await repo.open_position(
+        action_id=str(ids.action_id),
+        order_results=_make_order_results(fee_usd=Decimal("0.30")),
+        run_id=str(ids.opening_run_id),
+    )
+
+    closure = PositionClosureInfo(
+        closed_at="2026-01-15T13:00:00+00:00",
+        exit_price=exit_price,
+        close_reason=close_reason,
+        realized_pnl_usd=realized_pnl,
+    )
+    # Autonomous path: no closing action, no close order.
+    await repo.close_position(
+        position_id=pos_id,
+        closure=closure,
+        closing_run_id=str(ids.closing_run_id),
+        closing_action_id=None,
+        close_order=None,
+    )
+
+    pos = await db_session.get(Position, uuid.UUID(pos_id))
+    assert pos is not None
+    assert pos.close_reason == close_reason.value
+    assert pos.closing_action_id is None  # conditional CHECK admits NULL for these reasons
+    assert pos.closed_at is not None
+    assert pos.exit_price == exit_price
+
+    # No 'close' orders row created; only the original entry/stop_loss/take_profit remain.
+    order_kinds = (
+        (
+            await db_session.execute(
+                select(Order.order_kind).where(Order.decision_action_id == ids.action_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert sorted(order_kinds) == ["entry", "stop_loss", "take_profit"]
+
+    # Outcome created; only the entry fee counts (no close fee reconciled on this path).
+    outcome = (
+        await db_session.execute(select(Outcome).where(Outcome.position_id == uuid.UUID(pos_id)))
+    ).scalar_one()
+    assert outcome.realized_pnl_gross_usd == realized_pnl
+    assert outcome.sum_fees_usd == Decimal("0.30")
+
+
+@pytest.mark.asyncio
+async def test_close_position_autonomous_rejects_model_close_without_action(
+    db_session: AsyncSession,
+) -> None:
+    """ADR-0030: the revised conditional CHECK still REQUIRES closing_action_id for
+    close_reason='model_close'.
+
+    Reaching close_position on the autonomous path (closing_action_id=None, close_order=None)
+    with a model_close reason must be rejected by chk_position_closed_consistency — a
+    model_close means a model FLAT decision, which always has an action. The decision loop
+    never does this; the CHECK is the backstop that keeps model_close traceable.
+    """
+    ids = await _seed(db_session)
+    repo = PositionsRepository(db_session)
+    pos_id = await repo.open_position(
+        action_id=str(ids.action_id),
+        order_results=_make_order_results(),
+        run_id=str(ids.opening_run_id),
+    )
+    closure = PositionClosureInfo(
+        closed_at="2026-01-15T13:00:00+00:00",
+        exit_price=Decimal("105.00"),
+        close_reason=CloseReason.MODEL_CLOSE,
+        realized_pnl_usd=Decimal("5.00"),
+    )
+    with pytest.raises(IntegrityError):
+        await repo.close_position(
+            position_id=pos_id,
+            closure=closure,
+            closing_run_id=str(ids.closing_run_id),
+            closing_action_id=None,
+            close_order=None,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("exit_price", "expected_reason"),
+    [(Decimal("95.00"), "stop_loss"), (Decimal("105.00"), "take_profit")],
+)
+async def test_check_pending_closures_persists_autonomous_sltp_real_repo(
+    db_session: AsyncSession,
+    exit_price: Decimal,
+    expected_reason: str,
+) -> None:
+    """ADR-0030 Problema 2 regression guard: _check_pending_closures drives the REAL
+    close_position 5-arg signature (no TypeError) against the REAL repository, and the
+    per-side attribution lands the right close_reason end-to-end.
+
+    The seed opens a LONG BTC at entry=100. The mock client reports the closure the way the
+    real client does (model_close, non-liquidated); the loop re-attributes per-side from the
+    exit price and persists an autonomous closure (closing_action_id NULL, no close order).
+    """
+    from sqlalchemy import select
+
+    ids = await _seed(db_session)
+    repo = PositionsRepository(db_session)
+    pos_id = await repo.open_position(
+        action_id=str(ids.action_id),
+        order_results=_make_order_results(),
+        run_id=str(ids.opening_run_id),
+    )
+
+    closure = PositionClosureInfo(
+        closed_at="2026-01-15T13:00:00+00:00",
+        exit_price=exit_price,
+        close_reason=CloseReason.MODEL_CLOSE,  # client's default; the loop re-attributes
+        realized_pnl_usd=(exit_price - Decimal("100.00")),  # LONG, size 1.0
+    )
+    loop = DecisionLoop(
+        settings=MagicMock(model_id=ids.model_id),
+        llm_client=MagicMock(),
+        hl_client=MockHyperliquidClient(closed_positions={"BTC": closure}),
+        session_factory=MagicMock(),
+        guardrails=MagicMock(),
+    )
+
+    # Drives the real PositionsRepository(db_session).close_position via the real call-site.
+    await loop._check_pending_closures(db_session, str(ids.closing_run_id))
+
+    pos = await db_session.get(Position, uuid.UUID(pos_id))
+    assert pos is not None
+    assert pos.closed_at is not None
+    assert pos.close_reason == expected_reason  # per-side attribution
+    assert pos.closing_action_id is None  # autonomous: no model action
+    assert pos.exit_price == exit_price
+
+    close_rows = (
+        (
+            await db_session.execute(
+                select(Order).where(
+                    Order.decision_action_id == ids.action_id,
+                    Order.order_kind == "close",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(close_rows) == 0  # no close order row on the autonomous path
+
+    outcome = (
+        await db_session.execute(select(Outcome).where(Outcome.position_id == uuid.UUID(pos_id)))
+    ).scalar_one()
+    assert outcome is not None
