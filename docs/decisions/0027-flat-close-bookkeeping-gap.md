@@ -99,7 +99,9 @@ Interventi previsti dal fix (ora implementati — dettaglio in «Implementazione
 - [x] Difetto tracciato in questo ADR (scoperto in review avversariale M5-T14)
 - [x] Indicizzato in `docs/decisions/README.md`
 - [x] Sessione fix pre-M6: (a) order `close`, (b) `closing_action_id`, (c) migration del CHECK (migration 004) — 2026-07-06
-- [ ] Coordinamento con ADR-0025 (flip) sul path di modifica posizioni esistenti
+- [x] Coordinamento con ADR-0025 (flip) sul path di modifica posizioni esistenti: la parte **SL/TP**
+  (call-site + CHECK condizionale) si è chiusa in `b65e833` (ADR-0030); la parte **flip** è ora
+  documentata in **ADR-0025** (limite noto + riconciliazione DB↔chain tracciata come fix pre-M7)
 - [ ] (PRD/schema non modificati da questo ADR: solo tracciamento)
 
 ## Implementazione (2026-07-06)
