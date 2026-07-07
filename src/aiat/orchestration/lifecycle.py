@@ -19,7 +19,10 @@ from aiat.db.session import get_db_session
 
 logger = structlog.get_logger(__name__)
 
-EXPECTED_ALEMBIC_VERSION = "003"
+# Bump on every migration that moves the alembic head (see ADR-0030). The service
+# *declares* the schema version it expects: reading head dynamically would mask
+# code<->schema drift and defeat this check.
+EXPECTED_ALEMBIC_VERSION = "004"
 EXPECTED_BASELINES: frozenset[str] = frozenset({"buy_and_hold", "cash", "naive_momentum_ema_20_50"})
 
 
@@ -111,7 +114,7 @@ async def _agent_startup_checks(settings: AgentSettings) -> None:
         if template is None:
             raise RuntimeError(
                 f"Prompt template '{settings.prompt_template_hash}' not registered. "
-                "Run 'python scripts/register_prompt_template.py' first."
+                "Run 'python scripts/seed_experiment.py' first."
             )
 
     # [A6] HL testnet reachability + funded wallet (external; mock in unit tests)

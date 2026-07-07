@@ -113,6 +113,16 @@ Interventi previsti (stato dopo il fix del 2026-07-07):
 - **Lezione**: cambiare una firma richiede di grepare **tutti** i call-site (`close_position` aveva
   due chiamanti: flip `:416` aggiornato, SL/TP `:451` dimenticato). I test che **mockano** il metodo
   **mascherano le rotture di firma** — servono test che esercitano la firma reale.
+- **Follow-up runtime (fix `fix(lifecycle)` 2026-07-07)**: con la **004 diventata head** e applicata,
+  la costante `EXPECTED_ALEMBIC_VERSION` in `src/aiat/orchestration/lifecycle.py:22` era rimasta a
+  `"003"` → `_check_db_connectivity_and_schema` avrebbe fatto **fallire al boot tutti i 5 servizi** su
+  un DB a 004 (mismatch atteso `003` vs `004`). Bumpata a `"004"`. **Regola ricorrente**: ogni
+  migration che sposta l'head richiede il **bump di questa costante**. Confermato **hardcode**, non
+  lettura dinamica dell'head: il servizio *dichiara* la schema version attesa — la lettura dinamica
+  maschererebbe il drift codice↔schema e svuoterebbe il check. **Una riga qui basta** (nessun ADR
+  dedicato; ADR-0021 non è pertinente — riguarda il seed). Nello stesso fix corretto anche il
+  messaggio d'errore stale di **A5** (`lifecycle.py:114`): `register_prompt_template.py` →
+  `scripts/seed_experiment.py` (coerente con ADR-0021: seed unico).
 
 ## Alternative considerate
 
@@ -145,6 +155,8 @@ Interventi previsti (stato dopo il fix del 2026-07-07):
 - [x] Sessione fix pre-M6: revisione CHECK + call-site `_check_pending_closures` + test SL/TP reale
   (Problemi 1+2, commit `b65e833`, 2026-07-07 — vedi «Implementazione (2026-07-07)»)
 - [ ] ADR-0025 (atomicità flip + riconciliazione, Problema 3) da scrivere — **resta aperto**
+- [x] Follow-up runtime (fix `fix(lifecycle)`, 2026-07-07): `EXPECTED_ALEMBIC_VERSION` `003`→`004`
+  (004 head applicata) + messaggio A5 → `scripts/seed_experiment.py` — vedi «Note»
 - [x] Aggiornare ADR-0027: la parte **SL/TP** del checkbox "Coordinamento con path SL/TP e flip"
   (§Propagazione di ADR-0027) **si chiude qui** (b65e833); la parte **flip** resta ad ADR-0025. (Lo
   spunto del checkbox nel file di ADR-0027 è una modifica separata a quel documento.)
