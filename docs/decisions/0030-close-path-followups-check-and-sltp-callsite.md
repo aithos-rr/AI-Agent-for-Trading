@@ -117,7 +117,9 @@ Interventi previsti (stato dopo il fix del 2026-07-07):
   la costante `EXPECTED_ALEMBIC_VERSION` in `src/aiat/orchestration/lifecycle.py:22` era rimasta a
   `"003"` → `_check_db_connectivity_and_schema` avrebbe fatto **fallire al boot tutti i 5 servizi** su
   un DB a 004 (mismatch atteso `003` vs `004`). Bumpata a `"004"`. **Regola ricorrente**: ogni
-  migration che sposta l'head richiede il **bump di questa costante**. Confermato **hardcode**, non
+  migration che sposta l'head richiede il **bump di questa costante** — dal 2026-07-07 **enforced**
+  dal test `test_expected_alembic_version_matches_script_head` (deriva la head dalla script dir di
+  alembic, solo filesystem; fallisce finché non bumpi). Confermato **hardcode**, non
   lettura dinamica dell'head: il servizio *dichiara* la schema version attesa — la lettura dinamica
   maschererebbe il drift codice↔schema e svuoterebbe il check. **Una riga qui basta** (nessun ADR
   dedicato; ADR-0021 non è pertinente — riguarda il seed). Nello stesso fix corretto anche il

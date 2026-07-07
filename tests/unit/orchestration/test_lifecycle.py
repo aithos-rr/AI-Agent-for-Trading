@@ -154,6 +154,45 @@ async def test_check_db_schema_mismatch_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
+# EXPECTED_ALEMBIC_VERSION tripwire (ADR-0030): constant must equal alembic head
+# ---------------------------------------------------------------------------
+
+
+def test_expected_alembic_version_matches_script_head() -> None:
+    """Tripwire: EXPECTED_ALEMBIC_VERSION must equal alembic's script-dir head.
+
+    Derives the real head from the alembic script directory (filesystem only —
+    no DB, no network) so the constant in ``lifecycle.py`` is forced to be bumped
+    whenever a new migration moves the head (ADR-0030). This test fails at the
+    next migration until the constant is updated.
+
+    Paths are anchored to the repo root via ``__file__`` (not pytest's working
+    directory), and ``script_location`` is overridden to an absolute path so head
+    resolution is independent of the process CWD (the ini value is relative).
+    """
+    from pathlib import Path
+
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    repo_root = Path(__file__).resolve().parents[3]
+    alembic_ini = repo_root / "alembic.ini"
+    assert alembic_ini.is_file(), f"alembic.ini not found at {alembic_ini}"
+
+    config = Config(str(alembic_ini))
+    config.set_main_option("script_location", str(repo_root / "alembic"))
+
+    head = ScriptDirectory.from_config(config).get_current_head()
+
+    assert head is not None, "alembic script directory has no head revision"
+    assert EXPECTED_ALEMBIC_VERSION == head, (
+        f"EXPECTED_ALEMBIC_VERSION ({EXPECTED_ALEMBIC_VERSION!r}) is stale: "
+        f"alembic head is {head!r}. Bump the constant in "
+        f"src/aiat/orchestration/lifecycle.py after adding a migration (ADR-0030)."
+    )
+
+
+# ---------------------------------------------------------------------------
 # _check_active_experiment
 # ---------------------------------------------------------------------------
 
