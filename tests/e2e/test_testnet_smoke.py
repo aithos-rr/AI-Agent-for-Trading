@@ -21,14 +21,17 @@ SDK assumptions this smoke VALIDATES against a live wallet:
   4. outcome PnL math end-to-end: the Outcome row created by close_position
      satisfies pnl_net_fee_funding = gross − fees − funding (market-independent).
   5. holding-duration / Decimal discipline survive a real round-trip.
+  6. **fee_usd reconciliation from user_fills** (finding A, ADR-0027): the client now
+     reconciles the taker fee by oid from ``user_fills`` for entry + model-close orders,
+     so ``sum_fees_usd`` reflects a real fee. We assert it is a non-negative Decimal (a
+     taker fee is positive, but we avoid a magnitude assertion to stay venue-agnostic).
 
 Assumptions this smoke does NOT validate (honest record for the thesis):
-  - **fee_usd parsing from user_fills**: the client currently returns
-    ``fee_usd=None`` at execution (fee reconciliation deferred), so ``sum_fees_usd``
-    is 0 here — we assert it is a non-negative Decimal, NOT its magnitude.
   - **close_reason SL-vs-TP-vs-liquidation attribution**: distinguishing these
     requires forcing the price to hit a trigger; deferred (would need an ADR once
     real fill shapes are observed).
+  - **autonomous-close fee persistence**: SL/TP-trigger/liquidation fees are captured on
+    PositionClosureInfo but their fee_event persistence stays deferred (ADR-0025).
 """
 
 from __future__ import annotations
@@ -253,7 +256,8 @@ async def test_testnet_open_close_outcome(db_session: AsyncSession) -> None:
         assert outcome.pnl_net_fee_funding_usd == (
             outcome.realized_pnl_gross_usd - outcome.sum_fees_usd - outcome.sum_funding_usd
         )
-        # fee parsing is deferred ⇒ validate type/sign, not magnitude.
+        # fee is now reconciled from user_fills (finding A) ⇒ validate type/sign; a real
+        # taker fee is positive, but stay venue-agnostic and assert non-negative only.
         assert isinstance(outcome.sum_fees_usd, Decimal)
         assert outcome.sum_fees_usd >= 0
         assert isinstance(outcome.sum_funding_usd, Decimal)

@@ -10,7 +10,7 @@ semantics parity with the Mock, SDK error mapping, Decimal discipline).
 import time
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -131,6 +131,32 @@ def _filled_resp(total_sz: object = "30.0", avg_px: object = "101.0", oid: int =
     }
 
 
+def _fill(
+    *,
+    oid: int = 111,
+    coin: str = "BTC",
+    fee: object = "1.5",
+    closed_pnl: object = "0.0",
+    px: object = "101.0",
+    sz: object = "30.0",
+    dir_: str = "Open Long",
+    time_ms: int = 1_700_000_000_000,
+) -> dict:
+    """A Hyperliquid ``user_fills`` record — the shape the real venue returns, where the
+    taker fee lives under ``"fee"`` (finding A). Used to exercise fee reconciliation by oid.
+    """
+    return {
+        "coin": coin,
+        "oid": oid,
+        "dir": dir_,
+        "px": px,
+        "sz": sz,
+        "fee": fee,
+        "closedPnl": closed_pnl,
+        "time": time_ms,
+    }
+
+
 def _resting_resp(oid: int = 222) -> dict:
     return {
         "status": "ok",
@@ -209,6 +235,10 @@ def _open_ready_sdk() -> tuple[MagicMock, MagicMock]:
     # szDecimals lookup (ADR-0017): every symbol → asset 0 → 5 decimals (BTC perp).
     info.name_to_asset.return_value = 0
     info.asset_to_sz_decimals = {0: 5}
+    # user_fills carries the per-fill fee (finding A). Real HL fill shape — key `fee`
+    # alongside closedPnl/px/sz/oid/dir/time. oid 111 matches the default filled oid of
+    # both market_open and market_close (see `_filled_resp`), so entry/close reconcile here.
+    info.user_fills.return_value = [_fill(oid=111, fee="1.5")]
     exchange = MagicMock()
     exchange.update_leverage.return_value = {"status": "ok"}
     exchange.market_open.return_value = _filled_resp(total_sz="30.0", avg_px="101.0")
@@ -1002,6 +1032,7 @@ class TestPriceQuantization:
         info.all_mids.return_value = {"BTC": "1.23456"}  # low price ⇒ fractional SL/TP
         info.name_to_asset.return_value = 0
         info.asset_to_sz_decimals = {0: 2}  # 4 decimals
+        info.user_fills.return_value = [_fill(oid=111, fee="0.0")]  # entry-fee reconcile
         exchange = MagicMock()
         exchange.update_leverage.return_value = {"status": "ok"}
         exchange.market_open.return_value = _filled_resp(total_sz="2430.0", avg_px="1.23")
@@ -1015,3 +1046,81 @@ class TestPriceQuantization:
         assert sl_call.args[4]["trigger"]["triggerPx"] == 1.1728
         assert sl_call.args[3] == 1.1728  # limit_px also quantized
         assert sl_call.args[4]["trigger"]["triggerPx"] != 1.172832  # not the raw value
+
+
+# ---------------------------------------------------------------------------
+# Fee reconciliation from user_fills (finding A, ADR-0027) — the missing tripwire
+# ---------------------------------------------------------------------------
+
+
+class TestFeeReconciliation:
+    """The order-placement response never carries the fee; it must be reconciled from
+    user_fills by oid. These tests have TEETH: each asserts a POSITIVE fee lands on the
+    OrderResult / PositionClosureInfo — every one FAILS against the pre-fix code that
+    hard-coded ``fee_usd=None`` (which is exactly what left 189 outcomes at sum_fees=0).
+    """
+
+    async def test_entry_fee_reconciled_from_user_fills(self) -> None:
+        exchange, info = _open_ready_sdk()  # user_fills → [_fill(oid=111, fee="1.5")]
+        client = _client(exchange=exchange, info=info)
+        entry, sl, tp = await client.execute_action(_long_action("BTC"), "run-3", None)
+        # TRIPWIRE: entry (taker_open) fee is the summed fill fee, not None.
+        assert entry.fee_usd == Decimal("1.5")
+        assert isinstance(entry.fee_usd, Decimal)
+        # SL/TP rest reduce-only and unfilled → no fee yet (correctly None).
+        assert sl.fee_usd is None
+        assert tp.fee_usd is None
+
+    async def test_close_fee_reconciled_from_user_fills(self) -> None:
+        exchange, info = _open_ready_sdk()  # market_close oid 111 → matches the fill
+        client = _client(exchange=exchange, info=info)
+        (close,) = await client.execute_action(_flat_action("BTC"), "run-2", _open_position())
+        assert close.order_kind == OrderKind.CLOSE
+        # TRIPWIRE: close (taker_close) fee reconciled from user_fills, not None.
+        assert close.fee_usd == Decimal("1.5")
+
+    async def test_fee_summed_across_partial_fills(self) -> None:
+        exchange, info = _open_ready_sdk()
+        # One order (oid 111) filled in two partials; a stale fill for a different oid
+        # must NOT be counted.
+        info.user_fills.return_value = [
+            _fill(oid=111, fee="0.90", sz="20.0"),
+            _fill(oid=111, fee="0.60", sz="10.0"),
+            _fill(oid=999, fee="5.00", sz="99.0"),  # different order — ignored
+        ]
+        client = _client(exchange=exchange, info=info)
+        entry = (await client.execute_action(_long_action("BTC"), "run-3", None))[0]
+        assert entry.fee_usd == Decimal("1.50")  # 0.90 + 0.60, oid 999 excluded
+
+    async def test_fee_none_when_no_matching_fill_after_retries(self) -> None:
+        exchange, info = _open_ready_sdk()
+        info.user_fills.return_value = [_fill(oid=777, fee="9.9")]  # never matches oid 111
+        client = _client(exchange=exchange, info=info)
+        # Graceful degradation: fee stays None (no fee_event), loop is not blocked/crashed.
+        # Patch sleep so the retry budget doesn't slow the suite.
+        with patch("aiat.execution.hyperliquid_client.asyncio.sleep", new=AsyncMock()) as slept:
+            entry = (await client.execute_action(_long_action("BTC"), "run-3", None))[0]
+        assert entry.fee_usd is None
+        assert slept.await_count == 2  # _FEE_RECONCILE_ATTEMPTS - 1 gaps
+
+    async def test_fee_is_decimal_from_float_sdk(self) -> None:
+        """Inv #12: a float fee from the SDK is reconverted to Decimal, never left a float."""
+        exchange, info = _open_ready_sdk()
+        info.user_fills.return_value = [_fill(oid=111, fee=1.5)]  # native float
+        client = _client(exchange=exchange, info=info)
+        entry = (await client.execute_action(_long_action("BTC"), "run-3", None))[0]
+        assert entry.fee_usd == Decimal("1.5")
+        assert isinstance(entry.fee_usd, Decimal)
+        assert not isinstance(entry.fee_usd, float)
+
+    async def test_check_position_closure_extracts_fee(self) -> None:
+        info = MagicMock()
+        info.user_state.return_value = _user_state(positions=[])  # BTC closed
+        info.user_fills.return_value = [
+            _fill(oid=111, coin="BTC", dir_="Close Long", fee="0.75", closed_pnl="25.0", px="110.0")
+        ]
+        client = _client(exchange=MagicMock(), info=info)
+        closure = await client.check_position_closure("BTC")
+        assert closure is not None
+        # TRIPWIRE: the autonomous-close fee is captured on the closure info.
+        assert closure.fee_usd == Decimal("0.75")

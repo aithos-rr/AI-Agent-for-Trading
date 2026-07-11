@@ -2,6 +2,7 @@
 
 import time
 from decimal import Decimal
+from typing import Any
 
 from langchain_openai import ChatOpenAI
 
@@ -39,7 +40,7 @@ class OpenAICompatibleClient(BaseLLMClient):
         seed: int | None = None,
         provider_name: str = "openai_compatible",
         structured_method: str = "json_schema",
-        thinking_extra_body: dict | None = None,
+        thinking_extra_body: dict[str, Any] | None = None,
     ) -> None:
         self.model_name_api = model_name
         self.provider = provider_name

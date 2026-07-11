@@ -55,6 +55,13 @@ class PositionClosureInfo(BaseModel):
     exit_price: Decimal
     close_reason: CloseReason
     realized_pnl_usd: Decimal
+    # Taker fee of the closing fill(s), summed from user_fills (finding A). Populated for
+    # autonomous closures (SL/TP trigger, liquidation) where we have no close OrderResult.
+    # Its PERSISTENCE for autonomous closures stays deferred (ADR-0025 / ADR-0030): the
+    # SL/TP trigger `orders` rows are reconciled in the audit-complete session, and this
+    # field is captured at the boundary so that work no longer has to re-fetch it. Model
+    # (FLAT) closes carry their fee on the CLOSE OrderResult instead, so this is None there.
+    fee_usd: Decimal | None = None
 
 
 class HyperliquidClient(ABC):
@@ -241,6 +248,16 @@ _SUPPORTED_SYMBOLS: frozenset[str] = frozenset({"BTC", "ETH", "SOL"})
 _DEFAULT_EXEC_TIMEOUT_S = 60.0
 _BPS = Decimal("10000")
 
+# Fee reconciliation (finding A): the immediate market_open/market_close response confirms
+# the fill but never carries the fee — on Hyperliquid the fee lives on the *fill* records
+# from user_fills, which surface with a short latency after the order fills. We poll a few
+# times, matched by oid, rather than deferring to the next tick, so the fee_event is written
+# in the SAME transaction as the order/position (atomic, mirrors ADR-0027's model). The
+# budget is tiny relative to the tick's hard timeout; if no fill surfaces in time the order
+# simply gets no fee_event this tick (graceful — same as the pre-fix behaviour, now logged).
+_FEE_RECONCILE_ATTEMPTS = 3
+_FEE_RECONCILE_DELAY_S = 0.5
+
 
 def _to_decimal(value: Any) -> Decimal:
     """Convert an SDK numeric (str | int | float) to Decimal via ``str``.
@@ -423,6 +440,40 @@ class RealHyperliquidClient(HyperliquidClient):
                 f"Hyperliquid call timed out after {self._timeout_seconds}s"
             ) from exc
 
+    # -- fee reconciliation -------------------------------------------------
+
+    async def _reconcile_fee_for_oid(self, oid: str) -> Decimal | None:
+        """Sum the taker fee for a just-filled order from ``user_fills``, matched by oid.
+
+        Hyperliquid does not return the fee on the order-placement response; it lives on the
+        fill records exposed by ``user_fills`` under the key ``"fee"`` (finding A). A single
+        order may produce several fills (partials), so we sum ``fee`` across every fill whose
+        ``oid`` matches ``oid``. Fills appear with a short latency, so we poll up to
+        ``_FEE_RECONCILE_ATTEMPTS`` times spaced by ``_FEE_RECONCILE_DELAY_S``.
+
+        Returns:
+            Total fee as ``Decimal`` (inv #12), or ``None`` if no matching fill surfaced
+            within the retry budget or a fill's fee was unparseable — the caller then writes
+            no fee_event for this order (graceful degradation, logged), never a crash.
+        """
+        for attempt in range(_FEE_RECONCILE_ATTEMPTS):
+            fills = await self._call(self._info.user_fills, self._account_address)
+            matched = [
+                f
+                for f in (fills if isinstance(fills, list) else [])
+                if isinstance(f, dict) and str(f.get("oid")) == oid
+            ]
+            if matched:
+                try:
+                    return sum((_to_decimal(f.get("fee") or "0") for f in matched), Decimal("0"))
+                except (InvalidOperation, ValueError) as exc:
+                    logger.warning("hl_fee_unparseable", oid=oid, error=str(exc))
+                    return None
+            if attempt < _FEE_RECONCILE_ATTEMPTS - 1:
+                await asyncio.sleep(_FEE_RECONCILE_DELAY_S)
+        logger.warning("hl_fee_not_found_for_oid", oid=oid, attempts=_FEE_RECONCILE_ATTEMPTS)
+        return None
+
     # -- fetch_portfolio_state ---------------------------------------------
 
     async def fetch_portfolio_state(self) -> PortfolioState:
@@ -507,6 +558,9 @@ class RealHyperliquidClient(HyperliquidClient):
         parsed = _parse_order_response(resp)
         if parsed.status != "filled" or parsed.avg_px is None or parsed.total_sz is None:
             raise ExecutionRejectedError(f"close order did not fill for {symbol}: {resp!r}")
+        # Fee is not in the order response — reconcile it from user_fills by oid (finding A).
+        # A populated fee_usd flows to the close fee_event via PositionsRepository.close_position.
+        fee_usd = await self._reconcile_fee_for_oid(parsed.oid)
         return OrderResult(
             hl_order_id=parsed.oid,
             client_order_id=str(uuid.uuid4()),
@@ -518,9 +572,7 @@ class RealHyperliquidClient(HyperliquidClient):
             requested_size_units=current_position.size_units,
             filled_size_units=parsed.total_sz,
             slippage_bps=None,
-            # ASSUMPTION (validate M4-T08): per-fill fee is not in the order response;
-            # fee reconciliation from user_fills is deferred. None ⇒ no fee_event row.
-            fee_usd=None,
+            fee_usd=fee_usd,
             raw_response=resp,
         )
 
@@ -619,6 +671,10 @@ class RealHyperliquidClient(HyperliquidClient):
         slippage_bps = (
             abs(filled_price - mark_price) / mark_price * _BPS if mark_price != 0 else None
         )
+        # Reconcile the entry (taker-open) fee from user_fills by oid (finding A); flows to
+        # the taker_open fee_event via PositionsRepository.open_position. SL/TP triggers are
+        # placed reduce-only and rest unfilled, so they legitimately have no fee yet (below).
+        entry_fee_usd = await self._reconcile_fee_for_oid(entry_parsed.oid)
         entry = OrderResult(
             hl_order_id=entry_parsed.oid,
             client_order_id=str(uuid.uuid4()),
@@ -629,7 +685,7 @@ class RealHyperliquidClient(HyperliquidClient):
             requested_size_units=size_units,
             filled_size_units=filled_size,
             slippage_bps=slippage_bps,
-            fee_usd=None,  # see _close_order note (fee reconciliation deferred)
+            fee_usd=entry_fee_usd,
             raw_response=entry_resp,
         )
 
@@ -754,6 +810,16 @@ class RealHyperliquidClient(HyperliquidClient):
             # Malformed fill numerics: do not fabricate a closure — retry next tick.
             logger.warning("hl_closure_unparseable", coin=hl_position_id, error=str(exc))
             return None
+        # Fee of the closing fill(s), from the same records we already fetched (finding A).
+        # Its own guard so a bad fee never voids an otherwise-valid closure detection — the
+        # fee is non-critical (persistence deferred, ADR-0025), the closure is not.
+        try:
+            close_fee_usd: Decimal | None = sum(
+                (_to_decimal(f.get("fee") or "0") for f in close_fills), Decimal("0")
+            )
+        except (InvalidOperation, ValueError) as exc:
+            logger.warning("hl_closure_fee_unparseable", coin=hl_position_id, error=str(exc))
+            close_fee_usd = None
         if exit_price <= 0:
             # An exit price of 0 would violate the positions.exit_price > 0 CHECK; treat
             # the closure as not-yet-observable rather than persisting a corrupt row.
@@ -772,6 +838,7 @@ class RealHyperliquidClient(HyperliquidClient):
             exit_price=exit_price,
             close_reason=CloseReason.LIQUIDATED if liquidated else CloseReason.MODEL_CLOSE,
             realized_pnl_usd=realized,
+            fee_usd=close_fee_usd,
         )
 
 
