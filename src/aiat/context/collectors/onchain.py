@@ -122,6 +122,39 @@ class HLPublicInfoClient:
             raise CollectorSourceError(f"Unexpected userFunding response structure: {data!r}")
         return [r for r in data if isinstance(r, dict)]
 
+    async def user_fills_by_time(
+        self,
+        user: str,
+        start_time_ms: int,
+        end_time_ms: int | None = None,
+    ) -> list[dict[str, object]]:
+        """Fetch a wallet's fills in a time window from HL ``userFillsByTime``.
+
+        Read-only, no credentials. Used by ``scripts/backfill_fees.py`` to recover the per-fill
+        taker fee (key ``"fee"``, matched by ``"oid"``) for orders whose fee was never persisted
+        (finding A, pre-fix). NOTE: HL caps the response at ~2000 fills; the caller must window
+        or paginate if a wallet exceeds that (the M6 window is well under).
+
+        Raises:
+            CollectorSourceError: on non-200 or a non-list body.
+        """
+        payload: dict[str, object] = {
+            "type": "userFillsByTime",
+            "user": user,
+            "startTime": start_time_ms,
+        }
+        if end_time_ms is not None:
+            payload["endTime"] = end_time_ms
+        resp = await self._client.post(f"{self._base_url}/info", json=payload)
+        if resp.status_code != 200:
+            raise CollectorSourceError(
+                f"HL userFillsByTime returned {resp.status_code}: {resp.text[:200]}"
+            )
+        data: object = resp.json()
+        if not isinstance(data, list):
+            raise CollectorSourceError(f"Unexpected userFillsByTime response structure: {data!r}")
+        return [r for r in data if isinstance(r, dict)]
+
 
 class OnchainCollector(BaseCollector[list[OnChainSnapshot]]):
     """Fetches on-chain data (funding rate 8h, OI, premium, liquidations) from HL.

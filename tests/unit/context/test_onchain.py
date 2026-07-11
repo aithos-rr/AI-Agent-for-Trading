@@ -139,6 +139,30 @@ class TestHLPublicInfoClientUserFunding:
             await hl.user_funding_history("0xdead", 1)
 
 
+class TestHLPublicInfoClientUserFillsByTime:
+    @pytest.mark.asyncio
+    async def test_returns_fills_and_sends_payload(self) -> None:
+        inner = MagicMock(spec=httpx.AsyncClient)
+        inner.post = AsyncMock(
+            return_value=_mock_response(body=[{"oid": 111, "fee": "1.5", "coin": "BTC"}])
+        )
+        hl = HLPublicInfoClient(network="testnet", client=inner)
+        out = await hl.user_fills_by_time("0xwallet", 100, 200)
+        assert out[0]["oid"] == 111
+        assert inner.post.call_args.kwargs["json"] == {
+            "type": "userFillsByTime",
+            "user": "0xwallet",
+            "startTime": 100,
+            "endTime": 200,
+        }
+
+    @pytest.mark.asyncio
+    async def test_non_200_raises(self) -> None:
+        hl = _hl_client_from_mock(_mock_response(status_code=500))
+        with pytest.raises(CollectorSourceError):
+            await hl.user_fills_by_time("0xdead", 1)
+
+
 class TestHLPublicInfoClientFetchMeta:
     @pytest.mark.asyncio
     async def test_returns_dict_with_universe(self) -> None:

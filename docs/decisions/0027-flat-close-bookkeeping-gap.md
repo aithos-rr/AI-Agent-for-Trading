@@ -132,3 +132,19 @@ Fix implementato e committato (commit `1ec8029`, sessione 2026-07-06). Tutti i t
     NULL e gli altri campi di chiusura valorizzati (caso discriminante che sotto il CHECK
     pre-004 sarebbe passato).
   - Entrambi in `tests/integration/test_db_repositories_positions.py`.
+
+## Nota (2026-07-11): l'assunzione `close_order.fee_usd` era violata dall'execution layer
+
+Il fix (a) sopra è **condizionale** su `close_order.fee_usd is not None` e **assumeva** che
+l'execution layer valorizzasse la fee. Lo smoke M6 esteso (finding A) ha rivelato che questa
+assunzione era **violata**: `RealHyperliquidClient` hard-codava `fee_usd=None` per entry e close
+(la fee non è nella response immediata dell'ordine HL, vive su `user_fills`), quindi **nessun**
+`FeeEvent` veniva creato e le 189 outcomes M6 avevano `sum_fees_usd=0`. La catena di `close_position`
+qui era corretta; mancava la sorgente della fee.
+
+**Fixato in `51a8e05`** (finding A): `check_position_closure`/`_close_order`/`_open_orders` ora
+riconciliano la fee reale da `user_fills` per `oid` e valorizzano `OrderResult.fee_usd`, così la
+catena `positions.py` (invariata) scrive i `FeeEvent` `taker_open`/`taker_close`. La fee di chiusura
+**autonoma** SL/TP è stata poi persistita in **ADR-0032** (il ramo autonomo non passa da questo path
+model_close). Vedi anche il test/fixture reali (`user_fills`) — la lezione: il mock che valorizzava
+una fee finta aveva nascosto il gap per 4 giorni.
