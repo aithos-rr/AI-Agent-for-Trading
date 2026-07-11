@@ -1,7 +1,7 @@
 # ADR-0025: Atomicità del flip (close→open) e assenza di riconciliazione DB↔chain
 
 **Data**: 2026-07-07
-**Status**: accepted (limite noto documentato; riconciliazione tracciata come fix pre-M7, non implementata)
+**Status**: accepted — **detection + alert implementata in M6.2** (2026-07-11); **auto-repair** ancora deferito (criteri sotto)
 **Milestone**: emerso in M5-T14 (ricognizione post-fix-0027/0030); riconciliazione **pre-M7 BLOCCANTE** (non pre-M6)
 **PRD reference**: §4.1 (decision loop / esecuzione); ADR-0027, ADR-0030 (path chiusura, di cui questo è il completamento sul flip); ADR-0022 (Opzione 2)
 **Closes deferral**: none
@@ -62,6 +62,38 @@ A inizio tick, confrontare l'**insieme delle posizioni che il DB crede aperte** 
 (posizione aperta nel DB ma assente sulla chain) oppure **segnalare l'anomalia** (posizione sulla
 chain non riflessa nel DB). Da progettare in una **sessione dedicata pre-M7**.
 
+## Implementazione (2026-07-11, M6.2): detection + alert (NO auto-repair)
+
+La direzione tracciata sopra è ora implementata come **rilevazione + allerta**, senza
+auto-riparazione (scelta deliberata per M6.2):
+
+- `src/aiat/orchestration/chain_reconciliation.py` — `detect_chain_divergences(db_open, chain_open)`
+  puro: confronta per symbol le posizioni che il DB crede aperte con `portfolio_state.open_positions`
+  (dallo `clearinghouseState`) e ritorna le divergenze: `missing_on_chain` (DB aperto, chain flat —
+  chiusura non ancora registrata dal loop), `missing_in_db` (posizione sulla chain ignota al DB),
+  `side_mismatch`, `size_mismatch` (oltre tolleranza abs+rel).
+- `DecisionLoop._reconcile_chain_state(session, portfolio_state)` — invocato **a inizio tick, dopo il
+  fetch del portfolio e PRIMA della decisione**. Su divergenza: **una riga `errors`
+  `error_kind='ChainDivergence'`** (tutte le divergenze in `context`) + `logger.warning`; poi il tick
+  **prosegue** (best-effort, non blocca né aborta mai). Nessuna scrittura correttiva.
+
+### Perché detection-only per M6.2 (auto-repair deferito)
+
+- L'auto-repair (registrare la chiusura mancante / riconciliare la size) **muta lo stato delle
+  posizioni**: è esattamente il tipo di scrittura che ha generato i bug di ADR-0027/0030. Farlo bene
+  richiede attribuire la causa (chiusura persa vs flip parziale vs liquidazione) e riconciliare fee e
+  funding — un refactor più ampio e rischioso.
+- Per M6.2/smoke, **sapere** che c'è divergenza (riga `errors` interrogabile) è sufficiente a
+  proteggere il dataset: le run/posizioni divergenti sono identificabili e filtrabili a posteriori.
+- La rilevazione non ha effetti collaterali → rischio nullo di introdurre nuove divergenze.
+
+### Criteri per abilitare l'auto-repair (post-M6.2)
+
+1. Frequenza/tipologia delle divergenze osservate nello smoke (dalle righe `ChainDivergence`) note.
+2. Regola di riconciliazione decisa per ciascun `kind` — in particolare `missing_on_chain` →
+   registrare la chiusura con quale `close_reason`/prezzo/fee? — coerente con ADR-0030/ADR-0032.
+3. Test di riconvergenza (flip parziale → auto-repair → DB e chain riconvergono) verdi.
+
 ## Conseguenze
 
 ### Impatto
@@ -104,5 +136,9 @@ chain non riflessa nel DB). Da progettare in una **sessione dedicata pre-M7**.
 ## Propagazione
 
 - [x] Limite documentato in questo ADR (ricognizione post-fix-0027/0030, 2026-07-07)
-- [ ] Riconciliazione implementata (pre-M7)
-- [ ] Test gating riconciliazione (flip parziale → riconvergenza)
+- [x] Riconciliazione **detection + alert** implementata (M6.2, 2026-07-11) —
+  `chain_reconciliation.py` + `DecisionLoop._reconcile_chain_state` → riga `errors` `ChainDivergence`
+- [x] Test gating detection (unit `detect_chain_divergences` + e2e `_reconcile_chain_state` logga
+  `ChainDivergence` e il tick prosegue)
+- [ ] **Auto-repair** (riconciliazione correttiva) — deferito post-M6.2, criteri sopra
+- [ ] Test gating auto-repair (flip parziale → riconvergenza)

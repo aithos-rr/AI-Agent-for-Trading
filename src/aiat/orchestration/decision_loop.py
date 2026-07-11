@@ -30,6 +30,7 @@ from aiat.execution.guardrails import Guardrails
 from aiat.execution.hyperliquid_client import HyperliquidClient, OrderResult, PositionClosureInfo
 from aiat.llm.base import BaseLLMClient
 from aiat.llm.exceptions import LLMAuthError, LLMRateLimitError, LLMUnrecoverableError
+from aiat.orchestration.chain_reconciliation import detect_chain_divergences
 
 logger = structlog.get_logger(__name__)
 
@@ -265,6 +266,10 @@ class DecisionLoop:
 
             # PRD §4.1 step [2]: fetch account state
             portfolio_state = await self._hl_client.fetch_portfolio_state()
+
+            # Reconcile DB-open positions vs the chain BEFORE deciding (ADR-0025): detect +
+            # alert only, then proceed — a divergence must not block the tick.
+            await self._reconcile_chain_state(session, portfolio_state)
 
             # PRD §4.1 step [4]: load prompt template from DB + render
             template = await self._load_prompt_template(session)
@@ -508,6 +513,48 @@ class DecisionLoop:
             )
 
         return failed_count
+
+    async def _reconcile_chain_state(
+        self,
+        session: AsyncSession,
+        portfolio_state: PortfolioState,
+    ) -> None:
+        """Detect DB↔chain position divergences at tick start; alert and proceed (ADR-0025).
+
+        Compares the DB's OPEN positions for this model against what the chain actually holds
+        (``portfolio_state.open_positions``). Any divergence is persisted as a single
+        ``ChainDivergence`` errors row (all mismatches in ``context``) plus a warning log —
+        detection + alert only, NO auto-repair (M6.2 scope, ADR-0025). The errors row is added
+        to the tick's session and commits with the tick's first commit.
+
+        Best-effort: any failure here is logged and swallowed — reconciliation must never abort
+        or block the decision tick.
+        """
+        try:
+            positions_repo = PositionsRepository(session)
+            db_open = await positions_repo.list_open_for_model(self._settings.model_id)
+            divergences = detect_chain_divergences(db_open, portfolio_state.open_positions)
+            if not divergences:
+                return
+            logger.warning(
+                "chain_divergence_detected",
+                model_id=self._settings.model_id,
+                count=len(divergences),
+                kinds=[d.kind for d in divergences],
+            )
+            runs_repo = RunsRepository(session)
+            await runs_repo.log_error(
+                error_kind="ChainDivergence",
+                error_message=(
+                    f"{len(divergences)} DB-vs-chain position divergence(s) for model "
+                    f"{self._settings.model_id}"
+                ),
+                experiment_id=self._settings.experiment_id,
+                model_id=self._settings.model_id,
+                context={"divergences": [d.to_dict() for d in divergences]},
+            )
+        except Exception:
+            logger.exception("chain_reconcile_failed", model_id=self._settings.model_id)
 
     async def _check_pending_closures(
         self,
