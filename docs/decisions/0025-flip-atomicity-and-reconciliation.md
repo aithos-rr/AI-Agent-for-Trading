@@ -68,14 +68,76 @@ La direzione tracciata sopra è ora implementata come **rilevazione + allerta**,
 auto-riparazione (scelta deliberata per M6.2):
 
 - `src/aiat/orchestration/chain_reconciliation.py` — `detect_chain_divergences(db_open, chain_open)`
-  puro: confronta per symbol le posizioni che il DB crede aperte con `portfolio_state.open_positions`
-  (dallo `clearinghouseState`) e ritorna le divergenze: `missing_on_chain` (DB aperto, chain flat —
-  chiusura non ancora registrata dal loop), `missing_in_db` (posizione sulla chain ignota al DB),
-  `side_mismatch`, `size_mismatch` (oltre tolleranza abs+rel).
+  puro. **Hyperliquid fa netting per coin** (al più UNA posizione on-chain per symbol), mentre il
+  DB può avere **più righe open per lo stesso symbol** (una riga chiusa on-chain ma mai chiusa nel
+  DB = *zombie*). Quindi il confronto **aggrega le righe DB per symbol** (somma con segno: LONG +,
+  SHORT −) e la confronta con l'unica posizione chain — **MAI riga-per-riga** (un dict per-symbol
+  scarterebbe silenziosamente lo zombie). Categorie:
+  - `zombie_row` — il DB ha size open che la chain non ha (chain flat, oppure size chain < somma DB
+    sullo stesso lato): una o più righe DB sono stale;
+  - `missing_row` — la chain ha una posizione per un symbol di cui il DB non ha **alcuna** riga open;
+  - `size_mismatch` — entrambi presenti ma le size sommate divergono oltre tolleranza in modo non
+    riconducibile a un over-count del DB (chain più grande della somma DB, o flip di lato).
+  Ogni divergenza include, **per la riparazione manuale**, i `db_positions` (`position_id` + side +
+  size di ciascuna riga) e il `delta` (Σ size DB con segno − size chain).
 - `DecisionLoop._reconcile_chain_state(session, portfolio_state)` — invocato **a inizio tick, dopo il
   fetch del portfolio e PRIMA della decisione**. Su divergenza: **una riga `errors`
-  `error_kind='ChainDivergence'`** (tutte le divergenze in `context`) + `logger.warning`; poi il tick
-  **prosegue** (best-effort, non blocca né aborta mai). Nessuna scrittura correttiva.
+  `error_kind='ChainDivergence'`** (tutte le divergenze in `context`, con `position_id`+`delta`) +
+  `logger.warning`; poi il tick **prosegue** (best-effort, non blocca né aborta mai). Nessuna
+  scrittura correttiva.
+
+### Evidenza empirica (cn-premium, 2026-07-11)
+
+Caso reale che ha guidato la correzione del confronto: il wallet **cn-premium** aveva on-chain
+**una** posizione BTC LONG (size `0.00425`, entry `62690.2`) ma nel DB **due** righe open — entry
+`63403` (07-10) e `62690.2` (07-11): la prima è uno **zombie** (chiusa on-chain, mai chiusa nel DB).
+Un confronto riga-per-riga (o un dict per-symbol) avrebbe mascherato lo zombie; il confronto
+**netted** rileva `zombie_row` con `delta=0.01` (somma DB `0.01425` − chain `0.00425`) e riporta
+**entrambi** i `position_id`. Questo caso è un test di gating (unit + e2e).
+
+### Causa radice (T4b): SL fired tra i tick + reopen stesso symbol nello stesso tick
+
+Ricostruzione completa del perché lo zombie è nato — un **bug di ordinamento/keying** in
+`_check_pending_closures`, non solo una divergenza da flip:
+
+Timeline (cn-premium, BTC, 2026-07-11 UTC):
+- **01:06** — lo **stop-loss** della posizione `5b3c555e-…` (entry `63403`) **scatta on-chain**
+  (fill `oid=56298713468`, `px=62500`, `closedPnl=-5.72`). Sull'exchange BTC va flat.
+- **01:15 (tick)** — al fetch iniziale la chain mostra BTC flat; il modello **decide LONG BTC** e
+  `_execute_actions` (step 8) **riapre** BTC (`oid=56301522722`) creando una **nuova** riga
+  posizione. Ora BTC è di nuovo presente on-chain (`szi != 0`).
+- **stesso tick, step 9** — `_check_pending_closures` itera le posizioni che il DB crede aperte
+  (`list_open_for_model` → **entrambe** le righe BTC: lo zombie + la nuova) e per ciascuna chiama
+  `check_position_closure("BTC")`. Ma `check_position_closure` corto-circuita su
+  **`szi != 0`** (`hyperliquid_client.py:786`) **prima** di ispezionare i fill di chiusura: poiché
+  la riapertura ha rimesso BTC on-chain, ritorna `None` («ancora aperta») per **entrambe** le righe.
+  Il fill di SL (che è in `user_fills`) non viene mai guardato.
+
+Risultato: l'ordine SL resta `status='triggered'` nel DB, la posizione `5b3c555e-…` **non viene mai
+chiusa** → **zombie**. Due difetti concorrenti:
+1. **Ordine**: `_check_pending_closures` (step 9) gira **dopo** `_execute_actions` (step 8), quindi
+   la riapertura precede la rilevazione della chiusura.
+2. **Keying per-symbol + short-circuit `szi`**: la rilevazione è per coin e si ferma appena la coin
+   è presente on-chain, quindi una riapertura stesso-tick nasconde la chiusura precedente e non sa
+   distinguere quale delle due righe DB si riferisca alla posizione chiusa.
+
+**Mitigazione attuale (M6.2)**: la riconciliazione netted (sopra) **rileva** lo zombie risultante
+(`zombie_row`, con `position_id` + `delta`) a inizio del tick successivo → il dataset è protetto
+(righe divergenti identificabili/filtrabili). Test di gating: `test_misses_close_when_symbol_reopened_same_tick`
+(caratterizza il short-circuit) + i test e2e a due righe (la rilevazione lo cattura).
+
+**Fix della causa radice — DEFERITO (post-M6.2), opzioni tracciate**:
+- **(A) Riordino**: eseguire la rilevazione delle chiusure **prima** di `_execute_actions`, così l'SL
+  è registrato prima della riapertura. Cambia l'ordine di PRD §4.1 (step 9 → prima di step 8);
+  non altera la decisione del modello (presa a step 5 sul portfolio di step 2), ma va valutato per
+  effetti collaterali.
+- **(B) Rilevazione a livello posizione**: `check_position_closure` dovrebbe cercare il fill di
+  chiusura relativo alla **specifica** posizione (per finestra temporale `> opened_at` e/o match
+  `oid` del trigger) invece di corto-circuitare sulla presenza della coin — così una riapertura non
+  maschera la chiusura precedente. Più corretto ma richiede stato (oid dei trigger) e interagisce con
+  l'attribuzione SL/TP (ADR-0030).
+Entrambe le opzioni sono **loop surgery** sul path di chiusura (stessa famiglia di rischio di
+ADR-0027/0030), quindi deferite con i criteri sotto.
 
 ### Perché detection-only per M6.2 (auto-repair deferito)
 
@@ -138,7 +200,11 @@ auto-riparazione (scelta deliberata per M6.2):
 - [x] Limite documentato in questo ADR (ricognizione post-fix-0027/0030, 2026-07-07)
 - [x] Riconciliazione **detection + alert** implementata (M6.2, 2026-07-11) —
   `chain_reconciliation.py` + `DecisionLoop._reconcile_chain_state` → riga `errors` `ChainDivergence`
-- [x] Test gating detection (unit `detect_chain_divergences` + e2e `_reconcile_chain_state` logga
-  `ChainDivergence` e il tick prosegue)
-- [ ] **Auto-repair** (riconciliazione correttiva) — deferito post-M6.2, criteri sopra
-- [ ] Test gating auto-repair (flip parziale → riconvergenza)
+- [x] Test gating detection (unit `detect_chain_divergences` netted incl. caso reale cn-premium a
+  2 righe + e2e `_reconcile_chain_state` logga `ChainDivergence` e il tick prosegue)
+- [x] **Causa radice T4b documentata** (SL fired + reopen stesso-tick) + test
+  `test_misses_close_when_symbol_reopened_same_tick`
+- [ ] **Fix causa radice T4b** (riordino step 9↔8 **oppure** rilevazione a livello posizione) —
+  deferito post-M6.2 (loop surgery, criteri sotto)
+- [ ] **Auto-repair** (riconciliazione correttiva delle divergenze) — deferito post-M6.2, criteri sopra
+- [ ] Test gating auto-repair / fix T4b (SL+reopen stesso tick → nessuno zombie; flip → riconvergenza)

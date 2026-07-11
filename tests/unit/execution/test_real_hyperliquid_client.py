@@ -827,6 +827,37 @@ class TestCheckPositionClosure:
         # malformed numerics must not crash the loop — closure is deferred, not fabricated
         assert await client.check_position_closure("BTC") is None
 
+    async def test_misses_close_when_symbol_reopened_same_tick(self) -> None:
+        """ROOT CAUSE of the cn-premium zombie (T4b, ADR-0025 timeline): when the model reopens
+        BTC in the SAME tick an SL fired, the chain's user_state shows BTC OPEN again (szi != 0 —
+        the just-reopened position), so the szi short-circuit (hyperliquid_client.py:786) returns
+        None BEFORE inspecting the SL close fill in user_fills. The prior close is missed and the
+        old DB row becomes a zombie. `_check_pending_closures` runs AFTER `_execute_actions`
+        (step 9 after step 8) and is symbol-keyed, so both DB BTC rows hit this same short-circuit.
+
+        This test pins the current (buggy) behaviour; the resulting zombie is caught downstream by
+        the netted DB↔chain reconciliation (detect_chain_divergences → zombie_row). The root-cause
+        fix (reorder closures before execution / position-level detection) is deferred — ADR-0025.
+        """
+        info = MagicMock()
+        # Chain shows BTC OPEN again — the LONG the model just reopened (oid 56301522722).
+        info.user_state.return_value = _user_state(positions=[_asset_pos("BTC", szi="0.00425")])
+        # user_fills DOES contain the SL close fill from 01:06 UTC (oid 56298713468), but it is
+        # never consulted because szi != 0 short-circuits first.
+        info.user_fills.return_value = [
+            {
+                "coin": "BTC",
+                "dir": "Close Long",
+                "closedPnl": "-5.72",
+                "px": "62500",
+                "time": 1_752_282_360_000,
+                "fee": "0.1",
+            }
+        ]
+        client = _client(exchange=MagicMock(), info=info)
+        assert await client.check_position_closure("BTC") is None  # SL close MISSED
+        info.user_fills.assert_not_called()  # short-circuit — fills never inspected
+
 
 # ---------------------------------------------------------------------------
 # build_hl_client factory
