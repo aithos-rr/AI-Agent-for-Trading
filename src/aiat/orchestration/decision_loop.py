@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import traceback
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -17,6 +18,7 @@ from aiat.db.models.action import DecisionAction
 from aiat.db.models.context_snapshot import ContextSnapshot
 from aiat.db.models.position import Position
 from aiat.db.models.prompt_template import PromptTemplate
+from aiat.db.models.run import Run
 from aiat.db.repositories.decisions import DecisionsRepository
 from aiat.db.repositories.positions import PositionsRepository
 from aiat.db.repositories.runs import RunsRepository
@@ -27,6 +29,7 @@ from aiat.domain.schemas import ContextBundle, PortfolioState, TradeDecision
 from aiat.execution.guardrails import Guardrails
 from aiat.execution.hyperliquid_client import HyperliquidClient, OrderResult, PositionClosureInfo
 from aiat.llm.base import BaseLLMClient
+from aiat.llm.exceptions import LLMAuthError, LLMRateLimitError, LLMUnrecoverableError
 
 logger = structlog.get_logger(__name__)
 
@@ -140,6 +143,30 @@ def _attribute_close_reason(
     return CloseReason.STOP_LOSS if exit_price > entry_price else CloseReason.TAKE_PROFIT
 
 
+def _failure_stage_for(exc: BaseException) -> str:
+    """Map a tick-aborting exception to its ``runs.failure_stage`` label (finding D).
+
+    Implements the per-class labelling the exception docstrings in
+    ``aiat/llm/exceptions.py`` promised (PRD §8.2) but that was never wired up — until
+    now every non-timeout failure collapsed to the single stage ``'error'``, so the DB
+    could not tell an auth failure from a rate limit from a parse failure.
+
+    The whole-tick ``asyncio`` ``TimeoutError`` has its own branch in ``run_once`` and
+    maps to ``'timeout'``; this function only classifies the generic branch. Note that
+    ``LLMTimeoutError`` is NOT a subclass of the builtin ``TimeoutError`` (see
+    ``invoke_structured``), so it reaches the generic handler and is deliberately left at
+    the ``'error'`` default here — narrowing it to a dedicated stage is out of scope for
+    finding D (it would change the swallow-vs-reraise control flow of the timeout branch).
+    """
+    if isinstance(exc, LLMAuthError):
+        return "llm_auth"
+    if isinstance(exc, LLMRateLimitError):
+        return "llm_rate"
+    if isinstance(exc, LLMUnrecoverableError):
+        return "llm_parse"
+    return "error"
+
+
 class DecisionLoop:
     """Single-agent decision loop (PRD §4.1).
 
@@ -187,7 +214,7 @@ class DecisionLoop:
                 _inner(),
                 timeout=float(self._settings.hard_timeout_seconds),
             )
-        except TimeoutError:
+        except TimeoutError as exc:
             run_id = run_id_holder[0]
             logger.error(
                 "decision_loop_timeout",
@@ -195,14 +222,12 @@ class DecisionLoop:
                 run_id=run_id,
                 timeout_seconds=self._settings.hard_timeout_seconds,
             )
-            if run_id is not None:
-                await self._finalize_run(run_id, RunStatus.TIMEOUT, "timeout")
+            await self._record_failure(run_id, exc, RunStatus.TIMEOUT, "timeout")
             return run_id
-        except Exception:
+        except Exception as exc:
             run_id = run_id_holder[0]
             logger.exception("decision_loop_error", tick_id=tick_id, run_id=run_id)
-            if run_id is not None:
-                await self._finalize_run(run_id, RunStatus.FAILED, "error")
+            await self._record_failure(run_id, exc, RunStatus.FAILED, _failure_stage_for(exc))
             raise
 
     async def _execute_tick(
@@ -521,21 +546,56 @@ class DecisionLoop:
                 close_order=None,
             )
 
-    async def _finalize_run(
+    async def _record_failure(
         self,
-        run_id: str,
+        run_id: str | None,
+        exc: BaseException,
         status: RunStatus,
-        failure_stage: str | None = None,
+        failure_stage: str,
     ) -> None:
-        """Update run status in a fresh session (used by timeout/error handlers)."""
+        """Persist an ``errors`` row for a failed/timed-out tick AND finalize the run.
+
+        Before finding D the timeout/error handlers only updated ``runs.status`` +
+        ``failure_stage`` and logged the exception to structlog — the message and stack
+        never reached the DB, so 36 failed smoke runs left only 8 queryable ``errors``
+        rows. This writes the full trace (``error_kind`` = exception class, message,
+        stack) alongside the status update, in ONE fresh session (the tick's own session
+        is likely mid-rollback after the exception) so both commit atomically.
+
+        Best-effort: any failure here is logged and swallowed so it can never mask the
+        original exception that the generic handler re-raises.
+
+        Args:
+            run_id: Run to link and finalize, or None if the tick failed before the run
+                row was created/committed.
+            exc: The exception that aborted the tick.
+            status: Terminal RunStatus for the run (FAILED / TIMEOUT).
+            failure_stage: Stage label (see ``_failure_stage_for`` / ``'timeout'``).
+        """
+        stack = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
         try:
             async with self._session_factory() as session:
                 runs_repo = RunsRepository(session)
-                await runs_repo.update_status(run_id, status, failure_stage)
+                # errors.run_id FKs runs.id. Link + finalize only if the run row actually
+                # committed: an exception between create_run and its commit (or before
+                # create_run) leaves no row, so we still log the error unlinked rather
+                # than lose it to an FK violation that would roll back the whole insert.
+                run_row = None if run_id is None else await session.get(Run, uuid.UUID(run_id))
+                await runs_repo.log_error(
+                    error_kind=type(exc).__name__,
+                    error_message=str(exc),
+                    run_id=run_id if run_row is not None else None,
+                    experiment_id=self._settings.experiment_id,
+                    model_id=self._settings.model_id,
+                    stack_trace=stack,
+                )
+                if run_id is not None and run_row is not None:
+                    await runs_repo.update_status(run_id, status, failure_stage)
                 await session.commit()
         except Exception:
             logger.exception(
-                "decision_loop_finalize_failed",
+                "decision_loop_record_failure_failed",
                 run_id=run_id,
                 target_status=status.value,
+                failure_stage=failure_stage,
             )
