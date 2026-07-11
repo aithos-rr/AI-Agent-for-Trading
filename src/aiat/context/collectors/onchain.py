@@ -84,6 +84,44 @@ class HLPublicInfoClient:
         ctxs: list[dict[str, object]] = [c for c in data[1] if isinstance(c, dict)]
         return meta, ctxs
 
+    async def user_funding_history(
+        self,
+        user: str,
+        start_time_ms: int,
+        end_time_ms: int | None = None,
+    ) -> list[dict[str, object]]:
+        """Fetch a wallet's realized funding payments from HL ``userFunding`` (finding B).
+
+        Read-only, no credentials — the funding ledger job (context-orchestrator) calls this
+        per model wallet address. Mirrors ``Info.user_funding_history`` in the SDK:
+        ``POST /info {"type":"userFunding","user":...,"startTime":ms,"endTime":ms}``.
+
+        Returns:
+            The raw list of funding records. Each is
+            ``{"time": ms, "hash": str, "delta": {"type":"funding","coin":str,
+            "usdc":str,"szi":str,"fundingRate":str}}`` — see ADR-0031 (shape is an
+            ASSUMPTION to validate against live testnet, mirroring the M4-T08 pattern).
+
+        Raises:
+            CollectorSourceError: on non-200 or a non-list body.
+        """
+        payload: dict[str, object] = {
+            "type": "userFunding",
+            "user": user,
+            "startTime": start_time_ms,
+        }
+        if end_time_ms is not None:
+            payload["endTime"] = end_time_ms
+        resp = await self._client.post(f"{self._base_url}/info", json=payload)
+        if resp.status_code != 200:
+            raise CollectorSourceError(
+                f"HL userFunding returned {resp.status_code}: {resp.text[:200]}"
+            )
+        data: object = resp.json()
+        if not isinstance(data, list):
+            raise CollectorSourceError(f"Unexpected userFunding response structure: {data!r}")
+        return [r for r in data if isinstance(r, dict)]
+
 
 class OnchainCollector(BaseCollector[list[OnChainSnapshot]]):
     """Fetches on-chain data (funding rate 8h, OI, premium, liquidations) from HL.

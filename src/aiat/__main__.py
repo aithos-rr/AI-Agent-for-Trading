@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -21,6 +22,7 @@ from aiat.llm.factory import load_llm
 from aiat.observability.logging_config import configure_logging as _configure_logging_impl
 from aiat.orchestration.context_orchestrator import ContextOrchestrator
 from aiat.orchestration.decision_loop import DecisionLoop
+from aiat.orchestration.funding_reconciler import FundingReconciler
 from aiat.orchestration.lifecycle import startup_checks
 from aiat.orchestration.scheduler import (
     build_scheduler_for_agent,
@@ -102,6 +104,28 @@ async def _build_orchestrator_tick_job(
     return _orchestrator_tick
 
 
+async def _build_funding_job(
+    settings: ContextOrchestratorSettings,
+) -> Callable[..., Any]:
+    """Build the 8-hourly funding-ledger reconcile job (finding B / ADR-0031).
+
+    Reads each open-position wallet's realized funding from the public HL ``userFunding``
+    endpoint (read-only, no private key) and writes missing ``funding_events`` rows.
+    """
+    session_factory = get_db_session(settings.database_url.get_secret_value())
+    reconciler = FundingReconciler(
+        session_factory=session_factory,
+        funding_source=HLPublicInfoClient(network=settings.network),
+        experiment_id=settings.experiment_id,
+    )
+
+    async def _funding_tick() -> None:
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        await reconciler.reconcile(now_ms)
+
+    return _funding_tick
+
+
 async def _run_forever() -> None:
     """Block until the process is killed (SIGTERM/SIGINT handled by asyncio)."""
     await asyncio.Event().wait()
@@ -121,7 +145,10 @@ async def _main() -> None:
         scheduler = await build_scheduler_for_agent(settings, tick_job=tick_job)
     else:
         orchestrator_job = await _build_orchestrator_tick_job(settings)
-        scheduler = await build_scheduler_for_orchestrator(settings, tick_job=orchestrator_job)
+        funding_job = await _build_funding_job(settings)
+        scheduler = await build_scheduler_for_orchestrator(
+            settings, tick_job=orchestrator_job, funding_job=funding_job
+        )
 
     scheduler.start()
     log.info("scheduler_started", service_role=settings.service_role)

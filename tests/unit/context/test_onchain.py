@@ -88,6 +88,57 @@ def _collector(body: object = None, status: int = 200) -> OnchainCollector:
 # ---------------------------------------------------------------------------
 
 
+def _funding_record(coin: str = "BTC", usdc: str = "-0.31", rate: str = "0.0000125") -> dict:
+    """A Hyperliquid ``userFunding`` record (real shape — finding B / ADR-0031)."""
+    return {
+        "time": 1_683_849_600_076,
+        "hash": "0xabc",
+        "delta": {
+            "type": "funding",
+            "coin": coin,
+            "usdc": usdc,
+            "szi": "1.0",
+            "fundingRate": rate,
+        },
+    }
+
+
+class TestHLPublicInfoClientUserFunding:
+    @pytest.mark.asyncio
+    async def test_returns_list_of_records(self) -> None:
+        resp = _mock_response(body=[_funding_record()])
+        hl = _hl_client_from_mock(resp)
+        out = await hl.user_funding_history("0xdead", 1_683_800_000_000)
+        assert isinstance(out, list)
+        assert out[0]["delta"]["coin"] == "BTC"  # type: ignore[index]
+
+    @pytest.mark.asyncio
+    async def test_sends_userfunding_payload(self) -> None:
+        inner = MagicMock(spec=httpx.AsyncClient)
+        inner.post = AsyncMock(return_value=_mock_response(body=[]))
+        hl = HLPublicInfoClient(network="testnet", client=inner)
+        await hl.user_funding_history("0xwallet", 111, 222)
+        payload = inner.post.call_args.kwargs["json"]
+        assert payload == {
+            "type": "userFunding",
+            "user": "0xwallet",
+            "startTime": 111,
+            "endTime": 222,
+        }
+
+    @pytest.mark.asyncio
+    async def test_non_200_raises(self) -> None:
+        hl = _hl_client_from_mock(_mock_response(status_code=500))
+        with pytest.raises(CollectorSourceError):
+            await hl.user_funding_history("0xdead", 1)
+
+    @pytest.mark.asyncio
+    async def test_non_list_body_raises(self) -> None:
+        hl = _hl_client_from_mock(_mock_response(body={"unexpected": "dict"}))
+        with pytest.raises(CollectorSourceError):
+            await hl.user_funding_history("0xdead", 1)
+
+
 class TestHLPublicInfoClientFetchMeta:
     @pytest.mark.asyncio
     async def test_returns_dict_with_universe(self) -> None:
