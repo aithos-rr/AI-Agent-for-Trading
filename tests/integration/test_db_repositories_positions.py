@@ -12,6 +12,7 @@ from decimal import Decimal
 from unittest.mock import MagicMock
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +20,7 @@ from aiat.db.models.action import DecisionAction
 from aiat.db.models.context_snapshot import ContextSnapshot
 from aiat.db.models.decision import Decision
 from aiat.db.models.experiment import Experiment
+from aiat.db.models.fee_event import FeeEvent
 from aiat.db.models.model import Model
 from aiat.db.models.order import Order
 from aiat.db.models.outcome import Outcome
@@ -882,11 +884,137 @@ async def test_close_position_autonomous_persists_without_action(
     )
     assert sorted(order_kinds) == ["entry", "stop_loss", "take_profit"]
 
-    # Outcome created; only the entry fee counts (no close fee reconciled on this path).
+    # Outcome created; only the entry fee counts here — this closure carries no fee_usd, so
+    # no close fee is reconciled (the SL/TP-fee path is covered by the ADR-0032 tests below).
     outcome = (
         await db_session.execute(select(Outcome).where(Outcome.position_id == uuid.UUID(pos_id)))
     ).scalar_one()
     assert outcome.realized_pnl_gross_usd == realized_pnl
+    assert outcome.sum_fees_usd == Decimal("0.30")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("close_reason", "trigger_kind", "exit_price", "realized_pnl"),
+    [
+        (CloseReason.STOP_LOSS, "stop_loss", Decimal("95.00"), Decimal("-5.00")),
+        (CloseReason.TAKE_PROFIT, "take_profit", Decimal("105.00"), Decimal("5.00")),
+    ],
+)
+async def test_close_position_autonomous_persists_sltp_fee(
+    db_session: AsyncSession,
+    close_reason: CloseReason,
+    trigger_kind: str,
+    exit_price: Decimal,
+    realized_pnl: Decimal,
+) -> None:
+    """ADR-0032 (closes ADR-0030 (iv) for SL/TP): an autonomous SL/TP closure now persists its
+    taker fee — carried on closure.fee_usd (finding A) — as a taker_close FeeEvent linked to the
+    fired trigger order, so it enters sum_fees_usd.
+
+    TRIPWIRE: pre-fix the autonomous path wrote NO close fee, so sum_fees_usd would be 0.30
+    (entry only). This asserts 0.70 (0.30 entry + 0.40 close) → fails on the pre-fix code.
+    """
+    ids = await _seed(db_session)
+    repo = PositionsRepository(db_session)
+    pos_id = await repo.open_position(
+        action_id=str(ids.action_id),
+        order_results=_make_order_results(fee_usd=Decimal("0.30")),
+        run_id=str(ids.opening_run_id),
+    )
+
+    closure = PositionClosureInfo(
+        closed_at="2026-01-15T13:00:00+00:00",
+        exit_price=exit_price,
+        close_reason=close_reason,
+        realized_pnl_usd=realized_pnl,
+        fee_usd=Decimal("0.40"),  # reconciled from user_fills at the boundary (finding A)
+    )
+    await repo.close_position(
+        position_id=pos_id,
+        closure=closure,
+        closing_run_id=str(ids.closing_run_id),
+        closing_action_id=None,
+        close_order=None,
+    )
+
+    # The fired trigger order row this fee must link to.
+    trigger_order_id = (
+        await db_session.execute(
+            select(Order.id).where(
+                Order.decision_action_id == ids.action_id,
+                Order.order_kind == trigger_kind,
+            )
+        )
+    ).scalar_one()
+
+    fee_events = (
+        (
+            await db_session.execute(
+                select(FeeEvent).where(FeeEvent.position_id == uuid.UUID(pos_id))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # entry taker_open (0.30) + autonomous taker_close (0.40)
+    by_type = {fe.fee_type: fe for fe in fee_events}
+    assert set(by_type) == {"taker_open", "taker_close"}
+    close_fee = by_type["taker_close"]
+    assert close_fee.fee_usd == Decimal("0.40")
+    assert close_fee.order_id == trigger_order_id  # linked to the fired trigger, not the entry
+
+    outcome = (
+        await db_session.execute(select(Outcome).where(Outcome.position_id == uuid.UUID(pos_id)))
+    ).scalar_one()
+    assert outcome.sum_fees_usd == Decimal("0.70")  # 0.30 entry + 0.40 close
+    # net PnL reflects the close fee: gross - fees (funding 0 here)
+    assert outcome.pnl_net_fee_usd == realized_pnl - Decimal("0.70")
+
+
+@pytest.mark.asyncio
+async def test_close_position_autonomous_liquidation_fee_deferred(
+    db_session: AsyncSession,
+) -> None:
+    """ADR-0032/ADR-0025: a liquidation has no trigger order of ours to satisfy the NOT-NULL
+    fee_events.order_id FK, so even with closure.fee_usd set its fee stays deferred — no
+    close FeeEvent is written and sum_fees_usd counts only the entry fee."""
+    ids = await _seed(db_session)
+    repo = PositionsRepository(db_session)
+    pos_id = await repo.open_position(
+        action_id=str(ids.action_id),
+        order_results=_make_order_results(fee_usd=Decimal("0.30")),
+        run_id=str(ids.opening_run_id),
+    )
+
+    closure = PositionClosureInfo(
+        closed_at="2026-01-15T13:00:00+00:00",
+        exit_price=Decimal("90.00"),
+        close_reason=CloseReason.LIQUIDATED,
+        realized_pnl_usd=Decimal("-10.00"),
+        fee_usd=Decimal("0.40"),  # present, but not persistable for a liquidation
+    )
+    await repo.close_position(
+        position_id=pos_id,
+        closure=closure,
+        closing_run_id=str(ids.closing_run_id),
+        closing_action_id=None,
+        close_order=None,
+    )
+
+    fee_types = (
+        (
+            await db_session.execute(
+                select(FeeEvent.fee_type).where(FeeEvent.position_id == uuid.UUID(pos_id))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert fee_types == ["taker_open"]  # only the entry fee; no close fee for liquidation
+    outcome = (
+        await db_session.execute(select(Outcome).where(Outcome.position_id == uuid.UUID(pos_id)))
+    ).scalar_one()
     assert outcome.sum_fees_usd == Decimal("0.30")
 
 

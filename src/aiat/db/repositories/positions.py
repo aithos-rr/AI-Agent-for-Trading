@@ -4,6 +4,7 @@ import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
 
+import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,8 +14,10 @@ from aiat.db.models.funding_event import FundingEvent
 from aiat.db.models.order import Order
 from aiat.db.models.outcome import Outcome
 from aiat.db.models.position import Position
-from aiat.domain.enums import OrderKind
+from aiat.domain.enums import CloseReason, OrderKind
 from aiat.execution.hyperliquid_client import OrderResult, PositionClosureInfo
+
+logger = structlog.get_logger(__name__)
 
 
 class PositionsRepository:
@@ -164,10 +167,14 @@ class PositionsRepository:
           ``close`` orders row, and — if present — the close ``fee_event``.
         - **autonomous (SL/TP trigger, liquidation)**: the exchange closed the position with
           no model action and no close order of ours, so both are ``None``.
-          ``closing_action_id`` stays NULL and no close order row / fee_event is written (the
-          SL/TP trigger rows persisted at open are left ``status='triggered'`` —
-          reconciliation deferred, ADR-0025). ``chk_position_closed_consistency`` admits NULL
-          ``closing_action_id`` for ``stop_loss``/``take_profit``/``liquidated``.
+          ``closing_action_id`` stays NULL and no ``close`` order row is written.
+          ``chk_position_closed_consistency`` admits NULL ``closing_action_id`` for
+          ``stop_loss``/``take_profit``/``liquidated``. For an SL/TP closure the taker fee —
+          now carried on ``closure.fee_usd`` (finding A) — IS persisted as a ``taker_close``
+          ``fee_event`` linked to the fired trigger order (ADR-0032, closes ADR-0030 (iv)).
+          Liquidation fees stay deferred (no trigger order of ours to satisfy the fee_events
+          FK; ADR-0025). The SL/TP trigger `orders` rows are still left ``status='triggered'``
+          (marking the fired trigger ``filled`` is the remaining ADR-0025 deferral).
 
         Computes sum_fees_usd and sum_funding_usd from the DB, then persists
         an Outcome in the caller's transaction.  pnl_net_fee_funding_tax_sim_usd
@@ -191,11 +198,11 @@ class PositionsRepository:
         # exchange with no model decision_action and no close OrderResult of ours, so
         # closing_action_id and close_order arrive as None — leave closing_action_id NULL
         # (the revised chk_position_closed_consistency admits NULL for
-        # stop_loss/take_profit/liquidated) and skip the close order row + close fee_event.
-        # The SL/TP trigger `orders` rows already exist from open_position (left
-        # status='triggered'); marking the fired trigger filled and reconciling its fee is
-        # deferred to the audit-complete session (ADR-0025). The FLAT (model_close) path
-        # supplies both and keeps its full bookkeeping (ADR-0027).
+        # stop_loss/take_profit/liquidated) and skip the close order row. The SL/TP trigger
+        # `orders` rows already exist from open_position (left status='triggered'); their fee
+        # is now persisted below (ADR-0032) while marking the trigger filled stays deferred
+        # (ADR-0025). The FLAT (model_close) path supplies both and keeps its own bookkeeping
+        # (ADR-0027).
         if closing_action_id is not None:
             pos.closing_action_id = uuid.UUID(closing_action_id)
         await self._session.flush()
@@ -243,6 +250,50 @@ class PositionsRepository:
                 )
                 self._session.add(close_fee_event)
                 await self._session.flush()
+
+        # ADR-0032 (closes ADR-0030 limit (iv) for SL/TP): an autonomous SL/TP closure has no
+        # close order of ours, but its taker fee is now reconciled onto PositionClosureInfo.fee_usd
+        # (finding A, 51a8e45). Persist it as a taker_close FeeEvent linked to the fired trigger
+        # order row (which exists from open_position, order_kind stop_loss/take_profit), so it enters
+        # sum_fees_usd below. Liquidations stay deferred (ADR-0025): there is no trigger order of ours
+        # to satisfy the NOT-NULL fee_events.order_id FK, and a liquidation is not an SL/TP fill.
+        elif (
+            close_order is None
+            and closure.fee_usd is not None
+            and closure.close_reason in (CloseReason.STOP_LOSS, CloseReason.TAKE_PROFIT)
+        ):
+            trigger_kind = (
+                OrderKind.STOP_LOSS
+                if closure.close_reason == CloseReason.STOP_LOSS
+                else OrderKind.TAKE_PROFIT
+            )
+            trigger_order = await self._session.scalar(
+                select(Order).where(
+                    Order.decision_action_id == pos.opening_action_id,
+                    Order.order_kind == trigger_kind.value,
+                )
+            )
+            if trigger_order is not None:
+                self._session.add(
+                    FeeEvent(
+                        id=uuid.uuid4(),
+                        order_id=trigger_order.id,
+                        position_id=pos.id,
+                        experiment_id=pos.experiment_id,
+                        model_id=pos.model_id,
+                        run_id=uuid.UUID(closing_run_id),
+                        fee_type=_fee_type(trigger_kind),  # taker_close
+                        fee_usd=closure.fee_usd,
+                        occurred_at=closed_at_dt,
+                    )
+                )
+                await self._session.flush()
+            else:
+                logger.warning(
+                    "autonomous_close_fee_no_trigger_order",
+                    position_id=str(pos.id),
+                    close_reason=closure.close_reason.value,
+                )
 
         fee_row = await self._session.execute(
             select(func.coalesce(func.sum(FeeEvent.fee_usd), Decimal("0"))).where(

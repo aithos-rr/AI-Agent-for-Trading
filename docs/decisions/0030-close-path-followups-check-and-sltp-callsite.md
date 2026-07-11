@@ -162,8 +162,10 @@ Interventi previsti (stato dopo il fix del 2026-07-07):
 - [x] Aggiornare ADR-0027: la parte **SL/TP** del checkbox "Coordinamento con path SL/TP e flip"
   (§Propagazione di ADR-0027) **si chiude qui** (b65e833); la parte **flip** resta ad ADR-0025. (Lo
   spunto del checkbox nel file di ADR-0027 è una modifica separata a quel documento.)
-- [ ] Sessione audit-completa: limiti deferiti **(iii)** marcare `filled` la riga `orders` del
-  trigger scattato + **(iv)** riconciliare la fee di chiusura nell'`Outcome`
+- [ ] Sessione audit-completa: limite deferito **(iii)** marcare `filled` la riga `orders` del
+  trigger scattato (resta aperto, ADR-0025)
+- [x] **(iv)** fee di chiusura nell'`Outcome`: **chiusa per SL/TP** in **ADR-0032** (2026-07-11) —
+  `FeeEvent` `taker_close` linkato al trigger; la fee di **liquidazione** resta deferita (ADR-0025)
 
 ## Implementazione (2026-07-07)
 
@@ -213,3 +215,6 @@ aggiornare a `filled` la riga `orders` del trigger scattato): richiede la disamb
 - **(iii)** le righe `orders` dei trigger restano `status='triggered'` (l'exit **non** è marcato
   `filled` a livello ordine);
 - **(iv)** la fee di chiusura del trigger **non entra** nell'`Outcome` (riconciliazione fee deferita).
+  → **AGGIORNATO (ADR-0032, 2026-07-11)**: per SL/TP la fee **entra** ora nell'`Outcome`
+  (`FeeEvent` `taker_close` linkato al trigger, da `PositionClosureInfo.fee_usd`); resta deferita
+  solo per la **liquidazione** (nessun ordine trigger a cui agganciare la fee).
