@@ -124,6 +124,13 @@ class ContextOrchestratorSettings(BaseAIATSettings):
 
     newsfeed_api_key: SecretStr | None = None
 
+    # Tax simulation (ADR-0033). Rate is an EXPLICIT config override written on every
+    # tax_sim_periods row — the schema server_default (0.26) is left untouched (no migration).
+    # 0.33 reflects the Italian regime applied to leveraged crypto derivatives for this study.
+    # period='quarter' for the real experiment; 'daily' for the M6.2 smoke (faster feedback).
+    tax_rate_pct: Decimal = Field(default=Decimal("0.33"), ge=0, le=1)
+    tax_period: Literal["daily", "quarter"] = "quarter"
+
 
 def load_settings() -> AgentSettings | ContextOrchestratorSettings:
     """Dispatch on AIAT_SERVICE_ROLE, return the appropriate Settings subclass."""

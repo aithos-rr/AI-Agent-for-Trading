@@ -29,6 +29,7 @@ from aiat.orchestration.scheduler import (
     build_scheduler_for_orchestrator,
     current_tick,
 )
+from aiat.orchestration.tax_sim_runner import TaxSimRunner
 
 logger = structlog.get_logger(__name__)
 
@@ -126,6 +127,28 @@ async def _build_funding_job(
     return _funding_tick
 
 
+async def _build_tax_sim_job(
+    settings: ContextOrchestratorSettings,
+) -> Callable[..., Any]:
+    """Build the daily tax-simulation job (ADR-0033).
+
+    Aggregates each model's closed-period outcomes into one tax_sim_periods row, using the
+    configured rate (0.33 override) and period mode (daily/quarter).
+    """
+    session_factory = get_db_session(settings.database_url.get_secret_value())
+    runner = TaxSimRunner(
+        session_factory=session_factory,
+        experiment_id=settings.experiment_id,
+        tax_rate_pct=settings.tax_rate_pct,
+        period_mode=settings.tax_period,
+    )
+
+    async def _tax_sim_tick() -> None:
+        await runner.run(datetime.now(UTC))
+
+    return _tax_sim_tick
+
+
 async def _run_forever() -> None:
     """Block until the process is killed (SIGTERM/SIGINT handled by asyncio)."""
     await asyncio.Event().wait()
@@ -146,8 +169,12 @@ async def _main() -> None:
     else:
         orchestrator_job = await _build_orchestrator_tick_job(settings)
         funding_job = await _build_funding_job(settings)
+        tax_sim_job = await _build_tax_sim_job(settings)
         scheduler = await build_scheduler_for_orchestrator(
-            settings, tick_job=orchestrator_job, funding_job=funding_job
+            settings,
+            tick_job=orchestrator_job,
+            funding_job=funding_job,
+            tax_sim_job=tax_sim_job,
         )
 
     scheduler.start()

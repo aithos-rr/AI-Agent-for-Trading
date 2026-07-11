@@ -22,6 +22,11 @@ _TICK_MINUTES = 15
 # Funding ledger job (finding B / ADR-0031): every 8h at UTC 00:00/08:00/16:00, aligned to
 # Hyperliquid's 8h funding cadence. Runs in the orchestrator alongside the 15m context tick.
 _FUNDING_CRON_HOUR = "0,8,16"
+# Tax-sim job (ADR-0033): daily at 00:05 UTC. Computes the most recently closed period
+# (previous day, or last closed quarter in quarter mode); idempotent, so a daily cadence is
+# correct for both modes.
+_TAX_SIM_CRON_HOUR = 0
+_TAX_SIM_CRON_MINUTE = 5
 
 _JOB_DEFAULTS: dict[str, Any] = {
     "coalesce": True,
@@ -62,11 +67,13 @@ async def build_scheduler_for_orchestrator(
     settings: ContextOrchestratorSettings,
     tick_job: Callable[..., Any] | None = None,
     funding_job: Callable[..., Any] | None = None,
+    tax_sim_job: Callable[..., Any] | None = None,
 ) -> AsyncIOScheduler:
     """Build the AsyncIOScheduler for the context-orchestrator service.
 
     Fires tick_job at minutes 0/15/30/45 UTC (second=0). When ``funding_job`` is provided
-    (finding B / ADR-0031), also registers an 8-hourly funding-ledger reconcile job.
+    (finding B / ADR-0031), also registers an 8-hourly funding-ledger reconcile job. When
+    ``tax_sim_job`` is provided (ADR-0033), registers a daily tax-simulation job.
 
     Args:
         settings: ContextOrchestratorSettings for this service.
@@ -74,6 +81,8 @@ async def build_scheduler_for_orchestrator(
             (must be replaced by __main__.py when starting the real service).
         funding_job: Optional zero-arg coroutine run every 8h to reconcile funding_events.
             Omitted (None) ⇒ no funding job is scheduled (keeps existing callers unchanged).
+        tax_sim_job: Optional zero-arg coroutine run daily to compute tax_sim_periods.
+            Omitted (None) ⇒ no tax-sim job is scheduled.
     """
     actual_job: Callable[..., Any] = (
         tick_job if tick_job is not None else _unbound_orchestrator_tick
@@ -89,6 +98,12 @@ async def build_scheduler_for_orchestrator(
             funding_job,
             trigger=CronTrigger(hour=_FUNDING_CRON_HOUR, minute=0, second=0),
             id="funding_reconcile",
+        )
+    if tax_sim_job is not None:
+        scheduler.add_job(
+            tax_sim_job,
+            trigger=CronTrigger(hour=_TAX_SIM_CRON_HOUR, minute=_TAX_SIM_CRON_MINUTE, second=0),
+            id="tax_sim_period",
         )
     return scheduler
 

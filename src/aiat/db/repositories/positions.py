@@ -252,11 +252,12 @@ class PositionsRepository:
                 await self._session.flush()
 
         # ADR-0032 (closes ADR-0030 limit (iv) for SL/TP): an autonomous SL/TP closure has no
-        # close order of ours, but its taker fee is now reconciled onto PositionClosureInfo.fee_usd
-        # (finding A, 51a8e45). Persist it as a taker_close FeeEvent linked to the fired trigger
-        # order row (which exists from open_position, order_kind stop_loss/take_profit), so it enters
-        # sum_fees_usd below. Liquidations stay deferred (ADR-0025): there is no trigger order of ours
-        # to satisfy the NOT-NULL fee_events.order_id FK, and a liquidation is not an SL/TP fill.
+        # close order of ours, but its taker fee is now reconciled onto
+        # PositionClosureInfo.fee_usd (finding A, 51a8e45). Persist it as a taker_close FeeEvent
+        # linked to the fired trigger order row (exists from open_position, order_kind
+        # stop_loss/take_profit) so it enters sum_fees_usd below. Liquidations stay deferred
+        # (ADR-0025): no trigger order of ours to satisfy the NOT-NULL fee_events.order_id FK,
+        # and a liquidation is not an SL/TP fill.
         elif (
             close_order is None
             and closure.fee_usd is not None
