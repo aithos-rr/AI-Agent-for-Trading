@@ -60,6 +60,7 @@ class FundingReconcileResult:
     skipped: int
     wallets_queried: int
     wallet_errors: int
+    parse_failed: int = 0  # funding-typed records we could NOT parse (possible HL shape drift)
 
 
 @dataclass(frozen=True)
@@ -79,7 +80,15 @@ def _parse_funding_record(rec: dict[str, object]) -> _FundingDelta | None:
          "delta": {"type": "funding", "coin": "BTC", "usdc": "-0.31", "fundingRate": "0.0000125"}}
 
     Money via ``Decimal(str(...))`` (inv #12). Non-funding deltas, unsupported coins, or
-    malformed numerics are skipped (returns None) so one bad record cannot abort the pass.
+    malformed numerics are skipped (returns None) so one bad record cannot abort the pass —
+    ``reconcile`` counts funding-typed records it could NOT parse and warns (silent shape drift
+    is the finding-A-class risk).
+
+    SIGN ASSUMPTION (VALIDATE before M7 — ADR-0031): ``usdc`` is stored verbatim as
+    ``funding_amount_usd`` and ``outcomes`` subtract ``Σ funding_amount_usd`` from PnL, so the
+    HL sign of ``usdc`` (negative = funding PAID, positive = RECEIVED — assumed, unconfirmed)
+    directly drives net PnL. If HL's convention is inverted, the funding sign is wrong; this is
+    an explicit validate-against-live-testnet item, not guessed here.
     """
     delta = rec.get("delta")
     time_ms = rec.get("time")
@@ -97,10 +106,18 @@ def _parse_funding_record(rec: dict[str, object]) -> _FundingDelta | None:
     try:
         usdc = Decimal(str(usdc_raw))
         rate = Decimal(str(rate_raw))
-    except (InvalidOperation, ValueError):
+        # fromtimestamp can raise (OSError/OverflowError/ValueError) on an out-of-range ms —
+        # keep it inside the guard so a single bad record returns None instead of aborting.
+        period_end = datetime.fromtimestamp(time_ms / 1000, tz=UTC)
+    except (InvalidOperation, ValueError, OSError, OverflowError):
         return None
-    period_end = datetime.fromtimestamp(time_ms / 1000, tz=UTC)
     return _FundingDelta(coin=coin, usdc=usdc, rate=rate, period_end=period_end)
+
+
+def _looks_like_funding(rec: dict[str, object]) -> bool:
+    """True if the record is shaped like a funding delta (used to flag unparsable ones)."""
+    delta = rec.get("delta")
+    return isinstance(delta, dict) and delta.get("type") == "funding"
 
 
 class FundingReconciler:
@@ -126,7 +143,7 @@ class FundingReconciler:
                 in tests; the scheduled job passes the wall-clock value).
         """
         start_ms = now_ms - self._lookback_ms
-        created = skipped = wallets = wallet_errors = 0
+        created = skipped = wallets = wallet_errors = parse_failed = 0
 
         async with self._session_factory() as session:
             open_positions = await self._open_positions(session)
@@ -157,6 +174,10 @@ class FundingReconciler:
                 for rec in records:
                     delta = _parse_funding_record(rec)
                     if delta is None:
+                        # A funding-typed record we could not parse ⇒ possible HL shape drift.
+                        # Count it so the silent-skip (finding-A-class) risk is observable.
+                        if _looks_like_funding(rec):
+                            parse_failed += 1
                         continue
                     matched = self._match_position(positions, delta)
                     if matched is None:
@@ -180,14 +201,22 @@ class FundingReconciler:
 
             await session.commit()
 
+        if parse_failed:
+            # Loud: funding records arrived but did not fit the assumed shape → likely drift.
+            logger.warning(
+                "funding_records_unparsed",
+                parse_failed=parse_failed,
+                note="funding-typed HL records did not match the assumed shape (ADR-0031)",
+            )
         logger.info(
             "funding_reconcile_done",
             created=created,
             skipped=skipped,
             wallets=wallets,
             wallet_errors=wallet_errors,
+            parse_failed=parse_failed,
         )
-        return FundingReconcileResult(created, skipped, wallets, wallet_errors)
+        return FundingReconcileResult(created, skipped, wallets, wallet_errors, parse_failed)
 
     async def _open_positions(self, session: AsyncSession) -> list[Position]:
         result = await session.execute(

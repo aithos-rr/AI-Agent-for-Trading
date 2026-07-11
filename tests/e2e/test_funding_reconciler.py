@@ -258,6 +258,44 @@ async def test_reconcile_creates_funding_event_for_open_position(
 
 
 @pytest.mark.asyncio
+async def test_reconcile_flags_unparsable_funding_records(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A funding-typed record that does not fit the assumed shape (missing usdc — the
+    finding-A-class drift) is counted in parse_failed, not silently dropped."""
+    async with session_factory() as s:
+        seed = await _seed_open_btc_position(s)
+        await s.commit()
+
+    # A record shaped like a funding delta (type=funding) but with a renamed/missing field.
+    drifted = {
+        "time": _AFTER_MS,
+        "hash": "0xabc",
+        "delta": {
+            "type": "funding",
+            "coin": "BTC",
+            "usdcDelta": "-0.31",
+            "fundingRate": "0.0000125",
+        },
+    }
+    source = _FakeFundingSource([drifted])
+    reconciler = FundingReconciler(session_factory, source, str(seed.experiment_id))
+
+    result = await reconciler.reconcile(_NOW_MS)
+
+    assert result.created == 0
+    assert result.parse_failed == 1  # surfaced, not silently skipped
+
+    async with session_factory() as s:
+        count = await s.scalar(
+            select(func.count())
+            .select_from(FundingEvent)
+            .where(FundingEvent.experiment_id == seed.experiment_id)
+        )
+        assert count == 0
+
+
+@pytest.mark.asyncio
 async def test_reconcile_is_idempotent(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

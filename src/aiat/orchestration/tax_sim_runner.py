@@ -48,6 +48,7 @@ class TaxSimRunResult:
     period_label: str
     created: int
     skipped: int
+    failed: int = 0  # models whose per-model transaction raised (isolated, logged)
 
 
 def compute_closed_period(now: datetime, mode: TaxPeriodMode) -> tuple[str, datetime, datetime]:
@@ -100,30 +101,42 @@ class TaxSimRunner:
                 tests; the scheduled job passes the wall-clock value).
         """
         label, start, end = compute_closed_period(now, self._period_mode)
-        created = skipped = 0
+        created = skipped = failed = 0
 
         async with self._session_factory() as session:
-            repo = TaxSimulationRepository(session)
             model_ids = await self._participating_models(session)
-            for model_id in model_ids:
-                if await self._period_exists(session, model_id, label):
-                    skipped += 1
-                    continue
-                outcomes = await self._outcomes_in_period(session, model_id, start, end)
-                await repo.compute_and_persist_period(
-                    experiment_id=self._experiment_id,
-                    model_id=model_id,
-                    quarter_label=label,
-                    period_start=start.isoformat(),
-                    period_end=end.isoformat(),
-                    outcomes_in_period=outcomes,
-                    tax_rate_pct=self._tax_rate_pct,
-                )
-                created += 1
-            await session.commit()
 
-        logger.info("tax_sim_run_done", period=label, created=created, skipped=skipped)
-        return TaxSimRunResult(period_label=label, created=created, skipped=skipped)
+        # Per-model transaction (own session + commit) so one model's failure cannot roll back
+        # the others' committed rows (finding: a single mid-loop exception was losing the whole
+        # batch). Idempotent via the UNIQUE (exp, model, quarter_label) check-then-skip, so a
+        # retry resumes from the models not yet committed rather than redoing everything.
+        for model_id in model_ids:
+            try:
+                async with self._session_factory() as session:
+                    repo = TaxSimulationRepository(session)
+                    if await self._period_exists(session, model_id, label):
+                        skipped += 1
+                        continue
+                    outcomes = await self._outcomes_in_period(session, model_id, start, end)
+                    await repo.compute_and_persist_period(
+                        experiment_id=self._experiment_id,
+                        model_id=model_id,
+                        quarter_label=label,
+                        period_start=start.isoformat(),
+                        period_end=end.isoformat(),
+                        outcomes_in_period=outcomes,
+                        tax_rate_pct=self._tax_rate_pct,
+                    )
+                    await session.commit()
+                    created += 1
+            except Exception:  # noqa: BLE001 — one model must not abort the batch
+                failed += 1
+                logger.exception("tax_sim_model_failed", model_id=model_id, period=label)
+
+        logger.info(
+            "tax_sim_run_done", period=label, created=created, skipped=skipped, failed=failed
+        )
+        return TaxSimRunResult(period_label=label, created=created, skipped=skipped, failed=failed)
 
     async def _participating_models(self, session: AsyncSession) -> list[str]:
         exp_id = uuid.UUID(self._experiment_id)

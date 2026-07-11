@@ -7,9 +7,12 @@ oid→Σfee map from HL fills and the fee_type mapping.
 
 from __future__ import annotations
 
+import asyncio
 from decimal import Decimal
 
-from scripts.backfill_fees import build_oid_fee_map, fee_type_for
+import pytest
+
+from scripts.backfill_fees import backfill, build_oid_fee_map, fee_type_for
 
 
 class TestBuildOidFeeMap:
@@ -48,3 +51,11 @@ class TestFeeTypeFor:
         assert fee_type_for("close") == "taker_close"
         assert fee_type_for("stop_loss") == "taker_close"
         assert fee_type_for("take_profit") == "taker_close"
+
+
+class TestNetworkGuard:
+    def test_rejects_non_testnet_before_any_io(self) -> None:
+        # inv #9: the guard is the first statement in backfill(), before the engine/DB is touched,
+        # so a mainnet invocation fails fast with no side effects (no real DB URL needed).
+        with pytest.raises(RuntimeError, match="testnet"):
+            asyncio.run(backfill("postgresql+asyncpg://x:x@localhost/x", "mainnet", None, False))

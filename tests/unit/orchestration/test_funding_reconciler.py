@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
-from aiat.orchestration.funding_reconciler import _parse_funding_record
+from aiat.orchestration.funding_reconciler import _looks_like_funding, _parse_funding_record
 
 
 def _rec(**delta_overrides: object) -> dict:
@@ -53,3 +53,19 @@ class TestParseFundingRecord:
     def test_skips_malformed_top_level(self) -> None:
         assert _parse_funding_record({"delta": {}, "time": "not-int"}) is None
         assert _parse_funding_record({"time": 1}) is None  # no delta
+
+    def test_out_of_range_timestamp_returns_none_not_raises(self) -> None:
+        # An absurd ms value makes datetime.fromtimestamp raise — it must be caught (return
+        # None), not propagate and abort the whole wallet's reconcile pass.
+        rec = _rec()
+        rec["time"] = 10**20  # year ~5138973 → OverflowError/OSError/ValueError depending on OS
+        assert _parse_funding_record(rec) is None
+
+
+class TestLooksLikeFunding:
+    def test_true_for_funding_typed_delta(self) -> None:
+        assert _looks_like_funding(_rec()) is True
+
+    def test_false_for_non_funding_or_missing_delta(self) -> None:
+        assert _looks_like_funding(_rec(type="liquidation")) is False
+        assert _looks_like_funding({"time": 1}) is False

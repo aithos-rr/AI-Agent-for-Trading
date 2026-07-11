@@ -95,5 +95,10 @@ soddisfa `chk_funding_period_end_gt_start`).
 - [x] Implementato in `src/aiat/orchestration/funding_reconciler.py` + `HLPublicInfoClient.user_funding_history`
 - [x] Wiring scheduler (`build_scheduler_for_orchestrator(funding_job=...)`) + `__main__._build_funding_job`
 - [x] Test e2e + unit
-- [ ] Validare la shape reale di `userFunding` contro testnet live (M7 step di verifica)
+- [x] Osservabilità drift shape: `reconcile` conta i record funding-typed non parsati
+  (`parse_failed`) e logga un warning — il silent-skip (rischio classe finding-A) è visibile
+- [ ] Validare la shape reale di `userFunding` contro testnet live (M7) — **in particolare il
+  SEGNO di `usdc`** (pagato vs ricevuto): `outcomes` sottrae `Σ funding_amount_usd`, quindi un
+  segno invertito ribalterebbe il PnL netto (assunzione esplicita in `_parse_funding_record`,
+  NON indovinata)
 - [ ] Aggiornare `PRD_V2.md` §4.2 con riferimento a questo ADR

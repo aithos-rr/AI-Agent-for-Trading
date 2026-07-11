@@ -190,6 +190,10 @@ async def backfill(
     database_url: str, network: str, experiment_id: str | None, execute: bool
 ) -> int:
     """Backfill all models. Returns the total number of fee_events planned/written."""
+    # Invariant #9: this utility reads HL fills and (with --execute) writes trading bookkeeping;
+    # refuse anything but testnet so it can never touch mainnet data.
+    if network != "testnet":
+        raise RuntimeError(f"backfill_fees requires network='testnet' (inv #9), got {network!r}")
     engine = create_async_engine(database_url)
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     hl = HLPublicInfoClient(network=network)
