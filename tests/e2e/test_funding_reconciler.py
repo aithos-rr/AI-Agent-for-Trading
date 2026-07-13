@@ -250,11 +250,55 @@ async def test_reconcile_creates_funding_event_for_open_position(
         ).all()
         assert len(rows) == 1
         fe = rows[0]
-        assert fe.funding_amount_usd == Decimal("-0.31")
+        # HL usdc "-0.31" (paid) is NEGATED at ingest → PRD canonical +=paid ⇒ +0.31.
+        assert fe.funding_amount_usd == Decimal("0.31")
         assert fe.funding_rate == Decimal("0.0000125")
         assert fe.funding_period_end == datetime.fromtimestamp(_AFTER_MS / 1000, tz=UTC)
         assert fe.funding_period_start == fe.funding_period_end - timedelta(hours=1)
         assert fe.model_id == seed.model_id
+
+
+@pytest.mark.asyncio
+async def test_stores_prd_canonical_sign_with_real_hl_values(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """TRIPWIRE with the real signs validated 2026-07-12 (HL CSV vs DB, BTC 12-13/07).
+
+    HL ``usdc`` is +=received / -=paid; the DB/PRD convention (§3.2.6) is +=paid, so the
+    reconciler NEGATES at ingest. Feeds BOTH a long that PAYS (rate>0 → HL usdc<0) and a long
+    that RECEIVES (rate<0 → HL usdc>0) and asserts the stored PRD sign. Fails if the negation
+    is dropped (the exact bug found empirically) or inverted.
+    """
+    async with session_factory() as s:
+        seed = await _seed_open_btc_position(s)
+        await s.commit()
+
+    # Two funding hours on the same open BTC position (distinct period_end → both stored).
+    paid = _funding_rec("BTC", _AFTER_MS, "-0.0072", "0.0000125")  # rate>0 → long PAYS (HL usdc<0)
+    received_ms = _AFTER_MS + 3_600_000  # +1h, still after open
+    received = _funding_rec("BTC", received_ms, "0.0072", "-0.0000125")  # rate<0 → long RECEIVES
+    source = _FakeFundingSource([paid, received])
+    reconciler = FundingReconciler(session_factory, source, str(seed.experiment_id))
+
+    result = await reconciler.reconcile(_NOW_MS + 3_600_000)
+    assert result.created == 2
+
+    async with session_factory() as s:
+        by_end = {
+            fe.funding_period_end: fe
+            for fe in (
+                await s.scalars(
+                    select(FundingEvent).where(FundingEvent.experiment_id == seed.experiment_id)
+                )
+            ).all()
+        }
+        paid_row = by_end[datetime.fromtimestamp(_AFTER_MS / 1000, tz=UTC)]
+        recv_row = by_end[datetime.fromtimestamp(received_ms / 1000, tz=UTC)]
+        # PRD §3.2.6: +=paid, -=received (HL sign negated). Paid → +0.0072; received → -0.0072.
+        assert paid_row.funding_amount_usd == Decimal("0.0072")
+        assert recv_row.funding_amount_usd == Decimal("-0.0072")
+        # And the consumer math (pnl_net_fee - Σ funding) then moves PnL the right way:
+        # paid (+0.0072) lowers PnL, received (-0.0072) raises it.
 
 
 @pytest.mark.asyncio

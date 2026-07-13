@@ -97,8 +97,62 @@ soddisfa `chk_funding_period_end_gt_start`).
 - [x] Test e2e + unit
 - [x] Osservabilità drift shape: `reconcile` conta i record funding-typed non parsati
   (`parse_failed`) e logga un warning — il silent-skip (rischio classe finding-A) è visibile
-- [ ] Validare la shape reale di `userFunding` contro testnet live (M7) — **in particolare il
-  SEGNO di `usdc`** (pagato vs ricevuto): `outcomes` sottrae `Σ funding_amount_usd`, quindi un
-  segno invertito ribalterebbe il PnL netto (assunzione esplicita in `_parse_funding_record`,
-  NON indovinata)
+- [x] **SEGNO di `usdc` — VALIDATO (2026-07-12) e CHIUSO** (vedi sezione sotto)
 - [ ] Aggiornare `PRD_V2.md` §4.2 con riferimento a questo ADR
+
+## Convenzione di segno del funding — validazione e fix (2026-07-12)
+
+L'item di validazione che questo ADR aveva aperto è **chiuso**. Confronto empirico del CSV
+`funding-history` HL (wallet `usa-premium`) con `funding_events`: **la convenzione HL di `usdc` è
+`+ = incassato` / `- = pagato`** (match esatto sui valori, es. BTC 12-13/07 `-0.00727` HL ↔ `-0.0072`
+DB pre-fix).
+
+**Bug del reconciler**: la prima versione salvava `funding_amount_usd = usdc` **verbatim** (segno
+HL). Ma la convenzione canonica del DB è quella del **PRD §3.2.6** — `funding_amount_usd signed:
++ = paghi, - = ricevi` — **opposta** a HL, e correttamente assunta da TUTTI i consumer:
+`PositionsRepository.close_position` e `OutcomeResolver` (`pnl_net_fee_funding = pnl_net_fee −
+Σ funding_amount_usd`) e la tax-sim (`net = gross − fees − funding`). Con lo storage verbatim, un
+funding **incassato** (HL positivo) veniva **sottratto** → PnL peggiorato: segno invertito.
+
+**Decisione (convenzione B, scelta dell'utente)**: mantenere **una sola convenzione end-to-end =
+quella del PRD §3.2.6** (`+ = paid`), invariata per tutti i consumer e la tax-sim; **negare al
+momento dell'ingest** nel reconciler (`funding_amount_usd = -delta.usdc`). Blast radius minimo (una
+riga nel writer nuovo), nessuna modifica ai consumer/PRD/loro test. Il parser resta fedele a HL
+(ritorna `usdc` grezzo); la conversione avviene alla scrittura del `FundingEvent`.
+Alternativa scartata (A): tenere lo storage = segno HL e girare i 3 consumer + tax-sim + PRD §3.2.6
+(deviazione da PRD frozen, blast radius ampio) — più fedele alla fonte ma non necessaria.
+
+**Riparazione dati (una-tantum)**: le righe `funding_events` già scritte dal reconciler pre-fix hanno
+tutte il segno invertito → `scripts/flip_funding_signs.py` (dry-run di default, `--execute` per
+scrivere: `UPDATE funding_events SET funding_amount_usd = -funding_amount_usd`). **Ordine**: deploy
+del fix → poi flip (se si flippa prima, le righe scritte dal reconciler vecchio nel frattempo
+tornano sbagliate). **NON idempotente** (un secondo run re-inverte). Gli `outcomes` dello smoke M6
+avevano `sum_funding_usd = 0` (tabella vuota all'epoca) → nessun ricalcolo necessario.
+
+**Test**: `test_stores_prd_canonical_sign_with_real_hl_values` usa i segni reali del CSV — long che
+PAGA (rate `+0.0000125` → HL `usdc<0` → DB `+0.0072`) e long che INCASSA (rate `<0` → HL `usdc>0`
+→ DB `-0.0072`) — e morde se la negazione viene rimossa o invertita.
+
+### Diagnostica aperta: riga `funding_events` 23:00 12/07 (rate `-0.00029142`, amount `+0.0834`)
+
+Segnalata come non corrispondente ad alcuna riga CSV di quell'ora per quel wallet. Internamente la
+riga è **coerente** (rate `<0` → long incassa → `usdc>0` → pre-fix DB `+0.0834`), quindi NON è un
+errore di segno. Cause plausibili da verificare **con i dati** (non risolvibile dal codice):
+(a) granularità/endpoint diversi (`userFunding` vs l'export CSV `funding-history`);
+(b) attribuzione a una posizione dello stesso coin ma finestra diversa (`_match_position` sceglie
+`max(opened_at ≤ funding_time)` — corretto se gli `opened_at` sono giusti, ma uno **zombie**
+(vedi ADR-0025) può spostare l'attribuzione tra righe DB dello stesso symbol).
+Query diagnostica (da WSL, il codice non ha accesso al dato di produzione):
+
+```sql
+SELECT fe.funding_period_end, fe.funding_rate, fe.funding_amount_usd,
+       fe.position_id, p.symbol, p.opened_at, p.closed_at
+FROM funding_events fe JOIN positions p ON p.id = fe.position_id
+WHERE fe.model_id = :model_id
+  AND fe.funding_period_end >= '2026-07-12 22:00:00+00'
+  AND fe.funding_period_end <  '2026-07-13 00:00:00+00'
+ORDER BY fe.funding_period_end;
+```
+
+Se `position_id` punta a una posizione con `opened_at` posteriore all'ora del funding o a uno zombie,
+è un problema di attribuzione (ADR-0025), non del ledger funding.

@@ -84,11 +84,10 @@ def _parse_funding_record(rec: dict[str, object]) -> _FundingDelta | None:
     ``reconcile`` counts funding-typed records it could NOT parse and warns (silent shape drift
     is the finding-A-class risk).
 
-    SIGN ASSUMPTION (VALIDATE before M7 — ADR-0031): ``usdc`` is stored verbatim as
-    ``funding_amount_usd`` and ``outcomes`` subtract ``Σ funding_amount_usd`` from PnL, so the
-    HL sign of ``usdc`` (negative = funding PAID, positive = RECEIVED — assumed, unconfirmed)
-    directly drives net PnL. If HL's convention is inverted, the funding sign is wrong; this is
-    an explicit validate-against-live-testnet item, not guessed here.
+    SIGN: ``usdc`` is returned VERBATIM here (raw HL, ``+ = received`` / ``- = paid`` — VALIDATED
+    2026-07-12 vs the HL funding CSV, ADR-0031). The PRD §3.2.6 canonical DB convention is the
+    OPPOSITE (``+ = paid``), so ``reconcile`` NEGATES ``usdc`` when writing ``funding_amount_usd``.
+    This parser stays faithful to HL; the convention flip is applied at storage.
     """
     delta = rec.get("delta")
     time_ms = rec.get("time")
@@ -192,7 +191,13 @@ class FundingReconciler:
                             experiment_id=matched.experiment_id,
                             model_id=matched.model_id,
                             funding_rate=delta.rate,
-                            funding_amount_usd=delta.usdc,
+                            # SIGN: HL `usdc` is +=received / -=paid (validated empirically vs the
+                            # HL funding CSV). The DB/PRD canonical convention (§3.2.6) is the
+                            # OPPOSITE — +=paid / -=received — which every consumer assumes
+                            # (`pnl_net_fee_funding = pnl_net_fee - Σ funding_amount_usd`, tax-sim
+                            # `gross - fees - funding`). So negate at ingest to store the PRD sign;
+                            # net PnL then comes out correct (received → raises, paid → lowers).
+                            funding_amount_usd=-delta.usdc,
                             funding_period_start=delta.period_end - _FUNDING_PERIOD,
                             funding_period_end=delta.period_end,
                         )
