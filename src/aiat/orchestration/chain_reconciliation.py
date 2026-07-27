@@ -3,8 +3,8 @@
 At the start of each agent tick the loop compares the positions the DB believes are OPEN
 against what the chain (``clearinghouseState`` via ``fetch_portfolio_state``) actually holds.
 A flip (close→open) is two non-atomic market orders, and an SL/TP/liquidation can close a
-position on-chain before the loop's ``_check_pending_closures`` records it — so DB and chain
-can diverge. This module is the pure detector; the loop turns any divergence into a
+position on-chain before the orchestrator's ``ClosureReconciler`` books it (ADR-0038) — so DB
+and chain can diverge. This module is the pure detector; the loop turns any divergence into a
 ``ChainDivergence`` errors row + a warning log and then **proceeds** (M6.2 = detect + alert,
 NO auto-repair — see ADR-0025 for why auto-repair is deferred).
 

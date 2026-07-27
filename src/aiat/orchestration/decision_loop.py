@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from aiat.config.settings import AgentSettings
 from aiat.db.models.action import DecisionAction
 from aiat.db.models.context_snapshot import ContextSnapshot
-from aiat.db.models.position import Position
 from aiat.db.models.prompt_template import PromptTemplate
 from aiat.db.models.run import Run
 from aiat.db.repositories.decisions import DecisionsRepository
@@ -92,56 +91,6 @@ def _action_execution_outcome(order_results: list[OrderResult]) -> tuple[Executi
         logger.warning("unexpected_primary_order_status", status=primary.status)
         return ExecutionStatus.NOT_APPLICABLE, False
     return status, status in (ExecutionStatus.FILLED, ExecutionStatus.PARTIAL)
-
-
-def _attribute_close_reason(
-    position: Position,
-    closure: PositionClosureInfo,
-    run_id: str,
-) -> CloseReason:
-    """Attribute an autonomous closure to stop_loss / take_profit / liquidated (ADR-0030).
-
-    ``check_position_closure`` can only flag LIQUIDATED (from the fill) vs its default
-    MODEL_CLOSE; it has no trigger-oid match, so it cannot say stop_loss vs take_profit.
-    This resolves it with a PER-SIDE heuristic:
-
-    - **liquidation wins**: if the closure is flagged a liquidation, return LIQUIDATED and
-      do NOT apply the SL/TP heuristic (a liquidation fills on the loss side of entry and
-      would otherwise be misread as a stop-loss).
-    - otherwise use the side of ``exit_price`` relative to ``entry_price``. For a LONG the
-      stop-loss sits strictly below entry and the take-profit strictly above (SHORT
-      inverted — see ``compute_position_sizing`` / ``PositionsRepository.open_position``),
-      and ``entry_price`` is strictly between the two triggers (``stop_loss_pct`` /
-      ``take_profit_pct`` are ``> 0``), so the side of the exit identifies which fired.
-      Robust to gaps/slippage: it keys off the side of entry, not proximity to a stored
-      trigger price.
-
-    LIMITS (deferred to the audit-complete session + ADR-0025): this is NOT an oid match
-    against the actual trigger order. It assumes every autonomous closure is an SL/TP
-    trigger or a liquidation — no external/manual close — which holds for the experiment.
-    An exit exactly at entry is structurally impossible for a real trigger; it resolves to
-    stop_loss and is logged as an anomaly rather than failing the tick.
-    """
-    if closure.close_reason == CloseReason.LIQUIDATED:
-        return CloseReason.LIQUIDATED
-
-    entry_price = position.entry_price
-    exit_price = closure.exit_price
-    if exit_price == entry_price:
-        logger.warning(
-            "autonomous_close_exit_equals_entry",
-            run_id=run_id,
-            symbol=position.symbol,
-            position_id=str(position.id),
-            side=position.side,
-            exit_price=str(exit_price),
-            entry_price=str(entry_price),
-        )
-        return CloseReason.STOP_LOSS
-
-    if position.side == "LONG":
-        return CloseReason.STOP_LOSS if exit_price < entry_price else CloseReason.TAKE_PROFIT
-    return CloseReason.STOP_LOSS if exit_price > entry_price else CloseReason.TAKE_PROFIT
 
 
 def _failure_stage_for(exc: BaseException) -> str:
@@ -338,9 +287,10 @@ class DecisionLoop:
             )
             await session.commit()
 
-            # PRD §4.1 step [9]: check pending closures (SL/TP may have triggered)
-            await self._check_pending_closures(session, run_id)
-            await session.commit()
+            # PRD §4.1 step [9]: autonomous SL/TP closures are NO LONGER booked here. They were
+            # moved to the orchestrator (ClosureReconciler, ADR-0038) so they run independently of
+            # this run's success (fixes T4b M2) and detect per-position by trigger oid before the
+            # agents open new positions (fixes M1). Model-initiated FLAT closes stay in step [8].
 
             # PRD §4.1 step [10]: finalize run. SUCCESS only if every order executed; a
             # rejected/timed-out action makes the tick PARTIAL — the loop still completed,
@@ -555,43 +505,6 @@ class DecisionLoop:
             )
         except Exception:
             logger.exception("chain_reconcile_failed", model_id=self._settings.model_id)
-
-    async def _check_pending_closures(
-        self,
-        session: AsyncSession,
-        run_id: str,
-    ) -> None:
-        """Check if SL/TP triggered on any open positions since last tick (PRD §4.1 step 9).
-
-        Closures detected here are AUTONOMOUS: the position is still open in the DB and no
-        model action closed it this tick, so the exchange closed it via an SL/TP trigger or
-        a liquidation. Such closures have no model decision_action and no close OrderResult
-        of ours (ADR-0030) — the reason is attributed per-side (see _attribute_close_reason)
-        and persisted with closing_action_id / close_order = None.
-        """
-        positions_repo = PositionsRepository(session)
-        open_positions = await positions_repo.list_open_for_model(self._settings.model_id)
-
-        for position in open_positions:
-            # Position identity = coin symbol (ADR-0016, confirmed by M4-T08 against the
-            # real SDK). Hyperliquid exposes no stable position id, and v2 holds at most one
-            # position per symbol per wallet, so the symbol uniquely identifies the position.
-            closure_info = await self._hl_client.check_position_closure(position.symbol)
-            if closure_info is None:
-                continue
-            # check_position_closure can only tell liquidated vs (default) model_close;
-            # attribute stop_loss/take_profit/liquidated per-side, then persist as an
-            # autonomous closure (no closing action, no close order of ours — ADR-0030).
-            corrected = closure_info.model_copy(
-                update={"close_reason": _attribute_close_reason(position, closure_info, run_id)}
-            )
-            await positions_repo.close_position(
-                str(position.id),
-                corrected,
-                run_id,
-                closing_action_id=None,
-                close_order=None,
-            )
 
     async def _record_failure(
         self,

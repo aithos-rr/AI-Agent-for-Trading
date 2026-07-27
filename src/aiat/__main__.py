@@ -21,6 +21,7 @@ from aiat.db.session import get_db_session
 from aiat.execution.hyperliquid_client import build_hl_client
 from aiat.llm.factory import load_llm
 from aiat.observability.logging_config import configure_logging as _configure_logging_impl
+from aiat.orchestration.closure_reconciler import ClosureReconciler
 from aiat.orchestration.context_orchestrator import ContextOrchestrator
 from aiat.orchestration.decision_loop import DecisionLoop
 from aiat.orchestration.funding_reconciler import FundingReconciler
@@ -100,9 +101,25 @@ async def _build_orchestrator_tick_job(
     # context snapshot (no extra HL calls). Best-effort: a baseline failure must not fail the
     # context tick (which is already committed); scripts/compute_baselines.py can catch up.
     baseline_runner = BaselineRunner(settings.experiment_id)
+    # ADR-0038: T4b root-cause fix. Book autonomous SL/TP closures for ALL models at the
+    # orchestrator level (public user_fills, no wallet key), per tick, run-independent. Fixes
+    # both zombie mechanisms: M1 (per-position oid match + runs before agents open at ~:30) and
+    # M2 (runs even when a model's run failed / never ran).
+    closure_reconciler = ClosureReconciler(
+        session_factory,
+        HLPublicInfoClient(network=settings.network),
+        settings.experiment_id,
+    )
 
     async def _orchestrator_tick() -> None:
         tick_id, scheduled_for = current_tick()
+        # Book autonomous closures FIRST — before the context build (so it runs even on a missed
+        # tick) and before the agents open new positions ~30s later (ADR-0038). Best-effort:
+        # a closure failure must not block the context snapshot the agents depend on (inv #13).
+        try:
+            await closure_reconciler.reconcile(int(datetime.now(UTC).timestamp() * 1000))
+        except Exception as exc:  # never block the context tick
+            logger.error("closure_step_failed", tick_id=tick_id, error=str(exc))
         # A missed tick raises in build_tick_context → no bundle → no baseline snapshot
         # (gap handling: the curve resumes at the next successful tick, ADR-0036).
         bundle = await orchestrator.build_tick_context(

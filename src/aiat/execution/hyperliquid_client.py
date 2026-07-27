@@ -850,6 +850,89 @@ class RealHyperliquidClient(HyperliquidClient):
         )
 
 
+def detect_autonomous_closure(
+    fills: list[dict[str, Any]],
+    trigger_oids: set[str],
+) -> PositionClosureInfo | None:
+    """Detect an autonomous SL/TP closure of ONE position by matching its trigger order oid(s)
+    against ``user_fills``.
+
+    Per-POSITION, not per-symbol (T4b root-cause fix, ADR-0038): there is **no** ``szi != 0``
+    short-circuit. A non-flat symbol on-chain does NOT mean this DB position is still alive — a
+    reopen in the same symbol is a NEW position with a different opening order. We instead ask the
+    only question that identifies THIS position: did its own stop-loss/take-profit trigger order
+    fire? A fired trigger's fills carry that order's ``oid`` (a trigger keeps its oid when it
+    fills), so we match ``fills[*].oid`` against the position's ``trigger_oids`` and sum only the
+    fired order's fills (partials share one oid — the per-oid summation reused from the item-6 fix,
+    commit 8411576). Money via ``_to_decimal`` (inv #12).
+
+    Args:
+        fills: the wallet's recent ``user_fills`` records (public HL read, no key needed).
+        trigger_oids: the ``hl_order_id`` of the position's stop_loss + take_profit orders.
+
+    Returns:
+        ``PositionClosureInfo`` (close_reason left as LIQUIDATED/MODEL_CLOSE — the SL/TP per-side
+        attribution is applied by the caller via the ADR-0030 heuristic), or ``None`` if no trigger
+        oid fired or the fill numerics are unusable / exit price non-positive.
+    """
+    if not trigger_oids:
+        return None
+    matched = [f for f in fills if isinstance(f, dict) and str(f.get("oid")) in trigger_oids]
+    if not matched:
+        return None  # no trigger fired → position still open
+
+    # If both the SL and TP oids somehow appear (only one fires normally), take the most-recent
+    # fired order and sum only its own partials — never across the two triggers.
+    matched.sort(key=lambda f: int(f.get("time") or 0), reverse=True)
+    fired_oid = str(matched[0].get("oid"))
+    this_close = [f for f in matched if str(f.get("oid")) == fired_oid]
+
+    try:
+        realized = sum((_to_decimal(f.get("closedPnl") or "0") for f in this_close), Decimal("0"))
+        fee_usd: Decimal | None = sum(
+            (_to_decimal(f.get("fee") or "0") for f in this_close), Decimal("0")
+        )
+        # exit = size-weighted VWAP of the fired order's fills (ADR-0035 multi-fill convention);
+        # fall back to the most-recent fill's px if sizes are missing/zero.
+        total_sz = sum((_to_decimal(f.get("sz") or "0") for f in this_close), Decimal("0"))
+        if total_sz > 0:
+            exit_price = (
+                sum(
+                    (
+                        _to_decimal(f.get("px") or "0") * _to_decimal(f.get("sz") or "0")
+                        for f in this_close
+                    ),
+                    Decimal("0"),
+                )
+                / total_sz
+            )
+        else:
+            px_raw = this_close[0].get("px")
+            exit_price = _to_decimal(px_raw) if px_raw is not None else Decimal("0")
+    except (InvalidOperation, ValueError) as exc:
+        logger.warning("autonomous_closure_unparseable", fired_oid=fired_oid, error=str(exc))
+        return None
+
+    if exit_price <= 0:
+        logger.warning("autonomous_closure_nonpositive_exit_price", fired_oid=fired_oid)
+        return None
+
+    liquidated = any(bool(f.get("liquidation")) for f in this_close)
+    closed_at_ms = matched[0].get("time")
+    closed_at = (
+        datetime.fromtimestamp(int(closed_at_ms) / 1000, tz=UTC).isoformat()
+        if closed_at_ms is not None
+        else datetime.now(UTC).isoformat()
+    )
+    return PositionClosureInfo(
+        closed_at=closed_at,
+        exit_price=exit_price,
+        close_reason=CloseReason.LIQUIDATED if liquidated else CloseReason.MODEL_CLOSE,
+        realized_pnl_usd=realized,
+        fee_usd=fee_usd,
+    )
+
+
 def build_hl_client(settings: "AgentSettings") -> HyperliquidClient:
     """Select the Hyperliquid client implementation for an agent service.
 
