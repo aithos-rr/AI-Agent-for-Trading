@@ -798,11 +798,19 @@ class RealHyperliquidClient(HyperliquidClient):
             return None  # no closing fill observed yet — treat as still pending
 
         last = close_fills[0]  # HL returns most-recent fills first
+        # `user_fills` is a rolling wallet-wide window that also contains this coin's EARLIER
+        # closures. Restrict to the single most-recent closing order — its partials share one
+        # `oid` — so realized PnL AND taker fee are not summed across every historical close of
+        # the coin. Summing all of them inflated the SL/TP taker fee by 10-50x on repeatedly
+        # traded coins (fee-inflation bug). When fills carry no `oid` (older/synthetic records),
+        # `close_oid` is None and this degrades to the previous all-fills behaviour.
+        close_oid = last.get("oid")
+        this_close = [f for f in close_fills if f.get("oid") == close_oid]
         try:
             # closedPnl may be missing or explicitly null on a fill — coalesce to 0
             # (`.get(default)` does NOT catch a present-but-null value).
             realized = sum(
-                (_to_decimal(f.get("closedPnl") or "0") for f in close_fills), Decimal("0")
+                (_to_decimal(f.get("closedPnl") or "0") for f in this_close), Decimal("0")
             )
             exit_raw = last.get("px")
             exit_price = _to_decimal(exit_raw) if exit_raw is not None else Decimal("0")
@@ -810,12 +818,12 @@ class RealHyperliquidClient(HyperliquidClient):
             # Malformed fill numerics: do not fabricate a closure — retry next tick.
             logger.warning("hl_closure_unparseable", coin=hl_position_id, error=str(exc))
             return None
-        # Fee of the closing fill(s), from the same records we already fetched (finding A).
-        # Its own guard so a bad fee never voids an otherwise-valid closure detection — the
+        # Fee of THIS closing order's fill(s), from the same records we already fetched (finding
+        # A). Its own guard so a bad fee never voids an otherwise-valid closure detection — the
         # fee is non-critical (persistence deferred, ADR-0025), the closure is not.
         try:
             close_fee_usd: Decimal | None = sum(
-                (_to_decimal(f.get("fee") or "0") for f in close_fills), Decimal("0")
+                (_to_decimal(f.get("fee") or "0") for f in this_close), Decimal("0")
             )
         except (InvalidOperation, ValueError) as exc:
             logger.warning("hl_closure_fee_unparseable", coin=hl_position_id, error=str(exc))
@@ -826,7 +834,7 @@ class RealHyperliquidClient(HyperliquidClient):
             logger.warning("hl_closure_nonpositive_exit_price", coin=hl_position_id)
             return None
 
-        liquidated = any(bool(f.get("liquidation")) for f in close_fills)
+        liquidated = any(bool(f.get("liquidation")) for f in this_close)
         closed_at_ms = last.get("time")
         closed_at = (
             datetime.fromtimestamp(int(closed_at_ms) / 1000, tz=UTC).isoformat()

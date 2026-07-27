@@ -787,6 +787,61 @@ class TestCheckPositionClosure:
         assert closure is not None
         assert closure.exit_price == Decimal("120.0")
 
+    async def test_fee_and_pnl_use_only_the_latest_close_order_oid(self) -> None:
+        """SL/TP fee-inflation fix: user_fills is a rolling wallet-wide window, so it holds the
+        coin's EARLIER closures and other coins' fills too. Only the fills of the single most-
+        recent closing order (partials share one oid) must be summed — otherwise the taker fee is
+        inflated 10-50x. Fails on the pre-fix code, which summed every ETH close fill."""
+        info = MagicMock()
+        info.user_state.return_value = _user_state(positions=[])  # ETH closed
+        info.user_fills.return_value = [
+            # most-recent ETH closure (oid 200): two partials of the SAME order → both summed
+            {
+                "coin": "ETH",
+                "dir": "Close Long",
+                "closedPnl": "5.0",
+                "px": "1828.6",
+                "fee": "0.1",
+                "oid": 200,
+                "time": 2001,
+            },
+            {
+                "coin": "ETH",
+                "dir": "Close Long",
+                "closedPnl": "2.0",
+                "px": "1828.6",
+                "fee": "0.052",
+                "oid": 200,
+                "time": 2000,
+            },
+            # an EARLIER ETH closure (oid 100) — must NOT be folded in
+            {
+                "coin": "ETH",
+                "dir": "Close Long",
+                "closedPnl": "99.0",
+                "px": "1800.0",
+                "fee": "8.0",
+                "oid": 100,
+                "time": 1000,
+            },
+            # a different coin's close — excluded by the coin filter regardless
+            {
+                "coin": "BTC",
+                "dir": "Close Long",
+                "closedPnl": "50.0",
+                "px": "65000",
+                "fee": "5.0",
+                "oid": 300,
+                "time": 1500,
+            },
+        ]
+        client = _client(exchange=MagicMock(), info=info)
+        closure = await client.check_position_closure("ETH")
+        assert closure is not None
+        assert closure.fee_usd == Decimal("0.152")  # 0.1 + 0.052, NOT + 8.0
+        assert closure.realized_pnl_usd == Decimal("7.0")  # 5.0 + 2.0, NOT + 99.0
+        assert closure.exit_price == Decimal("1828.6")
+
     async def test_null_closed_pnl_coalesces_not_crashes(self) -> None:
         info = MagicMock()
         info.user_state.return_value = _user_state(positions=[])

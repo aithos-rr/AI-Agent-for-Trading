@@ -79,10 +79,35 @@ Non viene aggiunta né modificata alcuna constraint (nessuna migration): `chk_po
 - `test_close_position_autonomous_liquidation_fee_deferred`: liquidazione con `fee_usd` valorizzato
   → nessun `FeeEvent` di chiusura, `sum_fees_usd=0.30` (solo entry).
 
+## NOTA 2026-07-24 — bug fee SL/TP gonfie (filtro `user_fills`) corretto
+
+`RealHyperliquidClient.check_position_closure` (la fonte di `PositionClosureInfo.fee_usd` per le
+chiusure autonome, "path T2") sommava **tutti** i fill di chiusura recenti del wallet per quel coin
+(`user_fills` è una finestra rolling wallet-wide), non i soli fill dell'ordine di chiusura scattato.
+Su coin ri-tradati molte volte questo gonfiava la taker fee di 10–50× (rate fee/nozionale 0.005–0.023
+vs il tier 0.00045). **Fix**: si restringe ai fill del **solo `oid` della chiusura più recente**
+(i partial condividono un `oid`); realized PnL ed exit derivano dallo stesso insieme. Test:
+`test_fee_and_pnl_use_only_the_latest_close_order_oid` (fixture `user_fills` con fill di più
+ordini/symbol mescolati; falliva col codice pre-fix). ~10 righe su 506 `taker_close` erano affette;
+la massa (496) era corretta.
+
+**Dati storici NON riparati** (dataset M6.1 archiviato) — vanno in nota metodologica. Righe affette
+note (fee attuale gonfia → fee attesa ≈ nozionale×0.00045), da enumerare via query
+`fee_events`⋈`positions` (`WHERE fee_type='taker_close' AND close_reason IN ('stop_loss',
+'take_profit') AND fee_usd/(size_units*exit_price) > 0.001`):
+
+| model | symbol | close | size | exit | fee attuale | fee attesa |
+|-------|--------|-------|------|------|-------------|-----------|
+| usa-cheap | ETH | take_profit | 0.1853 | 1828.6 | 8.247966 | ≈0.152 |
+| cn-premium | BTC | stop_loss | 0.00619 | 65187 | 5.361142 | ≈0.182 |
+
+(elenco completo = output della query sopra sul DB di prod; il codice non ha accesso al dato.)
+
 ## Propagazione
 
 - [x] Implementato in `PositionsRepository.close_position` (ramo autonomo)
 - [x] Test integrazione reali (SL/TP + liquidazione deferita)
 - [x] Aggiornato ADR-0030 (limite (iv) chiuso per SL/TP)
+- [x] Fix filtro `user_fills` per-oid in `check_position_closure` (NOTA 2026-07-24) + test
 - [ ] Marcare `filled` la riga `orders` del trigger scattato (resta ADR-0025)
 - [ ] Fee di liquidazione (resta deferita, ADR-0025)
