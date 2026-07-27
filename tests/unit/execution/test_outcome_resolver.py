@@ -1,5 +1,6 @@
 """Unit tests for OutcomeResolver (§4.2, D2 labeling rule — ADR-0014)."""
 
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import uuid4
 
@@ -7,6 +8,7 @@ from aiat.execution.outcome_resolver import (
     HoldFlatOutcomeInput,
     OutcomeResolver,
     PositionOutcomeInput,
+    holding_duration_min,
 )
 
 _ACT_ID = uuid4()
@@ -52,6 +54,26 @@ def _hf_input(**overrides: object) -> HoldFlatOutcomeInput:
     )
     defaults.update(overrides)
     return HoldFlatOutcomeInput(**defaults)  # type: ignore[arg-type]
+
+
+class TestHoldingDurationMin:
+    """Tests for the shared holding_duration_min helper (ADR-0035; mirrors close_position)."""
+
+    def test_floors_partial_minute(self) -> None:
+        opened = datetime(2026, 7, 13, 12, 0, 0, tzinfo=UTC)
+        closed = datetime(2026, 7, 13, 13, 43, 40, 756000, tzinfo=UTC)  # 103m 40.756s
+        assert holding_duration_min(opened, closed) == 103
+
+    def test_exact_minutes(self) -> None:
+        opened = datetime(2026, 7, 13, 12, 0, 0, tzinfo=UTC)
+        closed = datetime(2026, 7, 13, 13, 0, 0, tzinfo=UTC)
+        assert holding_duration_min(opened, closed) == 60
+
+    def test_zero_and_negative_clamped_to_zero(self) -> None:
+        t = datetime(2026, 7, 13, 12, 0, 0, tzinfo=UTC)
+        assert holding_duration_min(t, t) == 0
+        # closed_at earlier than opened_at (clock skew) must never go negative.
+        assert holding_duration_min(t, datetime(2026, 7, 13, 11, 0, 0, tzinfo=UTC)) == 0
 
 
 class TestResolvePosition:

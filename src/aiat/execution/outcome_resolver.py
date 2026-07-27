@@ -14,6 +14,7 @@ D2 Rule — HOLD/FLAT labeling (ADR-0014):
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -77,6 +78,26 @@ class OutcomeResult:
 
 
 _ZERO = Decimal("0")
+
+
+def holding_duration_min(opened_at: datetime, closed_at: datetime) -> int:
+    """Whole minutes a position was held, floored at 0.
+
+    Canonical minute-flooring convention for the ``outcomes.holding_duration_min``
+    field. Extracted as a pure function so both the runtime close path
+    (``PositionsRepository.close_position`` computes the identical
+    ``max(0, int((closed_at - opened_at).total_seconds() / 60))`` inline) and the
+    one-shot repair utility (``scripts/repair_zombie_positions.py``, ADR-0035)
+    derive it the same way instead of reimplementing the formula.
+
+    Args:
+        opened_at: When the position was opened (tz-aware).
+        closed_at: When the position was closed (tz-aware).
+
+    Returns:
+        Non-negative whole minutes held (seconds floored toward zero).
+    """
+    return max(0, int((closed_at - opened_at).total_seconds() / 60))
 
 
 class OutcomeResolver:
