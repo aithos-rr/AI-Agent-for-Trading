@@ -52,10 +52,14 @@ class TaxSimRunResult:
 
 
 def compute_closed_period(now: datetime, mode: TaxPeriodMode) -> tuple[str, datetime, datetime]:
-    """Return ``(label, start, end)`` for the most recently *closed* period before ``now``.
+    """Return ``(label, start, end)`` for the tax-sim period at ``now``. ``end`` is exclusive.
 
-    ``end`` is exclusive. ``daily`` → the previous full UTC day; ``quarter`` → the previous
-    full calendar quarter (Jan→prev-year Q4). Labels: ``"YYYY-MM-DD"`` / ``"Q<n>-YYYY"``.
+    ``daily`` → the previous full UTC day (closed), label ``"YYYY-MM-DD"``.
+    ``quarter`` → the calendar quarter **containing** ``now`` (quarter-to-date), label
+    ``"Q<n>-YYYY"`` where ``n = (month-1)//3 + 1``. This is the quarter the experiment is
+    running in — Jan/Feb/Mar → Q1, Apr → Q2, Jul → Q3, Dec → Q4. (A prior off-by-one labelled
+    the *previous* closed quarter — e.g. July → "Q2" — which for a single-quarter experiment
+    aggregated the wrong, pre-experiment window.)
     """
     now = now.astimezone(UTC)
     if mode == "daily":
@@ -63,19 +67,14 @@ def compute_closed_period(now: datetime, mode: TaxPeriodMode) -> tuple[str, date
         start = today - timedelta(days=1)
         return start.strftime("%Y-%m-%d"), start, today
 
-    # quarter: q_index 0..3 for the quarter containing ``now``
+    # quarter: q_index 0..3 for the quarter containing ``now`` (quarter_num = q_index + 1)
     q_index = (now.month - 1) // 3
-    cur_q_start = now.replace(
-        month=q_index * 3 + 1, day=1, hour=0, minute=0, second=0, microsecond=0
-    )
-    if q_index == 0:
-        prev_year = now.year - 1
-        start = cur_q_start.replace(year=prev_year, month=10)
-        label = f"Q4-{prev_year}"
+    start = now.replace(month=q_index * 3 + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    if q_index == 3:  # Q4 → next quarter starts in January of the following year
+        end = start.replace(year=now.year + 1, month=1)
     else:
-        start = cur_q_start.replace(month=(q_index - 1) * 3 + 1)
-        label = f"Q{q_index}-{now.year}"
-    return label, start, cur_q_start
+        end = start.replace(month=q_index * 3 + 4)
+    return f"Q{q_index + 1}-{now.year}", start, end
 
 
 class TaxSimRunner:
