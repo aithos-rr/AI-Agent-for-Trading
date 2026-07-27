@@ -41,7 +41,11 @@ _ORCHESTRATOR_REQUIRED = {
 
 
 def _agent(**kwargs: object) -> AgentSettings:
-    return AgentSettings(**{**_AGENT_REQUIRED, **kwargs})  # type: ignore[arg-type]
+    # _env_file=None isolates these unit tests from any dev /workspace/.env — otherwise a
+    # populated .env (e.g. AIAT_TEMPERATURE/AIAT_SEED left from a smoke run) leaks into
+    # AgentSettings and breaks the optional-fields-default-None assertions. Mirrors the
+    # _orchestrator() helper below, which already passes _env_file=None.
+    return AgentSettings(_env_file=None, **{**_AGENT_REQUIRED, **kwargs})  # type: ignore[arg-type,call-arg]
 
 
 def _orchestrator(**kwargs: object) -> ContextOrchestratorSettings:
