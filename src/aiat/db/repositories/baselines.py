@@ -17,8 +17,9 @@ from aiat.db.models.baseline_equity_snapshot import BaselineEquitySnapshot
 class BaselineRepository:
     """Bounded context: baseline_configs + baseline_equity_snapshots (§7.6).
 
-    Configs are pre-registered at seed time; equity snapshots are written
-    post-experiment by scripts/compute_baselines.py.
+    Configs are pre-registered at seed time. Equity snapshots are written LIVE each tick by the
+    context-orchestrator (ADR-0036, via aiat.baselines.runner.BaselineRunner) and can be
+    backfilled/caught-up from historical context snapshots by scripts/compute_baselines.py.
 
     No internal commit — caller owns the Unit of Work (AsyncSession).
     """
@@ -158,3 +159,38 @@ class BaselineRepository:
             .order_by(BaselineEquitySnapshot.tick_at.asc())
         )
         return list(result.scalars().all())
+
+    async def get_equity_snapshot(
+        self,
+        experiment_id: str,
+        baseline_name: str,
+        tick_id: str,
+    ) -> BaselineEquitySnapshot | None:
+        """Return the snapshot for (experiment, baseline, tick_id), or None (idempotency guard)."""
+        result = await self._session.execute(
+            select(BaselineEquitySnapshot).where(
+                BaselineEquitySnapshot.experiment_id == uuid.UUID(experiment_id),
+                BaselineEquitySnapshot.baseline_name == baseline_name,
+                BaselineEquitySnapshot.tick_id == tick_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_latest_equity_snapshot_before(
+        self,
+        experiment_id: str,
+        baseline_name: str,
+        before_tick_at: datetime,
+    ) -> BaselineEquitySnapshot | None:
+        """Return the most recent snapshot strictly before ``before_tick_at`` (state to carry)."""
+        result = await self._session.execute(
+            select(BaselineEquitySnapshot)
+            .where(
+                BaselineEquitySnapshot.experiment_id == uuid.UUID(experiment_id),
+                BaselineEquitySnapshot.baseline_name == baseline_name,
+                BaselineEquitySnapshot.tick_at < before_tick_at,
+            )
+            .order_by(BaselineEquitySnapshot.tick_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()

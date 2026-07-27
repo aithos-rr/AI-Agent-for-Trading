@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 import structlog
 
+from aiat.baselines.runner import BaselineRunner
 from aiat.config.settings import AgentSettings, ContextOrchestratorSettings, load_settings
 from aiat.context.builder import ContextBuilder
 from aiat.context.collectors.news import NewsCollector
@@ -95,12 +96,22 @@ async def _build_orchestrator_tick_job(
         session_factory,
         hard_timeout_seconds=float(settings.hard_timeout_seconds),
     )
+    # ADR-0036: live non-LLM baseline equity, computed each tick from the just-persisted
+    # context snapshot (no extra HL calls). Best-effort: a baseline failure must not fail the
+    # context tick (which is already committed); scripts/compute_baselines.py can catch up.
+    baseline_runner = BaselineRunner(settings.experiment_id)
 
     async def _orchestrator_tick() -> None:
         tick_id, scheduled_for = current_tick()
-        await orchestrator.build_tick_context(
+        # A missed tick raises in build_tick_context → no bundle → no baseline snapshot
+        # (gap handling: the curve resumes at the next successful tick, ADR-0036).
+        bundle = await orchestrator.build_tick_context(
             tick_id, scheduled_for.isoformat(), settings.experiment_id
         )
+        try:
+            await baseline_runner.run_live_tick(session_factory, bundle)
+        except Exception as exc:  # baselines are secondary; never break the context tick
+            logger.error("baseline_step_failed", tick_id=tick_id, error=str(exc))
 
     return _orchestrator_tick
 
