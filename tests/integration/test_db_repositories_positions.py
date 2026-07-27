@@ -9,7 +9,6 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import select
@@ -30,11 +29,10 @@ from aiat.db.models.run import Run
 from aiat.db.repositories.positions import PositionsRepository
 from aiat.domain.enums import CloseReason, OrderKind
 from aiat.execution.hyperliquid_client import (
-    MockHyperliquidClient,
     OrderResult,
     PositionClosureInfo,
 )
-from aiat.orchestration.decision_loop import DecisionLoop
+from aiat.orchestration.closure_reconciler import _attribute_close_reason
 
 # ---------------------------------------------------------------------------
 # Seed helpers
@@ -1058,18 +1056,20 @@ async def test_close_position_autonomous_rejects_model_close_without_action(
     ("exit_price", "expected_reason"),
     [(Decimal("95.00"), "stop_loss"), (Decimal("105.00"), "take_profit")],
 )
-async def test_check_pending_closures_persists_autonomous_sltp_real_repo(
+async def test_autonomous_sltp_close_position_real_repo(
     db_session: AsyncSession,
     exit_price: Decimal,
     expected_reason: str,
 ) -> None:
-    """ADR-0030 Problema 2 regression guard: _check_pending_closures drives the REAL
-    close_position 5-arg signature (no TypeError) against the REAL repository, and the
-    per-side attribution lands the right close_reason end-to-end.
+    """ADR-0030/0038 regression guard: the ClosureReconciler per-side attribution + the REAL
+    close_position 5-arg signature (no TypeError) land the right close_reason end-to-end
+    against the REAL repository.
 
-    The seed opens a LONG BTC at entry=100. The mock client reports the closure the way the
-    real client does (model_close, non-liquidated); the loop re-attributes per-side from the
-    exit price and persists an autonomous closure (closing_action_id NULL, no close order).
+    The seed opens a LONG BTC at entry=100. detect_autonomous_closure reports the raw closure
+    the way the real client does (model_close, non-liquidated); _attribute_close_reason
+    (ADR-0030, moved to closure_reconciler in ADR-0038) re-attributes per-side from the exit
+    price and close_position persists an autonomous closure (closing_action_id NULL, no close
+    order) — exactly what ClosureReconciler._close_for_model does per position.
     """
     from sqlalchemy import select
 
@@ -1084,22 +1084,27 @@ async def test_check_pending_closures_persists_autonomous_sltp_real_repo(
     closure = PositionClosureInfo(
         closed_at="2026-01-15T13:00:00+00:00",
         exit_price=exit_price,
-        close_reason=CloseReason.MODEL_CLOSE,  # client's default; the loop re-attributes
+        close_reason=CloseReason.MODEL_CLOSE,  # detector's default; attribution re-derives it
         realized_pnl_usd=(exit_price - Decimal("100.00")),  # LONG, size 1.0
     )
-    loop = DecisionLoop(
-        settings=MagicMock(model_id=ids.model_id),
-        llm_client=MagicMock(),
-        hl_client=MockHyperliquidClient(closed_positions={"BTC": closure}),
-        session_factory=MagicMock(),
-        guardrails=MagicMock(),
-    )
 
-    # Drives the real PositionsRepository(db_session).close_position via the real call-site.
-    await loop._check_pending_closures(db_session, str(ids.closing_run_id))
-
+    # Mirror ClosureReconciler._close_for_model: attribute per-side, then drive the REAL repo.
     pos = await db_session.get(Position, uuid.UUID(pos_id))
     assert pos is not None
+    corrected = closure.model_copy(
+        update={
+            "close_reason": _attribute_close_reason(pos, closure, str(ids.closing_run_id)),
+        }
+    )
+    await repo.close_position(
+        pos_id,
+        corrected,
+        str(ids.closing_run_id),
+        closing_action_id=None,
+        close_order=None,
+    )
+
+    await db_session.refresh(pos)
     assert pos.closed_at is not None
     assert pos.close_reason == expected_reason  # per-side attribution
     assert pos.closing_action_id is None  # autonomous: no model action

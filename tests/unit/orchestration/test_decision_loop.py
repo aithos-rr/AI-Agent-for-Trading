@@ -6,14 +6,12 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from aiat.config.settings import AgentSettings
 from aiat.domain.enums import (
-    CloseReason,
     EntryType,
     ExecutionStatus,
     OrderKind,
@@ -36,14 +34,11 @@ from aiat.domain.schemas import (
     TradeDecision,
 )
 from aiat.execution.hyperliquid_client import (
-    MockHyperliquidClient,
     OrderResult,
-    PositionClosureInfo,
 )
 from aiat.orchestration.decision_loop import (
     DecisionLoop,
     _action_execution_outcome,
-    _attribute_close_reason,
     _render_prompt,
 )
 
@@ -1051,197 +1046,6 @@ class TestDecisionLoopRunOnce:
             )
             with pytest.raises(RuntimeError, match="PromptTemplate"):
                 await loop.run_once(TICK_ID, SCHEDULED_FOR)
-
-    @pytest.mark.asyncio
-    async def test_check_pending_closures_called(self) -> None:
-        """_check_pending_closures must be called even when no positions opened this tick."""
-        snap = _make_mock_snapshot()
-        session = _setup_session(snap, _make_mock_template())
-
-        with (
-            patch("aiat.orchestration.decision_loop.SnapshotsRepository") as MockSnapshotsRepo,
-            patch("aiat.orchestration.decision_loop.RunsRepository") as MockRunsRepo,
-            patch("aiat.orchestration.decision_loop.DecisionsRepository") as MockDecisionsRepo,
-            patch("aiat.orchestration.decision_loop.PositionsRepository") as MockPositionsRepo,
-        ):
-            mock_sr = AsyncMock()
-            mock_sr.get_context_snapshot = AsyncMock(return_value=snap)
-            mock_sr.persist_account_snapshot = AsyncMock(return_value=str(uuid.uuid4()))
-            MockSnapshotsRepo.return_value = mock_sr
-
-            mock_rr = AsyncMock()
-            mock_rr.create_run = AsyncMock(return_value=RUN_ID)
-            mock_rr.update_status = AsyncMock()
-            MockRunsRepo.return_value = mock_rr
-
-            mock_dr = AsyncMock()
-            mock_dr.persist_decision = AsyncMock(return_value=DECISION_ID)
-            MockDecisionsRepo.return_value = mock_dr
-
-            mock_pr = AsyncMock()
-            mock_pr.list_open_for_model = AsyncMock(return_value=[])
-            MockPositionsRepo.return_value = mock_pr
-
-            settings = _make_agent_settings()
-            factory = _make_session_factory(session)
-            hl_client = AsyncMock()
-            hl_client.fetch_portfolio_state = AsyncMock(return_value=_make_portfolio_state())
-            hl_client.execute_action = AsyncMock(return_value=[])
-            hl_client.check_position_closure = AsyncMock(return_value=None)
-            llm_client = AsyncMock()
-            inv = _make_invocation_result()
-            llm_client.invoke = AsyncMock(return_value=inv)
-
-            reports = [
-                GuardrailReport(
-                    symbol=a.symbol,
-                    original_side=a.side,
-                    leverage_clamped=False,
-                    size_pct_clamped=False,
-                    forced_hold=False,
-                    final_action=a,
-                )
-                for a in inv.decision.actions
-            ]
-            guardrails = MagicMock()
-            guardrails.apply = MagicMock(return_value=(inv.decision, reports))
-
-            loop = DecisionLoop(
-                settings=settings,
-                llm_client=llm_client,
-                hl_client=hl_client,
-                session_factory=factory,
-                guardrails=guardrails,
-            )
-            await loop.run_once(TICK_ID, SCHEDULED_FOR)
-
-        # list_open_for_model is called for _execute_actions (step 8) and for
-        # _check_pending_closures (step 9)
-        assert mock_pr.list_open_for_model.call_count >= 1
-
-    @pytest.mark.asyncio
-    async def test_check_pending_closures_detects_closure_by_symbol(self) -> None:
-        """TEETH (ADR-0016): an open position whose SYMBOL has a registered closure must
-        be detected and closed.
-
-        Regression guard for the M5 bug where _check_pending_closures keyed closure
-        detection off a position id (always None) instead of the coin symbol. We use a
-        REAL MockHyperliquidClient keyed by the argument passed, so the test is sensitive
-        to which value is passed: only resolving by symbol looks up closed_positions["BTC"]
-        and closes; anything else would never close and this assertion would fail.
-        """
-        # entry_price + side are read by the per-side attribution (ADR-0030); a LONG whose
-        # exit (95) is below entry (100) attributes to stop_loss.
-        open_position = SimpleNamespace(
-            id=uuid.uuid4(), symbol="BTC", side="LONG", entry_price=Decimal("100")
-        )
-        # The real client only ever emits model_close (non-liquidated) here; the loop
-        # re-attributes it per-side.
-        closure = PositionClosureInfo(
-            closed_at="2026-06-14T15:00:00+00:00",
-            exit_price=Decimal("95"),
-            close_reason=CloseReason.MODEL_CLOSE,
-            realized_pnl_usd=Decimal("-50"),
-        )
-        hl_client = MockHyperliquidClient(closed_positions={"BTC": closure})
-
-        with patch("aiat.orchestration.decision_loop.PositionsRepository") as MockPositionsRepo:
-            mock_pr = AsyncMock()
-            mock_pr.list_open_for_model = AsyncMock(return_value=[open_position])
-            mock_pr.close_position = AsyncMock()
-            MockPositionsRepo.return_value = mock_pr
-
-            loop = DecisionLoop(
-                settings=_make_agent_settings(),
-                llm_client=AsyncMock(),
-                hl_client=hl_client,
-                session_factory=_make_session_factory(AsyncMock()),
-                guardrails=MagicMock(),
-            )
-            await loop._check_pending_closures(AsyncMock(), RUN_ID)
-
-        mock_pr.close_position.assert_awaited_once()
-        call_args = mock_pr.close_position.call_args.args
-        call_kwargs = mock_pr.close_position.call_args.kwargs
-        assert call_args[0] == str(open_position.id)
-        # Autonomous closure: reason attributed per-side (LONG, exit<entry → stop_loss),
-        # carried on a corrected PositionClosureInfo (not the object the client returned).
-        passed_closure = call_args[1]
-        assert passed_closure.close_reason == CloseReason.STOP_LOSS
-        assert passed_closure.exit_price == Decimal("95")
-        assert call_args[2] == RUN_ID
-        # ADR-0030: SL/TP path now passes the 5-arg signature with no closing action / order.
-        assert call_kwargs == {"closing_action_id": None, "close_order": None}
-
-
-class TestAttributeCloseReason:
-    """Per-side SL/TP attribution for autonomous closures (ADR-0030, Modifica 3).
-
-    The heuristic keys off the side of exit_price relative to entry_price: for a LONG the
-    SL sits strictly below entry and the TP strictly above (SHORT inverted); liquidation
-    (flagged on the fill) takes priority over the SL/TP heuristic.
-    """
-
-    @staticmethod
-    def _pos(side: str, entry_price: str) -> SimpleNamespace:
-        return SimpleNamespace(
-            id=uuid.uuid4(), symbol="BTC", side=side, entry_price=Decimal(entry_price)
-        )
-
-    @staticmethod
-    def _closure(exit_price: str, close_reason: CloseReason) -> PositionClosureInfo:
-        return PositionClosureInfo(
-            closed_at="2026-06-14T15:00:00+00:00",
-            exit_price=Decimal(exit_price),
-            close_reason=close_reason,
-            realized_pnl_usd=Decimal("0"),
-        )
-
-    def test_long_exit_below_entry_is_stop_loss(self) -> None:
-        reason = _attribute_close_reason(
-            self._pos("LONG", "100"), self._closure("95", CloseReason.MODEL_CLOSE), RUN_ID
-        )
-        assert reason == CloseReason.STOP_LOSS
-
-    def test_long_exit_above_entry_is_take_profit(self) -> None:
-        reason = _attribute_close_reason(
-            self._pos("LONG", "100"), self._closure("105", CloseReason.MODEL_CLOSE), RUN_ID
-        )
-        assert reason == CloseReason.TAKE_PROFIT
-
-    def test_short_exit_above_entry_is_stop_loss(self) -> None:
-        # SHORT SL sits ABOVE entry (inverted from LONG).
-        reason = _attribute_close_reason(
-            self._pos("SHORT", "100"), self._closure("105", CloseReason.MODEL_CLOSE), RUN_ID
-        )
-        assert reason == CloseReason.STOP_LOSS
-
-    def test_short_exit_below_entry_is_take_profit(self) -> None:
-        reason = _attribute_close_reason(
-            self._pos("SHORT", "100"), self._closure("95", CloseReason.MODEL_CLOSE), RUN_ID
-        )
-        assert reason == CloseReason.TAKE_PROFIT
-
-    def test_liquidation_has_priority_over_side_heuristic(self) -> None:
-        # A LONG liquidation fills below entry (would look like SL by side), but the
-        # liquidation flag wins and the heuristic is not applied.
-        reason = _attribute_close_reason(
-            self._pos("LONG", "100"), self._closure("90", CloseReason.LIQUIDATED), RUN_ID
-        )
-        assert reason == CloseReason.LIQUIDATED
-
-    def test_long_exit_equals_entry_resolves_to_stop_loss(self) -> None:
-        # Structurally impossible for a real trigger; tie resolves deterministically to SL.
-        reason = _attribute_close_reason(
-            self._pos("LONG", "100"), self._closure("100", CloseReason.MODEL_CLOSE), RUN_ID
-        )
-        assert reason == CloseReason.STOP_LOSS
-
-    def test_short_exit_equals_entry_resolves_to_stop_loss(self) -> None:
-        reason = _attribute_close_reason(
-            self._pos("SHORT", "100"), self._closure("100", CloseReason.MODEL_CLOSE), RUN_ID
-        )
-        assert reason == CloseReason.STOP_LOSS
 
 
 # ---------------------------------------------------------------------------

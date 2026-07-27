@@ -27,6 +27,7 @@ from aiat.execution.hyperliquid_client import (
     _parse_order_response,
     _ParsedOrder,
     build_hl_client,
+    detect_autonomous_closure,
 )
 from aiat.execution.sizing import compute_position_sizing
 
@@ -887,12 +888,14 @@ class TestCheckPositionClosure:
         BTC in the SAME tick an SL fired, the chain's user_state shows BTC OPEN again (szi != 0 —
         the just-reopened position), so the szi short-circuit (hyperliquid_client.py:786) returns
         None BEFORE inspecting the SL close fill in user_fills. The prior close is missed and the
-        old DB row becomes a zombie. `_check_pending_closures` runs AFTER `_execute_actions`
-        (step 9 after step 8) and is symbol-keyed, so both DB BTC rows hit this same short-circuit.
+        old DB row becomes a zombie. The old `_check_pending_closures` ran AFTER `_execute_actions`
+        (step 9 after step 8) and was symbol-keyed, so both DB BTC rows hit this same short-circuit.
 
-        This test pins the current (buggy) behaviour; the resulting zombie is caught downstream by
-        the netted DB↔chain reconciliation (detect_chain_divergences → zombie_row). The root-cause
-        fix (reorder closures before execution / position-level detection) is deferred — ADR-0025.
+        This test pins the legacy (buggy) behaviour of `check_position_closure`, now SUPERSEDED and
+        no longer called in production: the root-cause fix lives in `detect_autonomous_closure` +
+        the orchestrator-level `ClosureReconciler` (per-position oid match, runs before execution —
+        ADR-0038). The netted DB↔chain reconciliation (detect_chain_divergences → zombie_row) stays
+        as the downstream safety net (ADR-0025).
         """
         info = MagicMock()
         # Chain shows BTC OPEN again — the LONG the model just reopened (oid 56301522722).
@@ -1210,3 +1213,81 @@ class TestFeeReconciliation:
         assert closure is not None
         # TRIPWIRE: the autonomous-close fee is captured on the closure info.
         assert closure.fee_usd == Decimal("0.75")
+
+
+class TestDetectAutonomousClosure:
+    """Per-POSITION autonomous SL/TP detection by trigger oid (T4b root-cause, ADR-0038).
+
+    ``detect_autonomous_closure`` is the pure matcher the orchestrator-level ClosureReconciler
+    uses instead of the old per-symbol ``check_position_closure``. It answers exactly one
+    question — did THIS position's own stop_loss/take_profit trigger order fire? — by matching
+    ``fills[*].oid`` against the position's trigger oids. There is deliberately NO ``szi``
+    short-circuit, so a same-symbol reopen never masks the prior position's close.
+    """
+
+    def test_no_trigger_oids_returns_none(self) -> None:
+        # A position with no recorded trigger oids can never be matched → still open.
+        assert detect_autonomous_closure([_fill(oid=111)], set()) is None
+
+    def test_no_matching_fill_returns_none(self) -> None:
+        # The wallet traded (fills exist) but none carry this position's trigger oid → open.
+        assert detect_autonomous_closure([_fill(oid=111)], {"999"}) is None
+
+    def test_matched_trigger_builds_closure(self) -> None:
+        closure = detect_autonomous_closure(
+            [
+                _fill(
+                    oid=555, dir_="Close Long", fee="0.75", closed_pnl="25.0", px="110.0", sz="30.0"
+                )
+            ],
+            {"555"},
+        )
+        assert closure is not None
+        assert closure.exit_price == Decimal("110.0")
+        assert closure.realized_pnl_usd == Decimal("25.0")
+        assert closure.fee_usd == Decimal("0.75")
+        # SL/TP attribution is the caller's job (ADR-0030); the raw closure is MODEL_CLOSE.
+        assert closure.close_reason == CloseReason.MODEL_CLOSE
+
+    def test_partials_of_the_fired_oid_sum_and_vwap(self) -> None:
+        # Two partial fills of the SAME fired trigger oid: fee/pnl sum, exit is size-weighted VWAP.
+        fills = [
+            _fill(oid=555, fee="0.4", closed_pnl="10.0", px="100.0", sz="10.0", time_ms=2_000),
+            _fill(oid=555, fee="0.6", closed_pnl="20.0", px="120.0", sz="30.0", time_ms=2_500),
+        ]
+        closure = detect_autonomous_closure(fills, {"555"})
+        assert closure is not None
+        assert closure.fee_usd == Decimal("1.0")
+        assert closure.realized_pnl_usd == Decimal("30.0")
+        # VWAP = (100*10 + 120*30) / 40 = 4600/40 = 115.
+        assert closure.exit_price == Decimal("115")
+
+    def test_only_the_most_recent_fired_oid_is_summed(self) -> None:
+        # Both the SL and TP oids appear (abnormal): only the most-recent fired order is used,
+        # never summed across the two triggers.
+        fills = [
+            _fill(oid=100, fee="0.5", closed_pnl="5.0", px="90.0", sz="30.0", time_ms=1_000),
+            _fill(oid=200, fee="0.9", closed_pnl="40.0", px="130.0", sz="30.0", time_ms=9_000),
+        ]
+        closure = detect_autonomous_closure(fills, {"100", "200"})
+        assert closure is not None
+        assert closure.exit_price == Decimal("130.0")  # oid 200 (time 9000) wins
+        assert closure.realized_pnl_usd == Decimal("40.0")
+        assert closure.fee_usd == Decimal("0.9")
+
+    def test_liquidation_flag_marks_liquidated(self) -> None:
+        fill = _fill(oid=555, closed_pnl="-50.0", px="80.0")
+        fill["liquidation"] = {"liquidatedUser": "0xabc"}  # truthy liquidation marker
+        closure = detect_autonomous_closure([fill], {"555"})
+        assert closure is not None
+        assert closure.close_reason == CloseReason.LIQUIDATED
+
+    def test_nonpositive_exit_price_returns_none(self) -> None:
+        # A zero/garbage exit price is unusable → treat as not-detected rather than book bad data.
+        closure = detect_autonomous_closure([_fill(oid=555, px="0", sz="0")], {"555"})
+        assert closure is None
+
+    def test_oid_matched_as_string_across_int_and_str(self) -> None:
+        # Fills carry oid as int; trigger_oids are stored as str (hl_order_id) — match is by str().
+        closure = detect_autonomous_closure([_fill(oid=555)], {"555"})
+        assert closure is not None
