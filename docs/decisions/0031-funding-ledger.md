@@ -133,7 +133,14 @@ avevano `sum_funding_usd = 0` (tabella vuota all'epoca) → nessun ricalcolo nec
 PAGA (rate `+0.0000125` → HL `usdc<0` → DB `+0.0072`) e long che INCASSA (rate `<0` → HL `usdc>0`
 → DB `-0.0072`) — e morde se la negazione viene rimossa o invertita.
 
-### Diagnostica aperta: riga `funding_events` 23:00 12/07 (rate `-0.00029142`, amount `+0.0834`)
+### Diagnostica ~~aperta~~ CHIUSA: riga `funding_events` 23:00 12/07 (rate `-0.00029142`, amount `+0.0834`)
+
+**CHIUSA (2026-07-24) — FALSO ALLARME.** La riga non "mancava" dal CSV: l'export HL
+`funding-history` è in **ora locale CEST (UTC+2)**, mentre il DB registra in **UTC**. La riga DB
+delle 23:00 UTC corrisponde alla riga CSV dell'01:00 CEST del giorno dopo — offset di 2h del tutto
+innocuo (causa (a) sotto: granularità/fuso dell'endpoint, non un errore di ledger né di
+attribuzione). Segno e importo erano già coerenti. **Ledger pulito**, nessuna azione. La
+descrizione originale dell'indagine resta sotto per contesto storico.
 
 Segnalata come non corrispondente ad alcuna riga CSV di quell'ora per quel wallet. Internamente la
 riga è **coerente** (rate `<0` → long incassa → `usdc>0` → pre-fix DB `+0.0834`), quindi NON è un
