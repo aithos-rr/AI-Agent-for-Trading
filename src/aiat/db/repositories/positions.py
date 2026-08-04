@@ -346,13 +346,37 @@ class PositionsRepository:
         self._session.add(outcome)
         await self._session.flush()
 
-    async def list_open_for_model(self, model_id: str) -> list[Position]:
-        """Return all open positions for a model (closed_at IS NULL)."""
+    async def list_open_for_model(self, *, experiment_id: str, model_id: str) -> list[Position]:
+        """Return a model's open positions **within one experiment** (ADR-0039).
+
+        Both filters are mandatory and keyword-only — this is the single read path every
+        open-position consumer goes through (FLAT bookkeeping, chain-divergence detection,
+        ``ClosureReconciler``), and an unscoped variant of it caused the cross-experiment
+        leakage of 2026-07-29: a FLAT in the smoke experiment closed an *archived* M6.1 row
+        for the same ``(model_id, symbol)``, then every later closure shifted by one
+        (ADR-0039). Making ``experiment_id`` required in the signature is what keeps that
+        unrepresentable: a caller cannot forget the filter, only pass the wrong value, and
+        mypy rejects the old positional call shape outright.
+
+        Ordering is explicit (``opened_at`` ASC, ``id`` as tie-break) so callers that pick
+        one row out of several — the FLAT path takes the first match per symbol — behave
+        deterministically instead of inheriting Postgres' heap order.
+
+        Args:
+            experiment_id: UUID string of the CURRENT experiment (``settings.experiment_id``).
+            model_id: the agent's model id (invariant #1).
+
+        Returns:
+            Open (``closed_at IS NULL``) positions of that experiment+model, oldest first.
+        """
         result = await self._session.execute(
-            select(Position).where(
+            select(Position)
+            .where(
+                Position.experiment_id == uuid.UUID(experiment_id),
                 Position.model_id == model_id,
                 Position.closed_at.is_(None),
             )
+            .order_by(Position.opened_at.asc(), Position.id.asc())
         )
         return list(result.scalars().all())
 

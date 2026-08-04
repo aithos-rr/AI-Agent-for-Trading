@@ -185,7 +185,12 @@ class ClosureReconciler:
     ) -> tuple[int, int, int]:
         """Book closures for one model's open positions. Returns (closed, still_open, no_run)."""
         repo = PositionsRepository(session)
-        positions = await repo.list_open_for_model(model_id)
+        # Scoped to this reconciler's experiment (ADR-0039) — matching what
+        # _models_with_open_positions already selects on. Without it the pass would try to
+        # book closures for archived experiments' rows whose triggers are long gone.
+        positions = await repo.list_open_for_model(
+            experiment_id=self._experiment_id, model_id=model_id
+        )
         if not positions:
             return (0, 0, 0)
         closing_run_id = await self._latest_run_id(session, model_id)

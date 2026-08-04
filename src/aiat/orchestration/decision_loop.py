@@ -427,7 +427,12 @@ class DecisionLoop:
             has_entry = any(o.order_kind == OrderKind.ENTRY for o in order_results)
 
             if has_close and current_pos_summary is not None:
-                open_positions = await positions_repo.list_open_for_model(self._settings.model_id)
+                # Scoped to the CURRENT experiment (ADR-0039): an unscoped lookup here closed
+                # an archived M6.1 row on 2026-07-29 and shifted every later closure by one.
+                open_positions = await positions_repo.list_open_for_model(
+                    experiment_id=self._settings.experiment_id,
+                    model_id=self._settings.model_id,
+                )
                 open_pos = next((p for p in open_positions if p.symbol == action.symbol), None)
                 if open_pos is not None:
                     close_order = next(o for o in order_results if o.order_kind == OrderKind.CLOSE)
@@ -482,7 +487,10 @@ class DecisionLoop:
         """
         try:
             positions_repo = PositionsRepository(session)
-            db_open = await positions_repo.list_open_for_model(self._settings.model_id)
+            db_open = await positions_repo.list_open_for_model(
+                experiment_id=self._settings.experiment_id,
+                model_id=self._settings.model_id,
+            )
             divergences = detect_chain_divergences(db_open, portfolio_state.open_positions)
             if not divergences:
                 return
