@@ -117,13 +117,18 @@ async def _model(session: AsyncSession, model_id: str, wallet: str) -> None:
 
 
 async def _run(
-    session: AsyncSession, model_id: str, snap_id: uuid.UUID, started: datetime, status: str
+    session: AsyncSession,
+    model_id: str,
+    snap_id: uuid.UUID,
+    started: datetime,
+    status: str,
+    experiment_id: uuid.UUID = EXPERIMENT_ID,
 ) -> uuid.UUID:
     rid = uuid.uuid4()
     session.add(
         Run(
             id=rid,
-            experiment_id=EXPERIMENT_ID,
+            experiment_id=experiment_id,
             model_id=model_id,
             tick_id=_TICK,
             scheduled_for=started,
@@ -141,14 +146,19 @@ async def _run(
 
 
 async def _opening_action(
-    session: AsyncSession, model_id: str, run_id: uuid.UUID, symbol: str, opened_at: datetime
+    session: AsyncSession,
+    model_id: str,
+    run_id: uuid.UUID,
+    symbol: str,
+    opened_at: datetime,
+    experiment_id: uuid.UUID = EXPERIMENT_ID,
 ) -> uuid.UUID:
     did = uuid.uuid4()
     session.add(
         Decision(
             id=did,
             run_id=run_id,
-            experiment_id=EXPERIMENT_ID,
+            experiment_id=experiment_id,
             model_id=model_id,
             decided_at=opened_at,
             portfolio_reasoning="x",
@@ -163,7 +173,7 @@ async def _opening_action(
         DecisionAction(
             id=aid,
             decision_id=did,
-            experiment_id=EXPERIMENT_ID,
+            experiment_id=experiment_id,
             model_id=model_id,
             run_id=run_id,
             symbol=symbol,
@@ -200,20 +210,21 @@ async def _open_position(
     entry_price: Decimal = Decimal("100"),
     size_units: Decimal = Decimal("0.5"),
     run_status: str = "success",
+    experiment_id: uuid.UUID = EXPERIMENT_ID,
 ) -> uuid.UUID:
     """Seed one OPEN position + its opening run/decision/action + entry/SL/TP orders.
 
     ``sl_oid``/``tp_oid`` become the trigger orders' ``hl_order_id`` — the ClosureReconciler matches
     ``user_fills[*].oid`` against these. Returns the position id.
     """
-    run_id = await _run(session, model_id, snap_id, opened_at, run_status)
-    action_id = await _opening_action(session, model_id, run_id, symbol, opened_at)
+    run_id = await _run(session, model_id, snap_id, opened_at, run_status, experiment_id)
+    action_id = await _opening_action(session, model_id, run_id, symbol, opened_at, experiment_id)
     pos_id = uuid.uuid4()
     notional = size_units * entry_price
     session.add(
         Position(
             id=pos_id,
-            experiment_id=EXPERIMENT_ID,
+            experiment_id=experiment_id,
             model_id=model_id,
             opening_run_id=run_id,
             symbol=symbol,
@@ -234,7 +245,7 @@ async def _open_position(
         Order(
             id=uuid.uuid4(),
             decision_action_id=action_id,
-            experiment_id=EXPERIMENT_ID,
+            experiment_id=experiment_id,
             model_id=model_id,
             run_id=run_id,
             symbol=symbol,
@@ -254,7 +265,7 @@ async def _open_position(
             Order(
                 id=uuid.uuid4(),
                 decision_action_id=action_id,
-                experiment_id=EXPERIMENT_ID,
+                experiment_id=experiment_id,
                 model_id=model_id,
                 run_id=run_id,
                 symbol=symbol,
@@ -306,6 +317,40 @@ async def _seed_scaffold(session: AsyncSession) -> uuid.UUID:
     )
     await session.flush()
     return snap_id
+
+
+async def _seed_archived_experiment(session: AsyncSession) -> tuple[uuid.UUID, uuid.UUID]:
+    """A SECOND, archived experiment (+ its own snapshot). Returns (experiment_id, snap_id).
+
+    Used by the ADR-0039 scoping test: rows left open by a previous experiment must be
+    invisible to this reconciler pass.
+    """
+    exp_id = uuid.UUID("66666666-6666-6666-6666-666666666666")
+    session.add(
+        Experiment(
+            id=exp_id,
+            name="m6-1-archived",
+            started_at=_dt(2026, 6, 1),
+            git_commit_sha=_GIT,
+            config_snapshot={},
+        )
+    )
+    await session.flush()
+    snap_id = uuid.uuid4()
+    session.add(
+        ContextSnapshot(
+            id=snap_id,
+            experiment_id=exp_id,
+            tick_id=_TICK,
+            tick_at=_dt(2026, 6, 1),
+            context_hash="beef",
+            context_json={},
+            source_timestamps={},
+            build_duration_ms=1,
+        )
+    )
+    await session.flush()
+    return exp_id, snap_id
 
 
 def _factory(db_url: str) -> async_sessionmaker[AsyncSession]:
@@ -584,3 +629,78 @@ async def test_one_failing_wallet_does_not_abort_the_batch(db_url: str, clean: N
     bad = await _fetch_pos(db_url, pos_bad)
     assert bad is not None and bad.closed_at is None
     assert await _fetch_outcome(db_url, pos_bad) is None
+
+
+# --------------------------------------------------------------------------- #
+# experiment scoping (ADR-0039): only the CURRENT experiment's rows are booked  #
+# --------------------------------------------------------------------------- #
+
+
+async def test_archived_experiment_positions_are_never_booked(db_url: str, clean: None) -> None:
+    """An open row from an ARCHIVED experiment is invisible to the pass — even when a fill
+    with its trigger oid is still in the wallet's history.
+
+    TRIPWIRE for ADR-0039: ``_models_with_open_positions`` was already experiment-scoped, but
+    ``_close_for_model`` then re-read the model's open positions with an UNSCOPED
+    ``list_open_for_model``. So as soon as a model had ANY open row in the current experiment
+    (which is what makes it visited at all), the archived experiment's rows were pulled in and
+    booked against the current experiment's latest run. The current-experiment position here is
+    deliberately one whose trigger has NOT fired — the pass must visit the model and close
+    nothing.
+    """
+    wallet = "0xwalletSCOPE"
+    archived_sl = "400001"
+    factory = _factory(db_url)
+    async with factory() as s:
+        snap = await _seed_scaffold(s)
+        archived_exp, archived_snap = await _seed_archived_experiment(s)
+        await _model(s, "cn-cheap", wallet)
+        # Archived M6.1-style row: still open, its SL oid IS present in the wallet's fills.
+        archived_pos = await _open_position(
+            s,
+            archived_snap,
+            "cn-cheap",
+            "ETH",
+            _dt(2026, 6, 15, 10, 0),
+            archived_sl,
+            "400002",
+            experiment_id=archived_exp,
+        )
+        # Current-experiment row: its triggers never fired → the model is visited, closes nothing.
+        current_pos = await _open_position(
+            s, snap, "cn-cheap", "BTC", _dt(2026, 7, 20, 11, 0), "410001", "410002"
+        )
+        await s.commit()
+
+    fills = _FakeFills(
+        {
+            wallet: [
+                _fill(
+                    oid=archived_sl,
+                    coin="ETH",
+                    px="95.0",
+                    closed_pnl="-2.5",
+                    time_ms=int(_dt(2026, 6, 15, 10, 30).timestamp() * 1000),
+                )
+            ]
+        }
+    )
+    result = await ClosureReconciler(factory, fills, str(EXPERIMENT_ID)).reconcile(_NOW_MS)
+
+    # One model visited, one open position considered (the current one) — the archived row is
+    # not even counted as still_open, because it is never loaded.
+    assert result.closed == 0
+    assert result.still_open == 1
+    assert result.models == 1
+    # Archived row untouched: no closure, no outcome, no fabricated exit.
+    archived = await _fetch_pos(db_url, archived_pos)
+    assert archived is not None and archived.closed_at is None
+    assert archived.exit_price is None and archived.realized_pnl_usd is None
+    assert await _fetch_outcome(db_url, archived_pos) is None
+    # Current row also untouched (its trigger never fired).
+    current = await _fetch_pos(db_url, current_pos)
+    assert current is not None and current.closed_at is None
+    # The fills window is anchored to the CURRENT experiment's oldest open position (11:00 on
+    # 2026-07-20), not to the archived row's June opened_at.
+    assert fills.calls and fills.calls[0][0] == wallet
+    assert fills.calls[0][1] > int(_dt(2026, 7, 1).timestamp() * 1000)

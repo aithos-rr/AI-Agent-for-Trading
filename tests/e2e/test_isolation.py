@@ -243,8 +243,8 @@ async def iso_seed(
         # `WHERE Position.model_id` filter would still pass. The positions live in a
         # SEPARATE experiment (`pos_exp_id`) with their own tick/snapshot so the
         # existing run-count assertions (scoped to `experiment_id`) stay unaffected;
-        # list_open_for_model filters by model_id only, so the read-path test still
-        # sees them. The RepositorySpy load listener gives these the read-path teeth
+        # list_open_for_model is experiment-scoped (ADR-0039), so the read-path test
+        # queries with `position_experiment_id`. The spy's load listener gives the teeth
         # (PRD §9.5 lines 2481-2483).
         pos_exp_id = uuid.uuid4()
         pos_snap_id = uuid.uuid4()
@@ -365,6 +365,10 @@ async def iso_seed(
         "model_2_id": model_2_id,
         "snapshot_id": str(snap_id),
         "prompt_template_hash": _PT_HASH,
+        # The open positions live in their OWN experiment (see the seed comment above);
+        # list_open_for_model is experiment-scoped (ADR-0039) so the read-path test must
+        # query with that experiment, not the run-count one.
+        "position_experiment_id": str(pos_exp_id),
         "model_1_open_position_id": position_ids[model_1_id],
         "model_2_open_position_id": position_ids[model_2_id],
     }
@@ -677,7 +681,9 @@ class TestCrossModelIsolation:
         async with iso_session_factory() as session:
             repo = PositionsRepository(session)
             with RepositorySpy(session, expected_model_id=model_1):
-                open_positions = await repo.list_open_for_model(model_1)
+                open_positions = await repo.list_open_for_model(
+                    experiment_id=iso_seed["position_experiment_id"], model_id=model_1
+                )
 
             returned_ids = {str(p.id) for p in open_positions}
             returned_models = {p.model_id for p in open_positions}

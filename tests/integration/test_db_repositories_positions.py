@@ -57,10 +57,16 @@ class SeedIds:
     action_id: uuid.UUID
 
 
-async def _seed(session: AsyncSession) -> SeedIds:
-    """Insert the minimum FK chain needed to create a Position."""
+async def _seed(session: AsyncSession, *, model_id: str | None = None) -> SeedIds:
+    """Insert the minimum FK chain needed to create a Position.
+
+    Always creates a NEW experiment. Pass ``model_id`` to reuse a model seeded by an earlier
+    call — that is how the ADR-0039 scoping test puts the SAME model in TWO experiments (the
+    model row and the shared prompt template are then not re-inserted).
+    """
     exp_id = uuid.uuid4()
-    model_id = f"openai-gpt4o-{uuid.uuid4().hex[:8]}"
+    reuse_model = model_id is not None
+    model_id = model_id or f"openai-gpt4o-{uuid.uuid4().hex[:8]}"
     snap_id = uuid.uuid4()
     opening_run_id = uuid.uuid4()
     closing_run_id = uuid.uuid4()
@@ -78,28 +84,29 @@ async def _seed(session: AsyncSession) -> SeedIds:
     session.add(experiment)
     await session.flush()
 
-    model = Model(
-        id=model_id,
-        provider="openai",
-        model_name_api="gpt-4o",
-        tier="premium",
-        geography="USA",
-        wallet_address=f"0x{uuid.uuid4().hex}",
-        pricing_input_usd_per_1m=Decimal("5.000000"),
-        pricing_output_usd_per_1m=Decimal("15.000000"),
-    )
-    session.add(model)
-    await session.flush()
+    if not reuse_model:
+        model = Model(
+            id=model_id,
+            provider="openai",
+            model_name_api="gpt-4o",
+            tier="premium",
+            geography="USA",
+            wallet_address=f"0x{uuid.uuid4().hex}",
+            pricing_input_usd_per_1m=Decimal("5.000000"),
+            pricing_output_usd_per_1m=Decimal("15.000000"),
+        )
+        session.add(model)
+        await session.flush()
 
-    prompt_tmpl = PromptTemplate(
-        sha256_hash=_PT_HASH,
-        label=f"test-pt-{uuid.uuid4().hex[:8]}",
-        template_text=_PT_TEXT,
-        confidence_def="Probability that the action yields positive PnL.",
-        controlled_signals=[],
-    )
-    session.add(prompt_tmpl)
-    await session.flush()
+        prompt_tmpl = PromptTemplate(
+            sha256_hash=_PT_HASH,
+            label=f"test-pt-{uuid.uuid4().hex[:8]}",
+            template_text=_PT_TEXT,
+            confidence_def="Probability that the action yields positive PnL.",
+            controlled_signals=[],
+        )
+        session.add(prompt_tmpl)
+        await session.flush()
 
     snapshot = ContextSnapshot(
         id=snap_id,
@@ -562,7 +569,9 @@ async def test_list_open_for_model_returns_open_only(db_session: AsyncSession) -
         run_id=str(ids.opening_run_id),
     )
 
-    open_positions = await repo.list_open_for_model(ids.model_id)
+    open_positions = await repo.list_open_for_model(
+        experiment_id=str(ids.experiment_id), model_id=ids.model_id
+    )
     assert len(open_positions) == 1
     assert str(open_positions[0].id) == pos_id
 
@@ -581,8 +590,50 @@ async def test_list_open_for_model_returns_open_only(db_session: AsyncSession) -
         close_order=_make_close_order(),
     )
 
-    open_after_close = await repo.list_open_for_model(ids.model_id)
+    open_after_close = await repo.list_open_for_model(
+        experiment_id=str(ids.experiment_id), model_id=ids.model_id
+    )
     assert len(open_after_close) == 0
+
+
+@pytest.mark.asyncio
+async def test_list_open_for_model_excludes_other_experiments(db_session: AsyncSession) -> None:
+    """list_open_for_model returns ONLY the requested experiment's open rows (ADR-0039).
+
+    TRIPWIRE: this is the read that the FLAT bookkeeping, the DB↔chain detector and the
+    ClosureReconciler all go through. Dropping the ``Position.experiment_id`` predicate turns
+    it red — and that missing predicate is exactly what let a smoke FLAT close an archived
+    M6.1 position on 2026-07-29 18:30 UTC.
+    """
+    archived = await _seed(db_session)
+    # Same model, DIFFERENT experiment — the shape of the incident.
+    current = await _seed(db_session, model_id=archived.model_id)
+    assert current.experiment_id != archived.experiment_id
+    repo = PositionsRepository(db_session)
+
+    archived_pos = await repo.open_position(
+        action_id=str(archived.action_id),
+        order_results=_make_order_results(),
+        run_id=str(archived.opening_run_id),
+    )
+    current_pos = await repo.open_position(
+        action_id=str(current.action_id),
+        order_results=_make_order_results(),
+        run_id=str(current.opening_run_id),
+    )
+
+    rows = await repo.list_open_for_model(
+        experiment_id=str(current.experiment_id), model_id=current.model_id
+    )
+    assert [str(p.id) for p in rows] == [current_pos]
+    assert archived_pos not in {str(p.id) for p in rows}
+
+    # Symmetric: querying the archived experiment sees only its own row (the filter is a
+    # real predicate, not a hardcoded "hide everything but the newest").
+    archived_rows = await repo.list_open_for_model(
+        experiment_id=str(archived.experiment_id), model_id=archived.model_id
+    )
+    assert [str(p.id) for p in archived_rows] == [archived_pos]
 
 
 @pytest.mark.asyncio
