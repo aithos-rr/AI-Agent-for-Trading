@@ -216,4 +216,6 @@ quattro test qui sotto diventano rossi — verificato.
 - [x] Nessuna migration (nessun cambio DDL)
 - [x] Nessun intervento sui dati: righe M6.1 e zombie dello smoke lasciate come sono
       (*annotate not repair*, ora sicura per costruzione)
-- [ ] Re-smoke M6.2 su un `AIAT_EXPERIMENT_ID` **nuovo**, con wallet flat all'avvio
+- [x] Re-smoke M6.2 su un `AIAT_EXPERIMENT_ID` **nuovo**, con wallet flat all'avvio —
+  eseguito su `77777777-…`, 2026-08-04 → 2026-08-24, gate **VERDE** il 2026-09-06
+  (`docs/NOTA-METODOLOGICA-M6.2-R2.md`)

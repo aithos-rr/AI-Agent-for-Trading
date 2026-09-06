@@ -1,6 +1,6 @@
 # Nota metodologica — Dataset M6.1 (esperimento 55555555-5555-5555-5555-555555555555)
 
-**Stato:** bozza in revisione · **Periodo coperto:** 2026-07-07 → 2026-07-27 · **Ruolo del dataset:** smoke test infrastrutturale (M6.1). Questo dataset NON è il dataset di tesi: la raccolta dati per le RQ avverrà su un esperimento nuovo (M7), avviato dopo il gate M6.2 con tutti i fix qui documentati già deployati. Il dataset M6.1 resta archiviato nel DB per trasparenza e riproducibilità della cronaca di sviluppo.
+**Stato:** definitivo (dataset archiviato, chiuso 2026-07-27) · **Periodo coperto:** 2026-07-07 → 2026-07-27 · **Ruolo del dataset:** smoke test infrastrutturale (M6.1). Questo dataset NON è il dataset di tesi: la raccolta dati per le RQ avverrà su un esperimento nuovo (M7), avviato dopo il gate M6.2 con tutti i fix qui documentati già deployati. Il dataset M6.1 resta archiviato nel DB per trasparenza e riproducibilità della cronaca di sviluppo.
 
 ## 1. Scopo e limiti d'uso
 
@@ -61,3 +61,32 @@ I servizi sono stati fermati alle **14:31 UTC** (ultimo tick eseguito: 14:30, 4 
 ## 3. Cosa cambia per M7
 
 Tutti i difetti sopra hanno fix committati che saranno in produzione dal tick 1 dell'esperimento M7 (redeploy su sha unico, gate M6.2): ClosureReconciler (ADR-0038) · fee per-oid (8411576) · funding sign nativo (d76a2ff) · quarter label (ba71d8d) · baseline live (ADR-0036) · policy no-retry dichiarata (ADR-0037). Le precondizioni operative (credito API, wallet re-fundati, seed nuovo) sono formalizzate in M6.2-PLAN. La detection DB↔chain (ADR-0025) resta attiva come safety net con attesa di zero segnalazioni. Lo smoke M6.2 girerà sui saldi residui non uniformi di fine M6.1 (decisione esplicita di contenimento costi): il gate misura correttezza infrastrutturale, non performance; l'esperimento M7 partirà con wallet nuovi finanziati con $1.000.
+
+---
+
+## Addendum 2026-09-06 — esito del gate M6.2
+
+Il §3 sopra è stato scritto il 2026-07-27, prima dello smoke. Resta com'era (è il record di
+ciò che ci si aspettava); questo addendum registra come è andata.
+
+Lo smoke M6.2 è stato eseguito **due volte**:
+
+- **r1** — esperimento `6666…`, gate **ROSSO** il 2026-08-04.
+- **r2** — esperimento `7777…`, 2026-08-04 → 2026-08-24, gate **VERDE** il 2026-09-06.
+  Esito per criterio: [`NOTA-METODOLOGICA-M6.2-R2.md`](NOTA-METODOLOGICA-M6.2-R2.md).
+
+**Alla lista dei fix del §3 va aggiunto ADR-0039** (scoping per esperimento di ogni lookup
+di posizioni aperte), che è la causa del rosso di r1 e il motivo per cui r2 esiste.
+
+**Correzione sostanziale al §2.2 e al §2.8 di questa nota.** Le 8 righe `positions` lasciate
+aperte sul vecchio esperimento sono qui descritte come inerti («rumore di detection atteso»,
+«restano aperte nel DB per costruzione»). **Non lo erano.**
+[ADR-0039](decisions/0039-experiment-scoped-open-position-lookups.md) ha dimostrato che
+erano visibili allo smoke r1 — per il DB «aperta» era uno stato globale, non scoped
+all'esperimento — e ne hanno corrotto le chiusure a cascata (~147 righe `model_close`
+contaminate, 7 zombie permanenti). Il testo del §2.2/§2.8 **non viene riscritto**: registra
+correttamente ciò che era stato osservato e deciso il 2026-07-27. Dallo scoping per
+esperimento in poi la politica *annotate not repair* è sicura **per costruzione**.
+
+Resta inoltre non registrato lo **spot-check `reasoning_tokens=0`** su Opus thinking-only
+(§2.6), previsto «al primo tick dello smoke»: non risulta eseguito né per r1 né per r2.

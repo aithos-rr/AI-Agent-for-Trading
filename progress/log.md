@@ -1472,3 +1472,41 @@ blocco; `caecd46` ADR-0011 è precedente e fuori blocco. Riverificare con `git l
 riusare il wallet con stato pulito (vedi runbook M5-T14 Opzione 2, swap address nel DB).
 
 Human-gate restante: **M5-T14** (completamento sugli altri 3 provider).
+
+---
+
+## M6.1 CHIUSO (2026-07-27) — smoke di produzione, 20 giorni, 4 modelli
+
+Prima run di produzione reale (esperimento `5555…`, 2026-07-07 → 27). Ha svolto la sua
+funzione: far emergere sotto carico i difetti che i test non catturavano. Backfill fee (394
+righe nette), repair one-shot delle 5 zombie (ADR-0035), baseline live (ADR-0036), policy
+no-retry sui schema-failure (ADR-0037), fix root-cause T4b (ADR-0038). Dataset archiviato,
+**non comparativo**: `docs/NOTA-METODOLOGICA-M6.1.md`.
+
+## GATE M6.2 r1 ROSSO (2026-08-04) — leakage cross-experiment
+
+Smoke su esperimento `6666…` invalidato. Causa radice: `list_open_for_model` filtrava per
+`model_id` + `closed_at IS NULL` **senza** `experiment_id`, quindi le 8 righe lasciate
+aperte da M6.1 (stessi `model_id`, stessi wallet) erano visibili allo smoke → shift FIFO
+delle chiusure, ~147 righe `model_close` contaminate, 7 zombie permanenti. Fix a livello
+repository (`experiment_id` obbligatorio e keyword-only): **ADR-0039**, commit `dd8f1ec` /
+`0d54944` / `750bd8c`. Dataset r1 throwaway, non riparato per scelta.
+
+## GATE M6.2 r2 VERDE (2026-09-06) — M7 GO
+
+Re-smoke su esperimento `7777…`, 2026-08-04 → 2026-08-24, sha unico `750bd8c` (tag
+`m6.2-gate-r2`), wallet flat all'avvio come prescritto da ADR-0039. Criteri C1-C9 valutati
+sulla finestra pre-registrata di 48h (04→06/08, ~96-98% success per modello): **VERDE**.
+
+I servizi sono poi rimasti su altri 18 giorni (7.580 run) — estensione non pianificata,
+diventata uno stress test: crediti API OpenAI e Anthropic esauriti dal 07/08, `usa-cheap` e
+`usa-premium` ~100% failed dal 09/08, `cn-cheap` 96,5% e `cn-premium` 97,1% sui 20 giorni.
+**Zero zombie** e isolamento perfetto malgrado due agenti in blackout permanente. Le 5
+posizioni CN aperte allo stop, chiuse on-chain da SL/TP entro il 25/08, sono state
+bookkeppate dal ClosureReconciler il 2026-09-06 al primo tick di un redeploy dedicato
+(`closed=5`, `still_open=0`, timestamp storici fedeli; 429 chiusure = 429 outcomes).
+
+Residuo aperto: **burst `ChainDivergence` 15-22/08 su `cn-cheap`** (33/10/68/5), fuori dalla
+finestra di gate, diagnosi in corso — da chiudere prima di M7. Dettaglio e limiti d'uso:
+`docs/NOTA-METODOLOGICA-M6.2-R2.md`; esito per criterio in `docs/M6.2-PLAN.md` §7.
+
