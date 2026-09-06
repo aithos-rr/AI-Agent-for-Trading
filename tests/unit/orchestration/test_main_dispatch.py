@@ -36,7 +36,10 @@ _BASE = {
 
 
 def _agent_settings(**overrides: object) -> AgentSettings:
-    return AgentSettings(**{**_BASE, **overrides})  # type: ignore[arg-type]
+    # _env_file=None isola gli unit test da un eventuale /workspace/.env di sviluppo:
+    # senza, i valori del .env locale sovrascrivono i default e i test passano o
+    # falliscono a seconda della macchina. Stesso pattern di test_settings.py.
+    return AgentSettings(_env_file=None, **{**_BASE, **overrides})  # type: ignore[arg-type,call-arg]
 
 
 def _orchestrator_settings(**overrides: object) -> ContextOrchestratorSettings:

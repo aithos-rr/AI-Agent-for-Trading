@@ -1458,7 +1458,11 @@ collegare a **D2** (outcome labeling HOLD/FLAT, ADR-0014).
    per `model_id` → cost-tracking usa il fallback (1.00/5.00) se non combaciano.
 2. **Test-hygiene `.env` pollution**: `test_settings.py::test_agent_settings_optional_fields_default_none`
    fallisce quando un `.env` reale è presente in `/workspace` (setta `AIAT_TEMPERATURE=0`). Isolare
-   con `_env_file=None` negli helper.
+   con `_env_file=None` negli helper. — **CHIUSO 2026-09-06**: `4527a1e` aveva coperto un solo
+   helper; gli altri cinque costruttori di `AgentSettings` in `tests/unit` sono stati allineati
+   nell'audit di chiusura M6.2 (i costruttori `ContextOrchestratorSettings` erano già isolati).
+   Nota di perimetro: `_env_file=None` neutralizza il **file** `.env`, non le variabili `AIAT_*`
+   esportate nella shell.
 3. **ADR-0025**: atomicità flip opposite-side (vedi sopra).
 
 **DA PUSHARE quando M5-T14 sarà completo** (tutti e 4 i provider): il blocco «da ADR-0020 in

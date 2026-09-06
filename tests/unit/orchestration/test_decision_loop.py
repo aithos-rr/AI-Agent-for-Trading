@@ -226,8 +226,8 @@ _BASE_AGENT: dict[str, object] = {
 
 
 def _make_agent_settings(**overrides: object) -> AgentSettings:
-    """Build AgentSettings without loading from env (matches test_lifecycle.py pattern)."""
-    return AgentSettings(**{**_BASE_AGENT, **overrides})  # type: ignore[arg-type]
+    """Build AgentSettings isolated from any repo-root .env (``_env_file=None``)."""
+    return AgentSettings(_env_file=None, **{**_BASE_AGENT, **overrides})  # type: ignore[arg-type,call-arg]
 
 
 def _make_mock_snapshot() -> MagicMock:

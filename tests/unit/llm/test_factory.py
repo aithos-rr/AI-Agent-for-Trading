@@ -44,7 +44,10 @@ def _base_settings(**kwargs: object) -> AgentSettings:
         "llm_gateway": "direct",  # explicit — overrides any .env value
     }
     defaults.update(kwargs)
-    return AgentSettings(**defaults)  # type: ignore[arg-type]
+    # _env_file=None isola gli unit test da un eventuale /workspace/.env di sviluppo:
+    # senza, i valori del .env locale sovrascrivono i default e i test passano o
+    # falliscono a seconda della macchina. Stesso pattern di test_settings.py.
+    return AgentSettings(_env_file=None, **defaults)  # type: ignore[arg-type,call-arg]
 
 
 # ---------------------------------------------------------------------------

@@ -37,7 +37,10 @@ def orchestrator_settings() -> ContextOrchestratorSettings:
 
 @pytest.fixture
 def agent_settings() -> AgentSettings:
+    # _env_file=None isola gli unit test da un eventuale /workspace/.env di sviluppo
+    # (stesso pattern di orchestrator_settings sopra e di test_settings.py).
     return AgentSettings(
+        _env_file=None,  # type: ignore[call-arg]
         **_BASE,  # type: ignore[arg-type]
         service_role="agent",
         model_id="model-openai-test",
