@@ -5,7 +5,7 @@
 **Milestone**: M5-T14 (scoperto in review avversariale), follow-up **pre-M6 BLOCCANTE** (chiuso 2026-07-06)
 **PRD reference**: §3.2.3 (`decision_actions`); §7.6 (DecisionsRepository / PositionsRepository);
 §4.1 step [8]/[10]; ADR-0024 (execution bookkeeping per-azione), ADR-0025 (atomicità flip)
-**Closes deferral**: none (tracciamento di un difetto; il fix è una sessione dedicata pre-M6)
+**Closes deferral**: none (tracciamento di un difetto; fix chiuso il 2026-07-06, `1ec8029`)
 
 ## Contesto
 
@@ -142,7 +142,7 @@ assunzione era **violata**: `RealHyperliquidClient` hard-codava `fee_usd=None` p
 `FeeEvent` veniva creato e le 189 outcomes M6 avevano `sum_fees_usd=0`. La catena di `close_position`
 qui era corretta; mancava la sorgente della fee.
 
-**Fixato in `51a8e05`** (finding A): `check_position_closure`/`_close_order`/`_open_orders` ora
+**Fixato in `51a8e45`** (finding A): `check_position_closure`/`_close_order`/`_open_orders` ora
 riconciliano la fee reale da `user_fills` per `oid` e valorizzano `OrderResult.fee_usd`, così la
 catena `positions.py` (invariata) scrive i `FeeEvent` `taker_open`/`taker_close`. La fee di chiusura
 **autonoma** SL/TP è stata poi persistita in **ADR-0032** (il ramo autonomo non passa da questo path

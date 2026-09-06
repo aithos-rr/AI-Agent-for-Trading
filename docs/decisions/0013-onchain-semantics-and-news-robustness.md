@@ -2,7 +2,7 @@
 
 **Data**: 2026-06-14
 **Status**: accepted
-**Milestone**: M3 (vedi `PRD_V2.md` §12)
+**Milestone**: M3 (collectors onchain + news, post-smoke reale M3-T11)
 **PRD reference**: §6.3 (OnChainSnapshot), §7.2 (collectors), §15.4 (D5 / ADR-0011)
 **Closes deferral**: none (raffina §6.3 e ADR-0011 con evidenza dello smoke reale)
 

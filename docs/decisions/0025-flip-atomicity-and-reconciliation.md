@@ -1,7 +1,7 @@
 # ADR-0025: Atomicità del flip (close→open) e assenza di riconciliazione DB↔chain
 
 **Data**: 2026-07-07
-**Status**: accepted — **detection + alert implementata in M6.2** (2026-07-11); **auto-repair** ancora deferito (criteri sotto)
+**Status**: accepted — **detection + alert implementata in M6.2** (2026-07-11); **fix causa radice T4b → ADR-0038** (2026-07-27); **auto-repair** ancora deferito (criteri sotto)
 **Milestone**: emerso in M5-T14 (ricognizione post-fix-0027/0030); riconciliazione **pre-M7 BLOCCANTE** (non pre-M6)
 **PRD reference**: §4.1 (decision loop / esecuzione); ADR-0027, ADR-0030 (path chiusura, di cui questo è il completamento sul flip); ADR-0022 (Opzione 2)
 **Closes deferral**: none
@@ -139,6 +139,13 @@ chiusa** → **zombie**. Due difetti concorrenti:
 Entrambe le opzioni sono **loop surgery** sul path di chiusura (stessa famiglia di rischio di
 ADR-0027/0030), quindi deferite con i criteri sotto.
 
+> **2026-07-27 — la causa radice è stata risolta da [ADR-0038](0038-closure-reconciler-orchestrator-t4b.md).**
+> È stata implementata l'opzione **(B)** (rilevazione a livello di posizione, `detect_autonomous_closure`
+> per match dell'`oid` dei trigger) *e* l'effetto dell'opzione (A), spostando il bookkeeping fuori dal
+> tick dell'agente in un job per-tick del context-orchestrator eseguito prima dell'apertura agent.
+> Resta deferito il **solo auto-repair** delle divergenze, con i criteri qui sotto invariati.
+> Verifica sul campo: zero zombie sul re-smoke r2 (20 giorni, `docs/NOTA-METODOLOGICA-M6.2-R2.md`).
+
 ### Perché detection-only per M6.2 (auto-repair deferito)
 
 - L'auto-repair (registrare la chiusura mancante / riconciliare la size) **muta lo stato delle
@@ -204,7 +211,7 @@ ADR-0027/0030), quindi deferite con i criteri sotto.
   2 righe + e2e `_reconcile_chain_state` logga `ChainDivergence` e il tick prosegue)
 - [x] **Causa radice T4b documentata** (SL fired + reopen stesso-tick) + test
   `test_misses_close_when_symbol_reopened_same_tick`
-- [ ] **Fix causa radice T4b** (riordino step 9↔8 **oppure** rilevazione a livello posizione) —
-  deferito post-M6.2 (loop surgery, criteri sotto)
+- [x] **Fix causa radice T4b** (riordino step 9↔8 **oppure** rilevazione a livello posizione) —
+  **chiuso da ADR-0038** (2026-07-27): opzione (B) + esecuzione al livello orchestrator
 - [ ] **Auto-repair** (riconciliazione correttiva delle divergenze) — deferito post-M6.2, criteri sopra
 - [ ] Test gating auto-repair / fix T4b (SL+reopen stesso tick → nessuno zombie; flip → riconvergenza)

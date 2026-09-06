@@ -8,9 +8,17 @@ Un Architecture Decision Record documenta una decisione architetturale o
 implementativa che si discosta dal `PRD_V2.md` (frozen) o lo estende/raffina
 sulla base di evidenze emerse durante l'implementazione.
 
-Gli ADR sono **immutabili** una volta in stato `accepted`. Se una decisione
-viene sostituita, si crea un nuovo ADR con `Status: supersedes ADR-XXXX`,
-e l'originale viene marcato `superseded by ADR-YYYY`.
+Gli ADR sono **immutabili nella decisione** una volta in stato `accepted`: il
+contenuto della scelta non si riscrive. Restano invece aggiornabili gli
+*annotamenti di esito* — spunte di propagazione, note datate del tipo
+`> 2026-MM-GG: …`, e rimandi a un ADR successivo che chiude un punto qui deferito
+(es. ADR-0025 → ADR-0038). È la convenzione realmente in uso nel corpus: nessun
+ADR usa i campi `supersedes` / `superseded by` del template, le correzioni sono
+sempre state registrate come note datate bidirezionali.
+
+La colonna `Status` dell'indice riporta lo stato **canonico** (`accepted`) più le
+sole qualifiche che dicono se il lavoro è finito; le note di ratifica restano nel
+file del singolo ADR.
 
 ## Quando creare un ADR
 
@@ -32,12 +40,28 @@ e l'originale viene marcato `superseded by ADR-YYYY`.
 
 ## Indice degli ADR accettati
 
+> **Nota sulla numerazione — i numeri 0002-0005 non esistono e non sono record perduti.**
+> Erano stati *riservati* in fase di pianificazione da `docs/TASK_MAP.md` (sezione «ADR
+> previsti durante M0→M5») alle quattro bounded deferral D2-D5. `TASKS.md` — il documento
+> che il loop ha poi effettivamente eseguito — ha sostituito i numeri fissi con la regola
+> «prossimo numero progressivo», quindi le quattro decisioni sono state scritte comunque, ma
+> sotto il primo numero libero del momento e con lo **slug invariato**: 0002 → **0009**
+> (D3, `exception-classification`), 0003 → **0011** (D5, `rss-sources`), 0004 → **0012**
+> (D4, `controlled-signals`), 0005 → **0014** (D2, `holdflat-outcome`). Nessun file
+> `0002`…`0005` è mai esistito su alcun branch, tag o oggetto dangling
+> (`git log --all --diff-filter=D -- docs/decisions/` è vuoto) e nessun documento del repo
+> cita `ADR-0002`…`ADR-0005`. Il salto 0001 → 0006 è dunque un artefatto di numerazione, non
+> una lacuna documentale: **non vanno creati ADR retroattivi per riempirlo**.
+>
+> Per lo stesso motivo la colonna `Data` **non è monotona**: anche ADR-0025 (2026-07-07) è
+> stato riservato in anticipo e scritto dopo 0026-0030 (tutti 2026-07-01/06).
+
 | ID | Titolo | Status | Data | Milestone | Closes deferral |
 |----|--------|--------|------|-----------|-----------------|
-| 0001 | Adozione del pattern ADR per Phase 5 | accepted | 2026-05-14 | M0 | none |
-| 0006 | Conteggio tabelle DB — 20, non 17 | accepted | 2026-06-13 | M1 | none |
-| 0007 | Set repository — §7.6 autoritativo, niente `ledger.py` | accepted | 2026-06-13 | M1, M3, M4, M5 | none |
-| 0008 | Routing LLM dual-mode — OpenRouter (sviluppo) / provider diretti (esperimento) | accepted | 2026-06-13 | M2 | none |
+| 0001 | [adopt-adr-pattern](0001-adopt-adr-pattern.md) — Adozione del pattern ADR per Phase 5 | accepted | 2026-05-14 | M0 | none |
+| 0006 | [db-table-count](0006-db-table-count.md) — Conteggio tabelle DB — 20, non 17 | accepted | 2026-06-13 | M1 | none |
+| 0007 | [repository-set](0007-repository-set.md) — Set repository — §7.6 autoritativo, niente `ledger.py` | accepted | 2026-06-13 | M1, M3, M4, M5 | none |
+| 0008 | [llm-routing-dual-mode](0008-llm-routing-dual-mode.md) — Routing LLM dual-mode — OpenRouter (sviluppo) / provider diretti (esperimento) | accepted | 2026-06-13 | M2 | none |
 | 0009 | [exception-classification](0009-exception-classification.md) — isinstance() primario + string-match fallback | accepted | 2026-06-13 | M2 | D3 |
 | 0010 | [vcr-cassette-recording](0010-vcr-cassette-recording.md) — meccanismo cassette, slug OpenRouter, limiti cost ledger | accepted | 2026-06-14 | M2 | none |
 | 0011 | [rss-sources](0011-rss-sources.md) — 10 items/tick, 2 fonti RSS pubbliche (CoinDesk + Cointelegraph; CryptoPanic dismesso, sostituito 2026-06-29), fallimento parziale tollerato | accepted | 2026-06-14 | M3 | D5 |
@@ -54,14 +78,14 @@ e l'originale viene marcato `superseded by ADR-YYYY`.
 | 0022 | [m5t14-real-llm-smoke](0022-m5t14-real-llm-smoke.md) — M5-T14 con LLM reali + HL testnet (non mock): il mock nasconde il confound formato structured-output provider-specifico; Opzione 2 (un agent/volta, 1 wallet reale, swap address DB); concorrenza 4-agent coperta da e2e | accepted | 2026-06-29 | M5-T14 | none |
 | 0023 | [provider-aware-sampling](0023-provider-aware-sampling.md) — client provider-aware sui sampling param: Anthropic Opus 4.8 (thinking-only) rifiuta `temperature` (HTTP 400, M5-T14) → omessa; asimmetria di determinismo cross-model dichiarata (limite tesi); corregge ADR-0020 | accepted | 2026-06-29 | M5-T14/M7 | none |
 | 0024 | [per-action-execution-isolation](0024-per-action-execution-isolation.md) — isolamento errori esecuzione per-azione (un ordine rifiutato non aborta il tick → run PARTIAL) + tassonomia `execution_status` (HOLD/no-op→not_applicable, filled→FILLED+executed, rejected→FAILED+error) via `mark_action_execution`; bug bookkeeping stanato da M5-T14; nessuna migrazione | accepted | 2026-06-29 | M5-T14/M7 | none |
-| 0025 | [flip-atomicity-and-reconciliation](0025-flip-atomicity-and-reconciliation.md) — flip/zombie chain↔DB; **detection + alert netted per-coin** implementata M6.2 (`chain_reconciliation.py` + `_reconcile_chain_state` → `errors` `ChainDivergence` con `position_id`+`delta`; aggrega righe DB per symbol, HL netta per coin); **causa radice T4b** documentata (SL fired + reopen stesso-tick → `check_position_closure` corto-circuita su `szi!=0`, `hyperliquid_client.py:786`); **auto-repair + fix T4b** deferiti (criteri nell'ADR); evidenza empirica cn-premium | accepted (detection M6.2; auto-repair + fix T4b deferiti) | 2026-07-07 | M5-T14/M6.2/M7 | none |
+| 0025 | [flip-atomicity-and-reconciliation](0025-flip-atomicity-and-reconciliation.md) — flip/zombie chain↔DB; **detection + alert netted per-coin** implementata M6.2 (`chain_reconciliation.py` + `_reconcile_chain_state` → `errors` `ChainDivergence` con `position_id`+`delta`; aggrega righe DB per symbol, HL netta per coin); **causa radice T4b** documentata (SL fired + reopen stesso-tick → `check_position_closure` corto-circuita su `szi!=0`, `hyperliquid_client.py:786`); **auto-repair + fix T4b** deferiti (criteri nell'ADR); evidenza empirica cn-premium | accepted (detection M6.2; **fix root-cause T4b → ADR-0038**, 2026-07-27; auto-repair ancora deferito) | 2026-07-07 | M5-T14/M6.2/M7 | none |
 | 0026 | [a7-lightweight-ping](0026-a7-lightweight-ping.md) — probe credenziali A7 lightweight `ping()` (raw `_llm.ainvoke`, NO structured output) su `BaseLLMClient`; riallinea A7 a PRD §10.1 (l'`invoke`→`invoke_structured`→`TradeDecision` era la deviazione); chiude il FOLLOW-UP di `lifecycle.py`; sblocca per costruzione OpenAI/DeepSeek/Qwen; `invoke_structured`/`json_schema` intatti (scope M6, ADR-0008) | accepted | 2026-07-01 | M5-T14/M6/M7 | none |
-| 0027 | [flat-close-bookkeeping-gap](0027-flat-close-bookkeeping-gap.md) — path chiusura FLAT persiste parzialmente: manca riga `orders` `order_kind='close'`, `positions.closing_action_id` resta NULL, `chk_position_closed_consistency` non richiede `closing_action_id` sul ramo chiuso; scoperto tick-2 Agent OpenAI (SOL chiusa on-chain, PnL +0.201); stessa famiglia di ADR-0024; fix (order close + closing_action_id + migration CHECK) in sessione dedicata; NON blocca M5-T14, **BLOCCA M6** (dataset); NOTA 2026-07-11: l'assunzione `close_order.fee_usd` era violata dall'execution layer (`fee_usd=None` hard-coded) → fixata in `51a8e05` (finding A, fee reale da `user_fills`) | accepted | 2026-07-01 | M5-T14/M6 | none |
+| 0027 | [flat-close-bookkeeping-gap](0027-flat-close-bookkeeping-gap.md) — path chiusura FLAT persiste parzialmente: manca riga `orders` `order_kind='close'`, `positions.closing_action_id` resta NULL, `chk_position_closed_consistency` non richiede `closing_action_id` sul ramo chiuso; scoperto tick-2 Agent OpenAI (SOL chiusa on-chain, PnL +0.201); stessa famiglia di ADR-0024; fix (order close + closing_action_id + migration CHECK) **implementato 2026-07-06** (`1ec8029`); NON blocca M5-T14, **BLOCCA M6** (dataset); NOTA 2026-07-11: l'assunzione `close_order.fee_usd` era violata dall'execution layer (`fee_usd=None` hard-coded) → fixata in `51a8e45` (finding A, fee reale da `user_fills`) | accepted (fix chiuso 2026-07-06) | 2026-07-01 | M5-T14/M6 | none |
 | 0028 | [openai-json-schema-fallback-variance](0028-openai-json-schema-fallback-variance.md) — verifica anticipata direct-provider (ADR-0008): `json_schema` su OpenAI `gpt-4.1-mini` diretto funziona ma con varianza residua sotto temp=0+seed (~2/8 via fallback, 0 fallimenti irrecuperabili); `fallback_used` = metrica sperimentale per-modello (non allarme); limite determinismo da dichiarare in RESEARCH §7; Qwen/DeepSeek da osservare; `structured.py` intatto | accepted | 2026-07-01 | M5-T14 | none |
 | 0029 | [structured-output-provider-aware](0029-structured-output-provider-aware.md) — structured output **provider-aware**: il confine dev/direct di ADR-0008 (`invoke_structured`) si materializza sull'accesso diretto; gemello di ADR-0023 (sampling) e ADR-0028 (fallback variance); vincolante M6/M7 | accepted | 2026-07-06 | M5-T14/M6/M7 | none |
-| 0030 | [close-path-followups-check-and-sltp-callsite](0030-close-path-followups-check-and-sltp-callsite.md) — follow-up di ADR-0027: (P1) `chk_position_closed_consistency` reso **condizionale** su `close_reason` (SL/TP/liquidated ammettono `closing_action_id` NULL), (P2) call-site `_check_pending_closures` allineato alla firma a 5 arg + attribuzione SL/TP per-lato; P1+P2 fixati `b65e833` (2026-07-07); P3 (flip) → ADR-0025 | accepted | 2026-07-06 | M5-T14/M6 | none |
-| 0031 | [funding-ledger](0031-funding-ledger.md) — funding ledger (finding B): job orchestrator 8h legge `userFunding` HL per wallet → riga `FundingEvent` per pagamento orario contro la posizione aperta; idempotente `(position_id, period_end)` senza migration; `HLPublicInfoClient.user_funding_history`; `outcomes.sum_funding_usd` già lo somma | accepted | 2026-07-11 | M6.2 | none |
-| 0032 | [autonomous-close-fee](0032-autonomous-close-fee.md) — chiude ADR-0030 (iv) per SL/TP: la chiusura autonoma persiste il `FeeEvent` (`taker_close`) da `PositionClosureInfo.fee_usd` (valorizzata in 51a8e45) linkato all'ordine trigger scattato → entra in `sum_fees_usd`; liquidazione resta deferita (nessun ordine da linkare, ADR-0025); nessuna migration | accepted | 2026-07-11 | M6.2 | none |
+| 0030 | [close-path-followups-check-and-sltp-callsite](0030-close-path-followups-check-and-sltp-callsite.md) — follow-up di ADR-0027: (P1) `chk_position_closed_consistency` reso **condizionale** su `close_reason` (SL/TP/liquidated ammettono `closing_action_id` NULL), (P2) call-site `_check_pending_closures` allineato alla firma a 5 arg + attribuzione SL/TP per-lato; P1+P2 fixati `b65e833` (2026-07-07); P3 (flip) → ADR-0025; limite **(iv)** chiuso per SL/TP da ADR-0032 | accepted | 2026-07-06 | M5-T14/M6 | none |
+| 0031 | [funding-ledger](0031-funding-ledger.md) — funding ledger (finding B): job orchestrator 8h legge `userFunding` HL per wallet → riga `FundingEvent` per pagamento orario contro la posizione aperta; idempotente `(position_id, period_end)` senza migration; `HLPublicInfoClient.user_funding_history`; `outcomes.sum_funding_usd` già lo somma; include la correzione della **convenzione di segno** (negate at ingest, `d76a2ff` 2026-07-13 + repair one-shot di 264 righe) | accepted | 2026-07-11 | M6.2 | none |
+| 0032 | [autonomous-close-fee](0032-autonomous-close-fee.md) — chiude ADR-0030 (iv) per SL/TP: la chiusura autonoma persiste il `FeeEvent` (`taker_close`) da `PositionClosureInfo.fee_usd` (valorizzata in 51a8e45) linkato all'ordine trigger scattato → entra in `sum_fees_usd`; liquidazione resta deferita (nessun ordine da linkare, ADR-0025); filtro `user_fills` ristretto all'`oid` della chiusura (fee gonfie, `8411576`, 2026-07-27); nessuna migration | accepted | 2026-07-11 | M6.2 | ADR-0030 (iv) per SL/TP |
 | 0033 | [tax-sim-writer](0033-tax-sim-writer.md) — writer/job tax-sim: job orchestrator giornaliero (`TaxSimRunner`) aggrega gli `outcomes` del periodo chiuso per modello via `TaxSimulationRepository` esistente; periodo `daily`/`quarter` via env; rate 0.33 (regime IT leva) come override di config esplicito (server_default schema 0.26 invariato, nessuna migration); idempotente su UNIQUE `(exp,model,quarter_label)` | accepted | 2026-07-11 | M6.2 | none |
 | 0034 | [failure-stage-vocabulary](0034-failure-stage-vocabulary.md) — vocabolario **chiuso** di `runs.failure_stage` (`error`/`timeout`/`llm_auth`/`llm_rate`/`llm_parse`, `NULL` se non fallita) + semantica `errors` (`error_kind`=classe eccezione; `MissedTick` distinto); formalizza il mapping di finding D (`9ad318a`), enforced in codice (`_failure_stage_for`), nessun CHECK/migration; residuo noto `LLMTimeoutError→error` | accepted | 2026-07-11 | M6.2 | none |
 | 0035 | [repair-one-shot-zombie-positions-m6.1](0035-repair-one-shot-zombie-positions-m6.1.md) — script one-shot `repair_zombie_positions.py` per le 5 zombie M6.1 (exp 5555…) confermate on-chain (T4b + agente `usa-premium` morto): dry-run default + `--apply` in una transazione (rollback totale su `ERROR`), idempotenza via pre-state assertion (SKIP), 5 convenzioni (VWAP exit, `closing_run_id`=primo run post-close qualunque status, SL/TP `closing_action_id` NULL, `realized_pnl`=`closedPnl` on-chain gross, funding post-chiusura riassegnato); riusa `OutcomeResolver` + helper puro `holding_duration_min`; nessuna migration, nessun cambio runtime; **one-shot, mai su M7** | accepted | 2026-07-24 | M6.2 | none |
