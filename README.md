@@ -108,9 +108,9 @@ src/aiat/       one package, five deployments in two roles (AIAT_SERVICE_ROLE di
                 domain · context · llm · execution · orchestration · baselines ·
                 db · config · observability · prompts
 alembic/        schema migrations — the database is never edited by hand
-docs/           PRD_V2 (frozen blueprint) · RESEARCH_DESIGN · M6.1 + M6.2-r2
-                methodological notes · M6.2-PLAN (gate criteria + outcome) ·
-                decisions/ (ADRs) · runbooks
+docs/           ATLAS (guided map of the whole system, 6 parts) · PRD_V2 (frozen
+                blueprint) · RESEARCH_DESIGN · M6.1 + M6.2-r2 methodological notes ·
+                M6.2-PLAN (gate criteria + outcome) · decisions/ (ADRs) · runbooks
 scripts/        one-shot ops: experiment seed, fee backfill, audited data repairs, baselines
 tests/          813 tests: unit · integration · e2e (isolation, invariants,
                 cross-experiment scoping) · VCR cassettes
