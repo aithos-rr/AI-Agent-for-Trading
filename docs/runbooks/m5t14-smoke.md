@@ -21,8 +21,9 @@ a time, reusing **one** funded testnet wallet, moving its address across the 4 m
 
 ## Prerequisites (once)
 
-- Postgres up and migrated to **alembic 003**: `alembic upgrade head` (startup check A
-  `_check_db_connectivity_and_schema` requires version `003`).
+- Postgres up and migrated to **alembic 004**: `alembic upgrade head` (startup check A
+  `_check_db_connectivity_and_schema` requires version `004` — see
+  `EXPECTED_ALEMBIC_VERSION` in `src/aiat/orchestration/lifecycle.py`).
 - Experiment seeded: `uv run python scripts/seed_experiment.py` with the 4 wallet env vars set
   (placeholders are fine — Option 2 overwrites one model's address at a time). Note the printed
   `experiment_id` and `AIAT_PROMPT_TEMPLATE_HASH`.
