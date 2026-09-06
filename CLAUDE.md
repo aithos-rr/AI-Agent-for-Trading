@@ -240,11 +240,14 @@ Quando ti perdi:
 
 1. `docs/PRD_V2.md` §X.Y per blueprint
 2. `docs/RESEARCH_DESIGN.md` per giustificazione scientifica
-3. `docs/decisions/*.md` per decisioni evolutive
-4. Git log per storia delle scelte
-5. Se ancora confuso → chiedi all'utente
+3. `docs/decisions/*.md` per decisioni evolutive (indice in `docs/decisions/README.md`)
+4. **Stato milestone**: `docs/M6.2-PLAN.md` §7 (criteri gate + esito) e
+   `docs/NOTA-METODOLOGICA-M6.2-R2.md` — **M6.2 chiuso VERDE il 2026-09-06**,
+   prossima milestone **M7**
+5. Git log per storia delle scelte
+6. Se ancora confuso → chiedi all'utente
 
 ---
 
-*Last updated: M0 setup. Aggiornare quando emergono nuove regole operative
-(es. dopo chiusura ADR significativi).*
+*Last updated: chiusura del gate M6.2 (re-smoke r2), 2026-09-06. Aggiornare quando
+emergono nuove regole operative (es. dopo chiusura ADR significativi).*

@@ -18,9 +18,9 @@
 <img src="https://img.shields.io/badge/python-3.12-3776ab?logo=python&logoColor=white" alt="Python 3.12" />
 <img src="https://img.shields.io/badge/Railway-6%20services-0B0D0E?logo=railway&logoColor=white" alt="Railway, 6 services" />
 <img src="https://img.shields.io/badge/PostgreSQL-16-336791?logo=postgresql&logoColor=white" alt="PostgreSQL 16" />
-<img src="https://img.shields.io/badge/governance-34%20ADRs-blue" alt="34 Architecture Decision Records" />
+<img src="https://img.shields.io/badge/governance-35%20ADRs-blue" alt="35 Architecture Decision Records" />
 <img src="https://img.shields.io/badge/tick-15%20min-blue" alt="15 minute tick" />
-<img src="https://img.shields.io/badge/tests-808%20passing-brightgreen" alt="808 tests" />
+<img src="https://img.shields.io/badge/tests-812%20passing-brightgreen" alt="812 tests" />
 </p>
 
 **🦉 [Watch them trade live →](https://dashboard-production-898d.up.railway.app/)**
@@ -78,8 +78,8 @@ interesting output is the audit trail, not the PnL.
   startup check, `Decimal` everywhere money flows
 - **ClosureReconciler** — stop-loss/take-profit closures that fire *between* ticks are
   detected on-chain and booked at orchestrator level, keeping DB and chain in agreement
-- **Cross-model isolation** — every agent query is filtered by `model_id`, enforced by
-  end-to-end tests with a DB trap
+- **Cross-model isolation** — every agent query is scoped by `model_id` **and**
+  `experiment_id`, enforced by end-to-end tests with a DB trap
 
 ## Scientific rigor
 
@@ -87,7 +87,7 @@ interesting output is the audit trail, not the PnL.
   persisted with every run and frozen for the whole experiment
 - **Frozen blueprint + ADR governance** — the PRD is tagged `prd-v2-frozen`; every
   deviation or evolutive decision is an Architecture Decision Record in
-  [`docs/decisions/`](docs/decisions/) (34 accepted so far)
+  [`docs/decisions/`](docs/decisions/) (35 accepted so far)
 - **Pre-registered baselines** — cash, buy & hold, and EMA-momentum curves are declared in
   [`docs/RESEARCH_DESIGN.md`](docs/RESEARCH_DESIGN.md) before the run, and computed from
   the same context snapshots the models see
@@ -95,18 +95,25 @@ interesting output is the audit trail, not the PnL.
   `userFills`; divergences are detected, root-caused, and documented — see the
   [M6.1 methodological note](docs/NOTA-METODOLOGICA-M6.1.md) for full transparency on the
   shakedown run
+- **Infrastructure gate, in the open** — the pre-registered exit criteria (C1–C9) live in
+  [`docs/M6.2-PLAN.md`](docs/M6.2-PLAN.md); the gate passed on 2026-09-06 against the r2
+  re-smoke (sha `750bd8c`, tag `m6.2-gate-r2`), with the run's failures, limits and one
+  open anomaly written up in the
+  [M6.2-r2 methodological note](docs/NOTA-METODOLOGICA-M6.2-R2.md)
 
 ## Repository structure
 
 ```
-src/aiat/       one Python package, five service roles (AIAT_SERVICE_ROLE dispatch):
+src/aiat/       one package, five deployments in two roles (AIAT_SERVICE_ROLE dispatch):
                 domain · context · llm · execution · orchestration · baselines ·
                 db · config · observability · prompts
 alembic/        schema migrations — the database is never edited by hand
-docs/           PRD_V2 (frozen blueprint) · RESEARCH_DESIGN · M6.1 methodological note ·
+docs/           PRD_V2 (frozen blueprint) · RESEARCH_DESIGN · M6.1 + M6.2-r2
+                methodological notes · M6.2-PLAN (gate criteria + outcome) ·
                 decisions/ (ADRs) · runbooks
 scripts/        one-shot ops: experiment seed, fee backfill, audited data repairs, baselines
-tests/          808 tests: unit · integration · e2e (isolation, invariants) · VCR cassettes
+tests/          813 tests: unit · integration · e2e (isolation, invariants,
+                cross-experiment scoping) · VCR cassettes
 tools/          gate_check.sh — milestone gate runner
 docker/         multi-stage Dockerfile: one image, role picked via env
 legacy/         the V1 prototype, preserved
