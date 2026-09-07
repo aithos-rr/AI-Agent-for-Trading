@@ -150,9 +150,19 @@ può già dire:
   soddisfatto; sull'estensione no, e finché la diagnosi è aperta le segnalazioni sono per
   definizione *non spiegate*.
 
-**Questo è il residuo che va chiuso prima di M7**, con un ADR se emerge una decisione di
-design, o con un'annotazione in questa nota se si rivela un falso positivo della detection.
-Non è opportuno derubricarlo: è l'unico segnale non spiegato prodotto dalla run.
+**Verdetto (2026-09-06) — di perimetro, non di causa.** Il burst **non incide sull'esito del
+gate**: cade fuori dalla finestra di valutazione pre-registrata, e la regola che rende questa
+lettura vincolante — «i criteri C1-C9 si valutano sulla finestra pre-registrata, l'estensione
+non pianificata non è finestra di gate» — è stata ratificata come regola di metodo in
+[ADR-0040](decisions/0040-doc-sync-gate-m62.md) punto (d), quindi vale allo stesso modo per
+M7. Sulla finestra 04→06/08 il criterio C6 è soddisfatto.
+
+**La causa radice resta aperta.** Questo verdetto dice dove il segnale non arriva, non che
+cosa sia: la diagnosi tecnica è in corso e va chiusa prima dell'avvio di M7, con un ADR se
+emerge una decisione di design, o con un'annotazione in questa nota se si rivela un falso
+positivo della detection. Non è opportuno derubricarlo: è l'unico segnale non spiegato
+prodotto dalla run, e la detection che l'ha emesso è la stessa che nel resto del periodo ha
+correttamente taciuto.
 
 ## 7. Limiti d'uso del dataset
 
@@ -206,6 +216,48 @@ RQ1, quindi il punto non è di sola osservabilità.
 
 ---
 
+## Addendum 2026-09-06 — chiusura operativa
+
+Che cosa è stato fatto il giorno della dichiarazione di gate verde, dopo la riconciliazione
+descritta al §5.
+
+**La batteria C1-C9 ora esiste.** Il §8 punto 1 registrava come lacuna principale il fatto che
+le query che avevano prodotto il verdetto non fossero versionate, e che quindi l'esito «non
+fosse riproducibile né verificabile da terzi — relatore incluso». È stata scritta:
+[`scripts/gate_check.sql`](../scripts/gate_check.sql), parametrica su `:experiment_id` e su una
+finestra temporale opzionale, con una query per criterio in ordine C1…C9, il testo del criterio
+in commento e la regola di lettura del risultato. **Ogni query è scoped sull'esperimento**: una
+verifica non scoped ripeterebbe esattamente il difetto che ha fatto fallire r1 (ADR-0039). Due
+criteri restano fuori dalla portata del SQL e il file lo dichiara invece di simularli: **C8** è
+sulla dashboard, che vive fuori dal monorepo, e la parte di **C3** che confronta il segno del
+funding con l'export HL richiede il CSV del venue. Per riprodurre il verdetto:
+
+```
+psql "$AIAT_DATABASE_URL" -v experiment_id=77777777-7777-7777-7777-777777777777 \
+     -v window_start='2026-08-04 00:00:00+00' -v window_end='2026-08-06 00:00:00+00' \
+     -f scripts/gate_check.sql
+```
+
+**Le decisioni di metodo sono state ratificate.** [ADR-0040](decisions/0040-doc-sync-gate-m62.md)
+registra il perimetro del gate (§6 qui sopra), conferma il deferral dell'auto-repair DB↔chain,
+e propaga in `RESEARCH_DESIGN.md` §7 le limitazioni che erano rimaste negli ADR — inclusa quella
+su D2, che vale anche per questo dataset: gli outcome controfattuali HOLD/FLAT non vengono
+scritti, quindi `outcomes` contiene solo posizioni realmente aperte e chiuse.
+
+**Un difetto trovato lo stesso giorno**, corretto in `12b2329` e annotato al §7: i `cost_events`
+di questo dataset portano il prezzo di fallback. Vale la pena notare che è un difetto che il
+gate **non avrebbe potuto intercettare**: C9 chiede che `cost_events` sia popolato per ogni run
+`success`, e lo era — con il numero sbagliato. Un criterio di presenza non è un criterio di
+correttezza, ed è una lezione che vale per la batteria appena scritta.
+
+**Che cosa resta aperto**, in ordine di urgenza per M7: la diagnosi del burst `ChainDivergence`
+(§6), il credito API dimensionato sulle quattro settimane (§8 punto 3), i wallet nuovi e
+l'`experiment_id` nuovo (§8 punto 4), lo spot-check `reasoning_tokens=0` (§8 punto 6) e
+`scripts/export_dataset.py` (§8 punto 7).
+
+---
+
 *Documento di chiusura del gate M6.2. Le decisioni tecniche che il gate certifica sono in
 [ADR-0038](decisions/0038-closure-reconciler-orchestrator-t4b.md) e
-[ADR-0039](decisions/0039-experiment-scoped-open-position-lookups.md).*
+[ADR-0039](decisions/0039-experiment-scoped-open-position-lookups.md); le decisioni di metodo in
+[ADR-0040](decisions/0040-doc-sync-gate-m62.md).*
