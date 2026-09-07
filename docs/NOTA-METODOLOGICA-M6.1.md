@@ -97,7 +97,28 @@ mentre `model_pricing.yaml` è indicizzato per `model_id` (ADR-0020), e la looku
 degradava in silenzio a un prezzo di fallback. Ogni riga `cost_events` di questo dataset porta
 quindi **1,00 / 5,00 / 0,00 USD per 1M token** invece del listino reale del modello, in
 `cost_usd` e in `pricing_snapshot`. I dati **non sono stati riparati** (dataset archiviato,
-stessa politica delle altre anomalie): qualunque cifra di costo va **ricalcolata dai token**,
-che sono registrati correttamente in `llm_invocations`. Il costo è una variabile dipendente di
-RQ1, quindi il punto non è di sola osservabilità.
+stessa politica delle altre anomalie). Il costo è una variabile dipendente di RQ1, quindi il
+punto non è di sola osservabilità.
+
+**Il dataset resta però ricostruibile, e per intero.** Le due metà del calcolo sono entrambe
+salve: i conteggi dei token sono sulla riga stessa (`cost_events.input_tokens`,
+`output_tokens`, `reasoning_tokens` — `src/aiat/db/models/cost_event.py:30-32`), e i **prezzi
+reali** sono in `models` (`pricing_input_usd_per_1m`, `pricing_output_usd_per_1m`,
+`pricing_reasoning_usd_per_1m` — `model.py:26-28`), perché il seed li aveva scritti con la
+chiave giusta: `scripts/seed_experiment.py:252` chiama `load_pricing_for_model(spec.model_id)`.
+È esattamente la stessa lookup che `llm/factory.py` sbagliava — il che spiega perché il difetto
+sia rimasto invisibile così a lungo, e perché sia riparabile in analisi con una sola join:
+
+```sql
+SELECT ce.model_id,
+       sum(ce.input_tokens     / 1e6 * m.pricing_input_usd_per_1m
+         + ce.output_tokens    / 1e6 * m.pricing_output_usd_per_1m
+         + ce.reasoning_tokens / 1e6 * m.pricing_reasoning_usd_per_1m) AS cost_usd_reale,
+       sum(ce.cost_usd)                                                AS cost_usd_a_db
+FROM cost_events ce JOIN models m ON m.id = ce.model_id
+WHERE ce.experiment_id = :experiment_id
+GROUP BY ce.model_id;
+```
+
+Nessuna cifra di costo di questo dataset va letta a DB: va ricalcolata.
 

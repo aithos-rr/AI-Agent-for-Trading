@@ -39,6 +39,8 @@
 --                   è il difetto che ha fatto fallire il gate r1 (ADR-0039 — per il DB "aperta"
 --                   è uno stato globale, e una verifica non scoped ripeterebbe l'errore
 --                   leggendo righe di esperimenti archiviati che condividono `model_id` e wallet).
+--   :equity_expected   (opzionale) equity iniziale attesa per il blocco P. Default 1000.00.
+--   :equity_tolerance  (opzionale) tolleranza in USD per il blocco P. Default 0.01.
 --   :window_start   (opzionale) estremo INCLUSIVO della finestra. Default '-infinity'.
 --   :window_end     (opzionale) estremo ESCLUSIVO della finestra. Default 'infinity'.
 --                   Con i default, i criteri sono valutati sull'intero esperimento.
@@ -1256,6 +1258,77 @@ GROUP BY c.model_id, m.model_name_api, m.pricing_reasoning_usd_per_1m
 ORDER BY c.model_id;
 
 
+
+-- =============================================================================================
+-- P — PRECONDIZIONE PRE-LANCIO: equity iniziale = 1.000,00 USD su tutti e 4 i modelli
+--
+--     NON e' un criterio di uscita: e' un controllo da eseguire *prima* di considerare
+--     avviata una raccolta dati, tipicamente subito dopo il primo tick.
+--
+--     Perche' esiste. M6.2-PLAN.md §2 P5 prescriveva «4 wallet re-fundati $1.000», ma la
+--     precondizione e' stata derogata per contenimento costi e r2 e' partito dai saldi residui
+--     delle esecuzioni precedenti: al primo snapshot (2026-08-04 10:45) i quattro wallet
+--     portavano 976,73 / 838,23 / 835,94 / 754,77 USD — oltre 220 dollari di spread fra il piu'
+--     capiente e il meno capiente. Per uno smoke infrastrutturale era accettabile e dichiarato;
+--     per M7 non lo e', perche' rende le variazioni percentuali non confrontabili fra le celle
+--     del disegno 2x2 e invita all'errore di calcolarle su un capitale nominale che nessun
+--     wallet aveva davvero. Vedi NOTA-METODOLOGICA-M6.2-R2.md, addendum 2026-09-06.
+--
+--     Come si legge. PASS solo se tutti e 4 i model_id hanno esattamente uno snapshot iniziale
+--     con equity entro la tolleranza. La tolleranza di default e' 0,01 USD (il centesimo);
+--     allargarla con -v equity_tolerance=... solo con una ragione scritta.
+--
+--     Attenzione: questo blocco va lanciato con la finestra ai valori di default (l'intero
+--     esperimento), altrimenti «primo snapshot» significa «primo snapshot della finestra».
+-- =============================================================================================
+\echo ''
+\echo '--- P — precondizione pre-lancio: equity iniziale 1.000,00 su 4/4 modelli --------'
+
+\if :{?equity_expected}
+\else
+\set equity_expected 1000.00
+\endif
+\if :{?equity_tolerance}
+\else
+\set equity_tolerance 0.01
+\endif
+
+WITH primo AS (
+    SELECT DISTINCT ON (a.model_id)
+           a.model_id, a.snapshot_at, a.equity_usd
+    FROM account_snapshots a
+    WHERE a.experiment_id = :'experiment_id'::uuid
+    ORDER BY a.model_id, a.snapshot_at
+)
+SELECT
+    'P'                                                        AS criterio,
+    p.model_id                                                 AS controllo,
+    p.equity_usd                                               AS valore,
+    :'equity_expected'::numeric || ' ± ' || :'equity_tolerance'::numeric AS atteso,
+    CASE WHEN abs(p.equity_usd - :'equity_expected'::numeric) <= :'equity_tolerance'::numeric
+         THEN 'PASS' ELSE '*** FAIL ***' END                   AS esito,
+    p.snapshot_at                                              AS primo_snapshot
+FROM primo p
+ORDER BY p.model_id;
+
+SELECT
+    'P'                                                        AS criterio,
+    'ESITO COMPLESSIVO — equity iniziale'                      AS controllo,
+    count(*)                                                   AS valore,
+    '4 modelli, tutti entro tolleranza'                        AS atteso,
+    CASE WHEN count(*) = 4
+          AND count(*) FILTER (
+                WHERE abs(p.equity_usd - :'equity_expected'::numeric)
+                      <= :'equity_tolerance'::numeric) = 4
+         THEN 'PASS' ELSE '*** FAIL ***' END                   AS esito
+FROM (
+    SELECT DISTINCT ON (a.model_id) a.model_id, a.equity_usd
+    FROM account_snapshots a
+    WHERE a.experiment_id = :'experiment_id'::uuid
+    ORDER BY a.model_id, a.snapshot_at
+) p;
+
+
 \echo ''
 \echo '#############################################################################'
 \echo '# FINE BATTERIA C1-C9.'
@@ -1264,5 +1337,7 @@ ORDER BY c.model_id;
 \echo '# Di C3 questa batteria copre la sola presenza delle righe: il segno va confrontato'
 \echo '# a campione con l''export HL (CSV in CEST, DB in UTC) usando il blocco C3-hl.'
 \echo '# Di C9 copre la sola prima metà: l''indagine reasoning_tokens=0 è extra-SQL (C9-tok).'
+\echo '# Il blocco P non e'' un criterio di uscita: e'' la precondizione da lanciare PRIMA'
+\echo '# di considerare avviata una raccolta dati (equity iniziale 1.000,00 su 4/4).'
 \echo '# Incollare questo output in docs/M6.2-PLAN.md §7 come evidenza (§4 punto 2).'
 \echo '#############################################################################'

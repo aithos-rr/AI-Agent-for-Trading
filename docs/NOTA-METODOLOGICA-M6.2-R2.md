@@ -186,9 +186,30 @@ mentre `model_pricing.yaml` è indicizzato per `model_id` (ADR-0020), e la looku
 degradava in silenzio a un prezzo di fallback. Ogni riga `cost_events` di questo dataset porta
 quindi **1,00 / 5,00 / 0,00 USD per 1M token** invece del listino reale del modello, in
 `cost_usd` e in `pricing_snapshot`. I dati **non sono stati riparati** (dataset archiviato,
-stessa politica delle altre anomalie): qualunque cifra di costo va **ricalcolata dai token**,
-che sono registrati correttamente in `llm_invocations`. Il costo è una variabile dipendente di
-RQ1, quindi il punto non è di sola osservabilità.
+stessa politica delle altre anomalie). Il costo è una variabile dipendente di RQ1, quindi il
+punto non è di sola osservabilità.
+
+**Il dataset resta però ricostruibile, e per intero.** Le due metà del calcolo sono entrambe
+salve: i conteggi dei token sono sulla riga stessa (`cost_events.input_tokens`,
+`output_tokens`, `reasoning_tokens` — `src/aiat/db/models/cost_event.py:30-32`), e i **prezzi
+reali** sono in `models` (`pricing_input_usd_per_1m`, `pricing_output_usd_per_1m`,
+`pricing_reasoning_usd_per_1m` — `model.py:26-28`), perché il seed li aveva scritti con la
+chiave giusta: `scripts/seed_experiment.py:252` chiama `load_pricing_for_model(spec.model_id)`.
+È esattamente la stessa lookup che `llm/factory.py` sbagliava — il che spiega perché il difetto
+sia rimasto invisibile così a lungo, e perché sia riparabile in analisi con una sola join:
+
+```sql
+SELECT ce.model_id,
+       sum(ce.input_tokens     / 1e6 * m.pricing_input_usd_per_1m
+         + ce.output_tokens    / 1e6 * m.pricing_output_usd_per_1m
+         + ce.reasoning_tokens / 1e6 * m.pricing_reasoning_usd_per_1m) AS cost_usd_reale,
+       sum(ce.cost_usd)                                                AS cost_usd_a_db
+FROM cost_events ce JOIN models m ON m.id = ce.model_id
+WHERE ce.experiment_id = :experiment_id
+GROUP BY ce.model_id;
+```
+
+Nessuna cifra di costo di questo dataset va letta a DB: va ricalcolata.
 
 
 ## 8. Cosa resta prima di M7
@@ -237,6 +258,38 @@ psql "$AIAT_DATABASE_URL" -v experiment_id=77777777-7777-7777-7777-777777777777 
      -v window_start='2026-08-04 00:00:00+00' -v window_end='2026-08-06 00:00:00+00' \
      -f scripts/gate_check.sql
 ```
+
+**Da quali equity è partito r2, e perché non da $1.000.** Il §7 registra la deroga alla
+precondizione P5; ecco i numeri. Al primo snapshot della run (**04/08, 10:45**) i quattro
+wallet portavano i saldi residui delle esecuzioni precedenti:
+
+| Modello | Equity iniziale reale | Variazione sul periodo |
+|---|---:|---:|
+| `usa-premium` | $976,73 | **+1,8%** |
+| `cn-premium` | $838,23 | **+15,0%** |
+| `cn-cheap` | $835,94 | **−3,4%** |
+| `usa-cheap` | $754,77 | **−4,9%** |
+
+Il re-fund a $1.000 è stato **omesso per scelta documentata**: sbloccare il faucet costa circa
+$5 per wallet, una spesa che non si giustifica per uno smoke la cui funzione è certificare
+correttezza infrastrutturale, non misurare performance. La conseguenza va detta senza
+attenuanti: **le variazioni sopra non sono un risultato**. Le basi di partenza differiscono di
+oltre 220 dollari fra il wallet più capiente e il meno capiente, i due modelli USA sono fermi
+da metà periodo — le loro variazioni si sono cristallizzate al blackout e restano piatte fino
+allo stop — e nessuna delle quattro celle del disegno 2×2 è confrontabile con le altre. Sono
+riportate qui per una ragione diversa: **riconciliano con il PnL realizzato degli `outcomes`**,
+al centesimo per i due modelli USA, ed è questa coincidenza a certificare che il ledger regge,
+che è ciò che il gate doveva verificare.
+
+Vale anche la pena notare da dove venivano gli errori di lettura: calcolare le variazioni su un
+capitale nominale di $1.000 invece che sull'equity reale al primo snapshot produce cifre
+sbagliate per tutti e quattro i modelli, di parecchi punti percentuali. La tabella sopra è
+calcolata sull'equity iniziale reale.
+
+**Per M7 la deroga non si ripete**: i quattro wallet partiranno riportati esattamente a
+$1.000,00, con uno snapshot di verifica al primo tick. Il controllo è stato scritto — è il
+blocco `P` in coda a [`scripts/gate_check.sql`](../scripts/gate_check.sql), da lanciare
+*prima* di considerare avviata la raccolta dati, non dopo.
 
 **Le decisioni di metodo sono state ratificate.** [ADR-0040](decisions/0040-doc-sync-gate-m62.md)
 registra il perimetro del gate (§6 qui sopra), conferma il deferral dell'auto-repair DB↔chain,
