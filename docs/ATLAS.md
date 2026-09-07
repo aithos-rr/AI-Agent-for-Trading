@@ -2,7 +2,7 @@
 
 **Ruolo di questo documento:** documentazione ufficiale di studio dell'intera repository, scritta per preparare la **discussione di tesi** e il **Capitolo 6**. Non è il README (quello racconta il progetto a chi passa di lì) e non è il PRD (quello è il blueprint congelato). È l'atlante: serve a chi deve *rispondere a domande* su questo sistema, non solo a farlo funzionare.
 
-**Stato:** allineato al gate M6.2 chiuso VERDE il 2026-09-06 · **Ultima verifica contro il codice:** 2026-09-06, branch `main` a `a40f2ac`.
+**Stato:** allineato al gate M6.2 chiuso VERDE il 2026-09-06 · **Ultima verifica contro il codice:** 2026-09-06, branch `main` a `105de44`.
 
 ---
 
@@ -16,10 +16,10 @@ L'atlante è diviso in sei file. Questo è l'indice e l'inquadramento; gli altri
 | 1 | [`ATLAS-1-STRUTTURA.md`](ATLAS-1-STRUTTURA.md) | §2 Tour della struttura + diagramma dell'architettura | Per orientarsi nel codice |
 | 2 | [`ATLAS-2-RUNTIME.md`](ATLAS-2-RUNTIME.md) | §3 Il tick passo per passo · §4 I job dell'orchestrator | **La parte centrale**: se ne leggi una, questa |
 | 3 | [`ATLAS-3-DATI.md`](ATLAS-3-DATI.md) | §5 Schema del database commentato | Quando la domanda riguarda i dati |
-| 4 | [`ATLAS-4-DECISIONI.md`](ATLAS-4-DECISIONI.md) | §6 Digest dei 35 ADR, in ordine narrativo | Per raccontare *perché* il sistema è così |
+| 4 | [`ATLAS-4-DECISIONI.md`](ATLAS-4-DECISIONI.md) | §6 Digest dei 36 ADR, in ordine narrativo | Per raccontare *perché* il sistema è così |
 | 5 | [`ATLAS-5-ESAME.md`](ATLAS-5-ESAME.md) | §7 Glossario · §8 Domande da discussione | Il glossario come riferimento; le domande, la sera prima |
 
-**Convenzione sui riferimenti.** Ogni affermazione non ovvia è tracciabile: `file.py:simbolo` o `file.py:riga` per il codice, `ADR-00NN` per le decisioni (in [`decisions/`](decisions/README.md)), `PRD §X.Y` e `RESEARCH §X` per i due documenti congelati. I numeri di riga sono stati riverificati uno per uno contro `main` a `a40f2ac`: se il codice cambia, invecchiano — il simbolo resta il riferimento più stabile.
+**Convenzione sui riferimenti.** Ogni affermazione non ovvia è tracciabile: `file.py:simbolo` o `file.py:riga` per il codice, `ADR-00NN` per le decisioni (in [`decisions/`](decisions/README.md)), `PRD §X.Y` e `RESEARCH §X` per i due documenti congelati. I numeri di riga sono stati riverificati uno per uno contro `main` a `105de44`: se il codice cambia, invecchiano — il simbolo resta il riferimento più stabile.
 
 **Gerarchia delle fonti.** `PRD_V2.md` è congelato al tag `prd-v2-frozen` (commit `22d3119`): non si modifica. Ogni evoluzione successiva vive in un ADR. La verità corrente su un punto qualsiasi è quindi *PRD + tutti gli ADR che lo toccano*, non il PRD da solo — ed è la ragione per cui la Parte 4 esiste ed è lunga. **Dove il codice e il PRD divergono, in questo atlante vince il codice**, e la divergenza è segnalata con l'ADR che la giustifica: sono deviazioni deliberate e documentate, non derive.
 

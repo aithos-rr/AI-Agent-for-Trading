@@ -18,9 +18,9 @@
 <img src="https://img.shields.io/badge/python-3.12-3776ab?logo=python&logoColor=white" alt="Python 3.12" />
 <img src="https://img.shields.io/badge/Railway-6%20services-0B0D0E?logo=railway&logoColor=white" alt="Railway, 6 services" />
 <img src="https://img.shields.io/badge/PostgreSQL-16-336791?logo=postgresql&logoColor=white" alt="PostgreSQL 16" />
-<img src="https://img.shields.io/badge/governance-35%20ADRs-blue" alt="35 Architecture Decision Records" />
+<img src="https://img.shields.io/badge/governance-36%20ADRs-blue" alt="36 Architecture Decision Records" />
 <img src="https://img.shields.io/badge/tick-15%20min-blue" alt="15 minute tick" />
-<img src="https://img.shields.io/badge/tests-812%20passing-brightgreen" alt="812 tests" />
+<img src="https://img.shields.io/badge/tests-817%20passing-brightgreen" alt="817 tests" />
 </p>
 
 **🦉 [Watch them trade live →](https://dashboard-production-898d.up.railway.app/)**
@@ -84,22 +84,34 @@ interesting output is the audit trail, not the PnL.
 ## Scientific rigor
 
 - **Certified prompt** — all four models receive the same prompt template; its hash is
-  persisted with every run and frozen for the whole experiment
+  persisted with every run and frozen for the whole experiment. Where a provider's
+  structured output fails to validate, one pre-registered freetext fallback appends a fixed
+  suffix — those decisions run on `prompt + FALLBACK_SUFFIX`, and `fallback_used` is a
+  per-model metric, not an alarm
 - **Frozen blueprint + ADR governance** — the PRD is tagged `prd-v2-frozen`; every
   deviation or evolutive decision is an Architecture Decision Record in
-  [`docs/decisions/`](docs/decisions/) (35 accepted so far)
+  [`docs/decisions/`](docs/decisions/) (36 accepted so far)
 - **Pre-registered baselines** — cash, buy & hold, and EMA-momentum curves are declared in
-  [`docs/RESEARCH_DESIGN.md`](docs/RESEARCH_DESIGN.md) before the run, and computed from
-  the same context snapshots the models see
+  [`docs/RESEARCH_DESIGN.md`](docs/RESEARCH_DESIGN.md) before the run and computed live,
+  tick by tick, from the same context snapshots the models see
 - **DB ↔ chain reconciliation** — positions are verified fill-by-fill against on-chain
   `userFills`; divergences are detected, root-caused, and documented — see the
   [M6.1 methodological note](docs/NOTA-METODOLOGICA-M6.1.md) for full transparency on the
   shakedown run
 - **Infrastructure gate, in the open** — the pre-registered exit criteria (C1–C9) live in
-  [`docs/M6.2-PLAN.md`](docs/M6.2-PLAN.md); the gate passed on 2026-09-06 against the r2
-  re-smoke (sha `750bd8c`, tag `m6.2-gate-r2`), with the run's failures, limits and one
-  open anomaly written up in the
+  [`docs/M6.2-PLAN.md`](docs/M6.2-PLAN.md), and the query battery that evaluates them is
+  versioned, read-only and parametric on `experiment_id` in
+  [`scripts/gate_check.sql`](scripts/gate_check.sql), so a third party can reproduce the
+  verdict. The gate passed on 2026-09-06 against the r2 re-smoke (sha `750bd8c`, tag
+  `m6.2-gate-r2`), evaluated on the pre-registered 48h window; the run's failures, limits
+  and one still-open anomaly are written up in the
   [M6.2-r2 methodological note](docs/NOTA-METODOLOGICA-M6.2-R2.md)
+- **A known defect, declared rather than buried** — until `12b2329` the pricing lookup used
+  `model_name_api` against a table keyed by `model_id`, so every `cost_events` row of the two
+  smoke datasets carries a fallback price. The code is fixed and the lookup now fails loudly;
+  the archived data is deliberately *not* repaired, but it is fully reconstructible — token
+  counts are on the row, real list prices are in `models`. No cost figure from those two
+  datasets should be read from the DB: it must be recomputed
 
 ## Repository structure
 
@@ -108,13 +120,16 @@ src/aiat/       one package, five deployments in two roles (AIAT_SERVICE_ROLE di
                 domain · context · llm · execution · orchestration · baselines ·
                 db · config · observability · prompts
 alembic/        schema migrations — the database is never edited by hand
-docs/           ATLAS (guided map of the whole system, 6 parts) · PRD_V2 (frozen
-                blueprint) · RESEARCH_DESIGN · M6.1 + M6.2-r2 methodological notes ·
-                M6.2-PLAN (gate criteria + outcome) · decisions/ (ADRs) · runbooks
-scripts/        one-shot ops: experiment seed, fee backfill, audited data repairs, baselines
-tests/          813 tests: unit · integration · e2e (isolation, invariants,
+docs/           ATLAS (guided map of the system: index + 5 parts) · PRD_V2 (frozen
+                blueprint) · RESEARCH_DESIGN · PRE_PRD · ANALYSIS_* · TASK_MAP ·
+                M6.1 + M6.2-r2 methodological notes · M6.2-PLAN (gate criteria +
+                outcome) · decisions/ (ADRs) · runbooks
+scripts/        experiment seed, fee backfill, audited data repairs, baselines, and
+                gate_check.sql — the reproducible C1-C9 gate battery (read-only SQL)
+tests/          818 tests: unit · integration · e2e (isolation, invariants,
                 cross-experiment scoping) · VCR cassettes
-tools/          gate_check.sh — milestone gate runner
+tools/          gate_check.sh — engineering gate: ruff, mypy, import-linter, tests
+progress/       development log and open follow-ups
 docker/         multi-stage Dockerfile: one image, role picked via env
 legacy/         the V1 prototype, preserved
 asset/          README media (mascot)
