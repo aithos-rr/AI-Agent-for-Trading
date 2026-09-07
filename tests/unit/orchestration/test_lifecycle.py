@@ -33,7 +33,9 @@ _BASE_COMMON = {
 
 _AGENT_REQUIRED = {
     **_BASE_COMMON,
-    "model_id": "model-openai",
+    # Deve essere un model_id reale a listino: dal 2026-09-06 il check A4 fallisce
+    # se manca da model_pricing.yaml (prima il fallback lo rendeva vacuo).
+    "model_id": "usa-cheap",
     "prompt_template_hash": "abc123hash",
     "llm_provider": "openai",
     "model_name_api": "gpt-4o",
@@ -359,6 +361,28 @@ async def test_agent_a8_valid_passes() -> None:
             patch("aiat.orchestration.lifecycle._check_llm_credentials", AsyncMock()),
         ):
             await _agent_startup_checks(settings)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# _agent_startup_checks — A4: pricing a listino (fix 2026-09-06)
+#
+# Il check esisteva ma era vacuo: load_pricing_for_model tornava un fallback, quindi
+# il ramo `if pricing is None: raise` era codice morto e A4 non poteva fallire. Ora
+# la lookup solleva, e A4 e' un cancello vero.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_agent_a4_unknown_model_id_raises() -> None:
+    settings = _agent(model_id="modello-non-a-listino")
+    db = _full_db_mock(settings)
+    with patch("aiat.orchestration.lifecycle._db_session", db):
+        with (
+            patch("aiat.orchestration.lifecycle._check_hl_reachability", AsyncMock()),
+            patch("aiat.orchestration.lifecycle._check_llm_credentials", AsyncMock()),
+        ):
+            with pytest.raises(RuntimeError, match=r"\[A4\].*modello-non-a-listino"):
+                await _agent_startup_checks(settings)
 
 
 # ---------------------------------------------------------------------------

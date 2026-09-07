@@ -1456,6 +1456,15 @@ collegare a **D2** (outcome labeling HOLD/FLAT, ADR-0014).
 **FOLLOW-UP pre-M6** (non bloccanti):
 1. **Disallineamento pricing**: `load_llm` cerca il pricing per `model_name_api`, lifecycle A4
    per `model_id` → cost-tracking usa il fallback (1.00/5.00) se non combaciano.
+   — **CHIUSO 2026-09-06**: era reale e attivo in produzione. `model_pricing.yaml` è
+   indicizzato per `model_id` (ADR-0020) e `load_llm` interrogava con `model_name_api`, quindi
+   **ogni** riga `cost_events` di M6.1 e M6.2-r2 porta il prezzo di fallback invece di quello
+   reale (es. `usa-cheap`: 1.00/5.00/0.00 al posto di 0.75/6.00/6.00). A4 non se ne accorgeva
+   perché interrogava con `model_id`, e il suo `if pricing is None: raise` era codice morto.
+   Fix: lookup per `model_id` in `llm/factory.py`, `UnknownModelPricingError` al posto del
+   fallback silenzioso, A4 reso un cancello vero, 5 test tripwire sulla coppia reale
+   `usa-cheap` / `gpt-4.1-mini`. **I dati non sono stati riparati**: i `cost_usd` dei due
+   dataset smoke vanno ricalcolati dai token (annotato nelle due note metodologiche).
 2. **Test-hygiene `.env` pollution**: `test_settings.py::test_agent_settings_optional_fields_default_none`
    fallisce quando un `.env` reale è presente in `/workspace` (setta `AIAT_TEMPERATURE=0`). Isolare
    con `_env_file=None` negli helper. — **CHIUSO 2026-09-06**: `4527a1e` aveva coperto un solo

@@ -36,7 +36,10 @@ def load_llm(settings: AgentSettings) -> BaseLLMClient:
 
     Both branches coexist; no client is removed (additive principle, ADR-0008).
     """
-    pricing = load_pricing_for_model(settings.model_name_api)
+    # Keyed by model_id, NOT model_name_api: model_pricing.yaml uses the stable D1 ids
+    # (ADR-0020). Looking it up by model_name_api silently returned the old fallback
+    # price and corrupted every cost_events row — see UnknownModelPricingError.
+    pricing = load_pricing_for_model(settings.model_id)
     temperature = settings.temperature if settings.temperature is not None else _DEFAULT_TEMPERATURE
     max_tokens = settings.max_tokens if settings.max_tokens is not None else _DEFAULT_MAX_TOKENS
 

@@ -12,7 +12,7 @@ import structlog
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from aiat.config.pricing import load_pricing_for_model
+from aiat.config.pricing import UnknownModelPricingError, load_pricing_for_model
 from aiat.config.settings import AgentSettings, BaseAIATSettings, ContextOrchestratorSettings
 from aiat.db.models import BaselineConfig, Experiment, Model, PromptTemplate
 from aiat.db.session import get_db_session
@@ -103,10 +103,13 @@ async def _agent_startup_checks(settings: AgentSettings) -> None:
                 f"settings={settings.hl_wallet_address}"
             )
 
-    # [A4] Pricing config in YAML (fallback exists; explicit entry preferred)
-    pricing = load_pricing_for_model(settings.model_id)
-    if pricing is None:
-        raise RuntimeError(f"No pricing config for '{settings.model_id}' in model_pricing.yaml")
+    # [A4] Pricing config in YAML — fatal if missing. The check used to be vacuous:
+    # load_pricing_for_model returned a fallback dict, so `pricing is None` was dead code
+    # and A4 could not fail. It now raises, which is what makes A4 a real gate.
+    try:
+        load_pricing_for_model(settings.model_id)
+    except UnknownModelPricingError as exc:
+        raise RuntimeError(f"[A4] {exc}") from exc
 
     # [A5] Prompt template registered
     async with _db_session(settings) as session:

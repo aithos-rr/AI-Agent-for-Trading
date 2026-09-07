@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from aiat.config.pricing import UnknownModelPricingError, load_pricing_for_model
 from aiat.config.settings import AgentSettings
 from aiat.llm.anthropic_client import AnthropicClient
 from aiat.llm.factory import load_llm
@@ -129,6 +130,7 @@ def test_load_llm_unknown_provider_raises() -> None:
     settings = MagicMock(spec=AgentSettings)
     settings.llm_gateway = "direct"
     settings.llm_provider = "unknown_provider"
+    settings.model_id = "usa-cheap"
     settings.model_name_api = "gpt-4o"
     settings.temperature = Decimal("0.7")
     settings.max_tokens = 4096
@@ -165,3 +167,62 @@ def test_all_four_direct_providers_and_openrouter() -> None:
     assert isinstance(qwen_c, OpenAICompatibleClient)
     assert isinstance(or_c, OpenAICompatibleClient)
     assert or_c.provider == "openrouter"
+
+
+# ---------------------------------------------------------------------------
+# Tripwire: pricing lookup key (ADR-0020 + fix del 2026-09-06)
+#
+# model_pricing.yaml e' indicizzato per model_id stabile, non per model_name_api.
+# load_llm cercava per model_name_api e, grazie al fallback silenzioso di allora,
+# scriveva 1.00/5.00/0.00 in ogni riga cost_events invece del prezzo reale. Il
+# costo e' una variabile dipendente di RQ1, quindi questi test devono fallire
+# rumorosamente se qualcuno reintroduce la chiave sbagliata.
+# ---------------------------------------------------------------------------
+
+
+def test_load_pricing_by_model_id_returns_yaml_entry() -> None:
+    """La chiave giusta e' il model_id: deve tornare il listino reale del YAML."""
+    pricing = load_pricing_for_model("usa-cheap")
+    assert pricing == {
+        "input": Decimal("0.75"),
+        "output": Decimal("6.00"),
+        "reasoning": Decimal("6.00"),
+    }
+
+
+def test_load_pricing_by_model_name_api_raises() -> None:
+    """La chiave sbagliata deve esplodere, non degradare a un fallback.
+
+    'gpt-4.1-mini' e' il model_name_api reale di usa-cheap: e' esattamente il valore
+    che veniva passato prima del fix.
+    """
+    with pytest.raises(UnknownModelPricingError, match="gpt-4.1-mini"):
+        load_pricing_for_model("gpt-4.1-mini")
+
+
+def test_load_llm_uses_model_id_not_model_name_api() -> None:
+    """Tripwire end-to-end sulla coppia reale (usa-cheap / gpt-4.1-mini).
+
+    Nessun mock sul pricing: se load_llm tornasse a cercare per model_name_api il
+    test fallirebbe con UnknownModelPricingError.
+    """
+    settings = _base_settings(
+        model_id="usa-cheap",
+        llm_provider="openai",
+        model_name_api="gpt-4.1-mini",
+    )
+    client = load_llm(settings)
+    assert isinstance(client, OpenAIClient)
+    assert client._pricing == load_pricing_for_model("usa-cheap")
+    assert client._pricing["input"] == Decimal("0.75")
+
+
+def test_load_llm_raises_on_unknown_model_id() -> None:
+    """Un model_id non a listino non deve piu' passare inosservato."""
+    settings = _base_settings(
+        model_id="modello-inesistente",
+        llm_provider="openai",
+        model_name_api="gpt-4o",
+    )
+    with pytest.raises(UnknownModelPricingError, match="modello-inesistente"):
+        load_llm(settings)
