@@ -170,6 +170,17 @@ residui non uniformi** di fine M6.1, non sui $1.000 uniformi della precondizione
 decisione esplicita di contenimento costi. Il gate misura correttezza infrastrutturale, non
 performance; M7 partirà con wallet nuovi finanziati a $1.000.
 
+**Costi LLM da ricalcolare.** Alla dimensione *costo* si aggiunge un difetto scoperto il
+2026-09-06 e corretto in `12b2329`: `llm/factory.py` cercava il listino con `model_name_api`
+mentre `model_pricing.yaml` è indicizzato per `model_id` (ADR-0020), e la lookup fallita
+degradava in silenzio a un prezzo di fallback. Ogni riga `cost_events` di questo dataset porta
+quindi **1,00 / 5,00 / 0,00 USD per 1M token** invece del listino reale del modello, in
+`cost_usd` e in `pricing_snapshot`. I dati **non sono stati riparati** (dataset archiviato,
+stessa politica delle altre anomalie): qualunque cifra di costo va **ricalcolata dai token**,
+che sono registrati correttamente in `llm_invocations`. Il costo è una variabile dipendente di
+RQ1, quindi il punto non è di sola osservabilità.
+
+
 ## 8. Cosa resta prima di M7
 
 1. **Batteria di query C1-C9 non versionata.** `M6.2-PLAN.md` §4 prevede

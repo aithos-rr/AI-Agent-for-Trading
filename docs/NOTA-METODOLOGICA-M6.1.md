@@ -90,3 +90,14 @@ esperimento in poi la politica *annotate not repair* è sicura **per costruzione
 
 Resta inoltre non registrato lo **spot-check `reasoning_tokens=0`** su Opus thinking-only
 (§2.6), previsto «al primo tick dello smoke»: non risulta eseguito né per r1 né per r2.
+
+**Costi LLM da ricalcolare.** Alla dimensione *costo* si aggiunge un difetto scoperto il
+2026-09-06 e corretto in `12b2329`: `llm/factory.py` cercava il listino con `model_name_api`
+mentre `model_pricing.yaml` è indicizzato per `model_id` (ADR-0020), e la lookup fallita
+degradava in silenzio a un prezzo di fallback. Ogni riga `cost_events` di questo dataset porta
+quindi **1,00 / 5,00 / 0,00 USD per 1M token** invece del listino reale del modello, in
+`cost_usd` e in `pricing_snapshot`. I dati **non sono stati riparati** (dataset archiviato,
+stessa politica delle altre anomalie): qualunque cifra di costo va **ricalcolata dai token**,
+che sono registrati correttamente in `llm_invocations`. Il costo è una variabile dipendente di
+RQ1, quindi il punto non è di sola osservabilità.
+
