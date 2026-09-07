@@ -1523,3 +1523,18 @@ Residuo aperto: **burst `ChainDivergence` 15-22/08 su `cn-cheap`** (33/10/68/5),
 finestra di gate, diagnosi in corso — da chiudere prima di M7. Dettaglio e limiti d'uso:
 `docs/NOTA-METODOLOGICA-M6.2-R2.md`; esito per criterio in `docs/M6.2-PLAN.md` §7.
 
+## KNOWN-GAP invariante #14 (registrato 2026-09-06) — rinviato a M7-hardening
+
+PRD §9.7 assegna a import-linter l'enforcement dell'invariante #14 («no cicli fra moduli») e
+`tests/invariant_coverage.py:175` lo marca coperto. Non lo è: entrambi i contratti in
+`pyproject.toml` sono di tipo `forbidden`, che verifica esattamente e soltanto gli archi che
+elenca. Nessuno dei due è `layers` o `independence`, gli unici tipi capaci di rilevare un ciclo
+o una violazione di stratificazione. Un ciclo `llm ↔ execution` o `db → execution → db`
+passerebbe la CI in silenzio — e l'arco `db → execution` esiste già
+(`db/repositories/positions.py:18` importa `aiat.execution.hyperliquid_client`).
+
+**Decisione: si accetta il gap e si rinvia a M7-hardening.** Aggiungere ora un contratto
+`layers` farebbe fallire la CI sull'arco esistente, e raddrizzarlo è un refactoring che non si
+apre a ridosso dell'avvio della raccolta dati. Rischio accettato ed esplicito: un ciclo
+introdotto durante M7 non verrebbe segnalato. Documentato in `docs/ATLAS-1-STRUTTURA.md` §2.15.
+

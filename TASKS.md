@@ -71,7 +71,7 @@ M1  🤖 ████████████████████  domain + 
 M2  🤖 ██████████████████░░  LLM abstraction — loop ~90% (🛑 record cassette VCR = M2-T12)
 M3  🤖 ████████████████░░░░  Context + collectors — loop ~85% (⚠️ smoke reale = M3-T11)
 M4  🤖 ██████████████░░░░░░  Execution + guardrails — loop ~75% (🛑 e2e testnet = M4-T08)
-M5  🤖 ████████████░░░░░░░░  Decision loop e2e — loop ~70% (🛑 smoke multi-tick = M5-T14)
+M5  🤖 ████████████████████  Decision loop e2e — completo (M5-T14 chiuso 2026-09-06)
 M6  🛑 ░░░░░░░░░░░░░░░░░░░░  deploy Railway + 4 wallet + 4 API key — fuori scope loop
 M7  🛑 ░░░░░░░░░░░░░░░░░░░░  esperimento 4 settimane — fuori scope loop
 ```
@@ -1098,7 +1098,17 @@ orchestrator, e2e testnet, smoke multi-tick) sono assistite.
   - **verify**: `uv run python -c "from aiat.observability.logging_config import configure_logging; configure_logging('INFO')" && uv run ruff check src/aiat/observability && uv run mypy src`
   - **done-when**: logging JSON configurabile, ruff/mypy clean, nessun print.
 
-- [ ] **M5-T14** 🛑 **[HUMAN-GATED]** — Smoke locale multi-tick (4 tick)
+- [x] **M5-T14** 🛑 **[HUMAN-GATED]** — Smoke locale multi-tick (4 tick)
+  - **CHIUSO 2026-09-06** — superato nei fatti, e ampiamente: il verify locale a 4 tick
+    con LLM mockato è stato sostituito da due run di produzione con LLM reali su
+    Hyperliquid testnet — M6.1 (20 giorni, 4 modelli,
+    `docs/NOTA-METODOLOGICA-M6.1.md`) e il re-smoke M6.2-r2 (20 giorni, 7.580 run,
+    `docs/NOTA-METODOLOGICA-M6.2-R2.md`), quest'ultimo con gate **VERDE** il 2026-09-06.
+    La proprietà che questo task doveva osservare — per tick 1 `context_snapshot` +
+    4 `runs` + 4 `decisions` + 12 `decision_actions` — è coperta dai criteri C1/C4/C7 di
+    `docs/M6.2-PLAN.md` §3, valutati sulla finestra pre-registrata. `scripts/smoke_multitick.py`
+    non è mai stato scritto e non serve più. La chiusura è stata autorizzata
+    esplicitamente: resta [HUMAN-GATED], non è stata decisa dal loop.
   - **what**: Verifica §12 M5: 1 orchestrator + 4 agent fittizi (LLM mockato) su Postgres
     locale per 4 tick consecutivi → dataset coerente (per tick: 1 context_snapshot + 4 runs
     + 4 decisions + 12 decision_actions). Anche se LLM è mockato, è un'integrazione di
